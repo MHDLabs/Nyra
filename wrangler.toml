@@ -1,0 +1,21 @@
+name = "nyra"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+# Secrets (set with `wrangler secret put <NAME>` — never put them here):
+#   TELEGRAM_BOT_TOKEN  — bot token from @BotFather
+#   TELEGRAM_SECRET     — webhook secret (openssl rand -hex 32)
+#   ENCRYPTION_KEY      — base64 32-byte key (openssl rand -base64 32)
+
+[vars]
+# Comma-separated Telegram user IDs with admin access
+ADMIN_IDS = ""
+
+[[d1_databases]]
+binding = "DB"
+database_name = "nyra"
+database_id = "<YOUR_D1_DATABASE_ID>"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "<YOUR_KV_NAMESPACE_ID>"
