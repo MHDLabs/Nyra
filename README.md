@@ -6,17 +6,17 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-f38020.svg)](https://workers.cloudflare.com)
-[![Runtime](https://img.shields.io/badge/runtime-Nodeless%20JS-33cc33.svg)](worker.js)
+[![Runtime](https://img.shields.io/badge/runtime-Nodeless%20JS-33cc33.svg)](src/index.js)
 
 English · [فارسی](README.fa.md)
 
 ---
 
-Nyra connects your Telegram bot to any AI provider you choose — OpenAI, Anthropic, or any OpenAI-compatible endpoint (OpenRouter, Groq, Ollama, …). It runs as a single Worker file with no build step, no server to maintain, and no framework to learn. Your API keys are encrypted at rest, and everything else lives in Cloudflare D1 and KV.
+Nyra connects your Telegram bot to any AI provider you choose — OpenAI, Anthropic, or any OpenAI-compatible endpoint (OpenRouter, Groq, Ollama, …). It runs as a single Cloudflare Worker with no build step, no server to maintain, and no framework to learn. Your API keys are encrypted at rest, and everything else lives in Cloudflare D1 and KV.
 
 ## ✨ Features
 
-- **🚀 Zero infrastructure** — one Worker file, Cloudflare D1, and a KV namespace. No servers, no builds.
+- **🚀 Zero infrastructure** — a single Worker, Cloudflare D1, and a KV namespace. No servers, no builds.
 - **🔀 Any provider** — OpenAI-compatible APIs (custom base URL) and Anthropic, with streaming responses edited live in the chat.
 - **👥 Multiple connections** — admins define shared global models; users can add their own, switch per chat, and set a personal default.
 - **🔐 Encrypted keys** — provider API keys are sealed with AES-256-GCM (HKDF-derived per owner) and never leave the database in plaintext.
@@ -27,7 +27,26 @@ Nyra connects your Telegram bot to any AI provider you choose — OpenAI, Anthro
 - **🛡️ Rate limiting & blocking** — per-user, per-chat, and per-admin limits, plus an admin block list.
 - **🛠️ Admin panel** — manage users, chats, group modes, connections, and block list, and view stats and system status — all inline in Telegram.
 
-## 📋 Requirements
+## � Project structure
+
+The Worker is split into small, focused ES modules under `src/` — Wrangler bundles them automatically, so there is still no build step:
+
+```
+src/
+├── index.js     entry point: AI message pipeline, update routing, webhook & setup endpoints
+├── config.js    shared constants, prompt rules, default personalities
+├── utils.js     pure helpers, sanitizers, rate limiting
+├── crypto.js    AES-256-GCM credential encryption
+├── telegram.js  Telegram Bot API layer
+├── db.js        D1 schema, users/chats/threads, flow state, connections, usage
+├── ai.js        providers, streaming, model listing, connection tests, fallback
+├── memory.js    memory data, system prompts, personalities, consolidation
+├── menus.js     settings screens and inline views
+├── flows.js     add/edit connection wizard
+└── commands.js  user commands and the admin panel
+```
+
+## �📋 Requirements
 
 - A [Cloudflare account](https://dash.cloudflare.com) (free plan is enough)
 - A Telegram bot token from [@BotFather](https://t.me/BotFather)
