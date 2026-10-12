@@ -2,20 +2,56 @@ name = "nyra"
 main = "src/index.js"
 compatibility_date = "2025-01-01"
 
-# Secrets (set with `wrangler secret put <NAME>` — never put them here):
-#   TELEGRAM_BOT_TOKEN  — bot token from @BotFather
-#   TELEGRAM_SECRET     — webhook secret (openssl rand -hex 32)
-#   ENCRYPTION_KEY      — base64 32-byte key (openssl rand -base64 32)
+# One-click deploy: press the "Deploy to Cloudflare" button in the README.
+# The Cloudflare deploy flow asks for exactly two inputs — TELEGRAM_BOT_TOKEN
+# (example below) and ADMIN_IDS ([vars] below) — and provisions D1, KV and the
+# queue automatically. Everything else is derived/configured automatically.
+
+# Expose the Worker on https://nyra.<your-subdomain>.workers.dev so it works
+# without any custom domain.
+workers_dev = true
+
+[triggers]
+# Self-healing (part of the zero-manual-setup flow): the scheduled handler
+# re-verifies the Telegram webhook registration and runs the KV-gated
+# schema/maintenance probe every 5 minutes. Cheap when nothing is due;
+# uses 1 of the 5 cron triggers allowed per account on the free plan.
+crons = ["*/5 * * * *"]
+
+# Secrets (set with `wrangler secret put <NAME>` — never put them here).
+# Only TELEGRAM_BOT_TOKEN is required — it is one of the two deploy prompts:
+#   TELEGRAM_BOT_TOKEN  — bot token from @BotFather (REQUIRED)
+# Optional overrides, derived from the bot token when absent (src/crypto.js):
+#   TELEGRAM_SECRET     — webhook secret (auto-derived via HKDF)
+#   ENCRYPTION_KEY      — base64 32-byte key (auto-derived via HKDF)
 
 [vars]
-# Comma-separated Telegram user IDs with admin access
+# REQUIRED — the second deploy-flow prompt: comma-separated numeric Telegram
+# user IDs with admin access (e.g. ADMIN_IDS = "123456789"). Non-numeric
+# entries are ignored; GET / warns until at least one valid ID is set.
 ADMIN_IDS = ""
 
+# D1 database — no database_id on purpose: Wrangler's automatic provisioning
+# creates the database on `wrangler deploy` and writes its ID back into this
+# file (bindings without resource IDs are auto-provisioned by Wrangler).
+# If you already have a deployed instance, KEEP your existing database_id here.
 [[d1_databases]]
 binding = "DB"
 database_name = "nyra"
-database_id = "<YOUR_D1_DATABASE_ID>"
 
+# KV namespace — auto-provisioned the same way on deploy.
+# If you already have a deployed instance, KEEP your existing id here.
 [[kv_namespaces]]
 binding = "KV"
-id = "<YOUR_KV_NAMESPACE_ID>"
+
+# Queue: the Telegram webhook acks immediately and hands every update to this
+# queue. The consumer runs the full AI pipeline with the long wall time that
+# queue invocations allow (a webhook request itself would be capped at 30s of
+# post-response work via ctx.waitUntil).
+[[queues.producers]]
+binding = "NYRA_QUEUE"
+queue = "nyra-updates"
+
+[[queues.consumers]]
+queue = "nyra-updates"
+max_retries = 3

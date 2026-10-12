@@ -1,0 +1,21 @@
+{
+  "name": "nyra",
+  "private": true,
+  "type": "module",
+  "description": "Nyra — Telegram AI bot on Cloudflare Workers",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/",
+    "deploy": "node scripts/postdeploy.mjs"
+  },
+  "cloudflare": {
+    "bindings": {
+      "TELEGRAM_BOT_TOKEN": {
+        "description": "REQUIRED — your Telegram bot token from @BotFather (format `123456789:AA...`). Get it: message @BotFather → /mybots → your bot → API Token."
+      },
+      "ADMIN_IDS": {
+        "description": "REQUIRED — numeric Telegram user ID(s) of the administrator(s), digits only (e.g. `123456789`), comma-separated for several. Find yours by sending any message to @userinfobot."
+      }
+    }
+  }
+}

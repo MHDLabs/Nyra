@@ -1,6 +1,6 @@
 // Nyra — commands: user command handlers and the admin panel.
 import { RATE_LIMIT_ADMIN_PER_MIN, MAX_PERSONALITIES, MAX_PERSONALITY_PROMPT, MAX_PERSONALITY_DESC } from "./config.js";
-import { now, escapeHtml, generateShortId, sanitizeMemoryString, sanitizeMemoryFact, dedupeArray, filterSubstrings, isAdmin, checkRateLimit } from "./utils.js";
+import { now, escapeHtml, generateShortId, sanitizeMemoryString, sanitizeMemoryFact, dedupeArray, filterSubstrings, isAdmin, checkRateLimit, containsPhrase } from "./utils.js";
 import { getMasterKey } from "./crypto.js";
 import { sendMessage, editMessage, buildInlineKeyboard } from "./telegram.js";
 import { getUser, upsertUser, resolveUserActiveConnection } from "./db.js";
@@ -82,10 +82,9 @@ async function handleForgetCommand(env, chatId, userId, args) {
   }
   const data = parseMemoryData(user.memory_data);
   let changed = false;
-  const lowerTopic = topic.toLowerCase();
   const filterField = function (field) {
     if (Array.isArray(data[field])) {
-      const filtered = data[field].filter(function (f) { return String(f).toLowerCase().indexOf(lowerTopic) === -1; });
+      const filtered = data[field].filter(function (f) { return !containsPhrase(String(f), topic); });
       if (filtered.length !== data[field].length) { data[field] = filtered; changed = true; }
     }
   };
@@ -93,8 +92,8 @@ async function handleForgetCommand(env, chatId, userId, args) {
   filterField("interests");
   filterField("tools");
   filterField("projects");
-  if (data.communication_style && data.communication_style.toLowerCase().indexOf(lowerTopic) !== -1) { delete data.communication_style; changed = true; }
-  if (data.preferred_name && data.preferred_name.toLowerCase().indexOf(lowerTopic) !== -1) { delete data.preferred_name; changed = true; }
+  if (data.communication_style && containsPhrase(data.communication_style, topic)) { delete data.communication_style; changed = true; }
+  if (data.preferred_name && containsPhrase(data.preferred_name, topic)) { delete data.preferred_name; changed = true; }
   if (!changed) { await sendMessage(env, chatId, "Nothing matching that found in memory."); return; }
   data.last_updated = now();
   try {

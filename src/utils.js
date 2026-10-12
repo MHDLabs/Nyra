@@ -31,6 +31,28 @@ export function escapeRegex(text) {
   return String(text || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+const WORD_CHAR_RE = /[\p{L}\p{N}_]/u;
+
+// Word-boundary phrase match (Unicode-aware, works for Latin and Persian).
+// "art" matches "I love art" but not "party"/"start" — used by /forget so a
+// short topic cannot over-delete unrelated memory entries.
+export function containsPhrase(haystack, phrase) {
+  if (!haystack || !phrase) return false;
+  const h = String(haystack).toLowerCase();
+  const p = String(phrase).toLowerCase();
+  if (!p) return false;
+  let idx = h.indexOf(p);
+  while (idx !== -1) {
+    const before = idx > 0 ? h.charAt(idx - 1) : "";
+    const after = h.charAt(idx + p.length);
+    const beforeOk = !before || !WORD_CHAR_RE.test(before);
+    const afterOk = !after || !WORD_CHAR_RE.test(after);
+    if (beforeOk && afterOk) return true;
+    idx = h.indexOf(p, idx + 1);
+  }
+  return false;
+}
+
 export function stripTelegramHtml(text) {
   if (!text) return "";
   return text.replace(/<\/?(?:b|i|u|s|code|pre|blockquote|tg-spoiler|a)(?:\s+[^>]*)?>/gi, "");
@@ -204,21 +226,46 @@ export function filterSubstrings(arr) {
 export function splitForTelegram(inputText, maxLen) {
   if (!inputText) return [""];
   if (inputText.length <= maxLen) return [inputText];
+  // A delivered chunk = body + optional fence closure (up to 4 chars: "\n```")
+  // + optional "[i/total]\n" counter prefix. Reserve both while splitting so no
+  // chunk can ever exceed maxLen — Telegram rejects over-long messages with 400
+  // and the send path silently drops the reply. The counter reserve adapts to the
+  // actual part count (it depends on digit width, which is only known after the
+  // first split); splitting converges because a larger reserve never increases
+  // the number of parts.
+  const FENCE_RESERVE = 4;
+  let counterReserve = 6; // "[9/9]\n"
+  let parts = [];
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const budget = Math.max(1, maxLen - counterReserve - FENCE_RESERVE);
+    parts = rawSplitForTelegram(inputText, budget);
+    const needed = 2 * String(parts.length).length + 4; // "[<total>/<total>]\n"
+    if (needed <= counterReserve) break;
+    counterReserve = needed;
+  }
+  const total = parts.length;
+  if (total > 1) {
+    return parts.map(function (p, i) { return "[" + (i + 1) + "/" + total + "]\n" + p; });
+  }
+  return parts;
+}
+
+function rawSplitForTelegram(inputText, budget) {
   const parts = [];
   let remaining = inputText;
-  while (remaining.length > maxLen) {
+  while (remaining.length > budget) {
     let splitAt = -1;
-    const windowEnd = Math.min(maxLen, remaining.length);
-    for (let i = windowEnd - 2; i >= Math.floor(maxLen * 0.4); i--) {
+    const windowEnd = Math.min(budget, remaining.length);
+    for (let i = windowEnd - 2; i >= Math.floor(budget * 0.4); i--) {
       if (remaining[i] === "\n" && remaining[i + 1] === "\n") { splitAt = i + 2; break; }
     }
     if (splitAt === -1) {
-      for (let i = windowEnd - 1; i >= Math.floor(maxLen * 0.4); i--) {
+      for (let i = windowEnd - 1; i >= Math.floor(budget * 0.4); i--) {
         if (remaining[i] === "\n") { splitAt = i + 1; break; }
       }
     }
     if (splitAt === -1) {
-      for (let i = windowEnd - 1; i >= Math.floor(maxLen * 0.4); i--) {
+      for (let i = windowEnd - 1; i >= Math.floor(budget * 0.4); i--) {
         if (remaining[i] === " ") { splitAt = i + 1; break; }
       }
     }
@@ -242,12 +289,9 @@ export function splitForTelegram(inputText, maxLen) {
   for (let i = 0; i < parts.length; i++) {
     if (parts[i] && parts[i].trim().length > 0) cleaned.push(parts[i]);
   }
-  const finalParts = cleaned.length > 0 ? cleaned : [inputText];
-  const total = finalParts.length;
-  if (total > 1) {
-    return finalParts.map(function (p, i) { return "[" + (i + 1) + "/" + total + "]\n" + p; });
-  }
-  return finalParts;
+  // Whitespace-only input: keep the (bounded) chunks rather than falling back to
+  // the original unbounded string.
+  return cleaned.length > 0 ? cleaned : parts;
 }
 
 export async function fetchWithTimeout(url, options, timeoutMs) {
@@ -261,15 +305,28 @@ export async function fetchWithTimeout(url, options, timeoutMs) {
   }
 }
 
+// ADMIN_IDS is a required deployment input (numeric ID(s), comma-separated).
+// Only strictly numeric entries count; invalid entries are surfaced for
+// reporting but can never match a numeric Telegram user ID.
+export function parseAdminIds(raw) {
+  const entries = String(raw == null ? "" : raw).split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+  const valid = [];
+  const invalid = [];
+  for (let i = 0; i < entries.length; i++) {
+    if (/^\d{1,20}$/.test(entries[i])) valid.push(entries[i]);
+    else invalid.push(entries[i]);
+  }
+  return { valid: valid, invalid: invalid, configured: valid.length > 0 };
+}
+
 export function isAdmin(env, userId) {
   if (!env.ADMIN_IDS) return false;
-  const ids = String(env.ADMIN_IDS).split(",").map(function (s) { return s.trim(); }).filter(Boolean);
-  return ids.indexOf(String(userId)) !== -1;
+  return parseAdminIds(env.ADMIN_IDS).valid.indexOf(String(userId)) !== -1;
 }
 
 export function getAdminIds(env) {
   if (!env.ADMIN_IDS) return [];
-  return String(env.ADMIN_IDS).split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+  return parseAdminIds(env.ADMIN_IDS).valid;
 }
 
 export function checkMemoryRate(key, limit, windowMs) {

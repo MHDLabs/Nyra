@@ -1,5 +1,5 @@
 // Nyra — storage: D1 schema, users/chats/threads, flow state, connections, usage stats.
-import { MAX_CONTEXT_MESSAGES, CONTEXT_TTL, USER_LAST_SEEN_INTERVAL, BOT_IDENTITY_TTL, BOT_IDENTITY_NEGATIVE_TTL, FLOW_TTL, CONNECTION_CACHE_TTL_MS, DEFAULT_PERSONALITIES } from "./config.js";
+import { MAX_CONTEXT_MESSAGES, CONTEXT_TTL, USER_LAST_SEEN_INTERVAL, BOT_IDENTITY_TTL, BOT_IDENTITY_NEGATIVE_TTL, FLOW_TTL, CONNECTION_CACHE_TTL_MS, DEFAULT_PERSONALITIES, SCHEMA_PROBE_INTERVAL_MS } from "./config.js";
 import { now, truncate, escapeRegex, generateShortId, containsNyraWord, isAdmin } from "./utils.js";
 import { encryptCredential } from "./crypto.js";
 import { tg } from "./telegram.js";
@@ -23,11 +23,15 @@ export async function ensureSchema(env) {
     "CREATE INDEX IF NOT EXISTS idx_conn_global ON ai_connections(is_global, enabled, is_default)",
     "CREATE TABLE IF NOT EXISTS thread_messages (chat_id INTEGER NOT NULL, message_id INTEGER NOT NULL, thread_id INTEGER NOT NULL, user_id INTEGER, role TEXT NOT NULL, content TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (chat_id, message_id))",
     "CREATE INDEX IF NOT EXISTS idx_thread_messages_thread ON thread_messages(chat_id, thread_id, created_at)",
-    "CREATE TABLE IF NOT EXISTS blocked_users (telegram_id INTEGER PRIMARY KEY, reason TEXT, blocked_at INTEGER NOT NULL, blocked_by INTEGER NOT NULL)"
+    "CREATE TABLE IF NOT EXISTS blocked_users (telegram_id INTEGER PRIMARY KEY, reason TEXT, blocked_at INTEGER NOT NULL, blocked_by INTEGER NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS processed_updates (update_id INTEGER PRIMARY KEY, received_at INTEGER NOT NULL)",
+    "CREATE INDEX IF NOT EXISTS idx_processed_updates_received ON processed_updates(received_at)",
+    "CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)"
   ];
+  const schemaErrors = [];
   for (let i = 0; i < statements.length; i++) {
     try { await env.DB.prepare(statements[i]).run(); }
-    catch (err) { console.error("Schema statement failed:", err.message); }
+    catch (err) { console.error("Schema statement failed:", err.message); schemaErrors.push(err.message); }
   }
   const alters = [
     ["users", "active_connection_id", "TEXT"],
@@ -47,11 +51,17 @@ export async function ensureSchema(env) {
       const cols = await env.DB.prepare("PRAGMA table_info(" + table + ")").all();
       const hasCol = (cols.results || []).some(function (c) { return c.name === column; });
       if (!hasCol) await env.DB.prepare("ALTER TABLE " + table + " ADD COLUMN " + column + " " + def).run();
-    } catch (err) { console.error("Alter " + table + "." + column + " failed:", err.message); }
+    } catch (err) {
+      // A concurrent isolate may have added the same column first — benign.
+      if (String(err.message || "").toLowerCase().indexOf("duplicate column") !== -1) continue;
+      console.error("Alter " + table + "." + column + " failed:", err.message);
+      schemaErrors.push(err.message);
+    }
   }
-  try { await env.DB.prepare("DROP TABLE IF EXISTS continuation_states").run(); } catch (err) {}
-  try { await env.DB.prepare("DELETE FROM personalities WHERE personality_id IN ('coder','professional') AND is_builtin = 1").run(); } catch (err) {}
-  try { await env.DB.prepare("UPDATE users SET personality_id = 'default', updated_at = ? WHERE personality_id IN ('coder','professional')").bind(now()).run(); } catch (err) {}
+  if (schemaErrors.length > 0) {
+    throw new Error("Schema initialization failed: " + schemaErrors.join("; "));
+  }
+  await runPendingMigrations(env);
   const ts = now();
   for (let i = 0; i < DEFAULT_PERSONALITIES.length; i++) {
     const p = DEFAULT_PERSONALITIES[i];
@@ -65,8 +75,84 @@ export async function ensureSchema(env) {
       } catch (e2) { console.error("Seed personality failed:", e2.message); }
     }
   }
-  try { await env.DB.prepare("DELETE FROM thread_messages WHERE created_at < ?").bind(now() - (CONTEXT_TTL * 2)).run(); } catch (err) {}
+  await runMaintenance(env);
   schemaReady = true;
+}
+
+// One-time, versioned schema/data migrations. Destructive statements live here —
+// they run exactly once (tracked in schema_migrations) instead of on every cold
+// start, and failures propagate instead of being swallowed.
+const MIGRATIONS = [
+  {
+    id: 1,
+    label: "drop legacy continuation_states; retire builtin coder/personality ids",
+    statements: [
+      "DROP TABLE IF EXISTS continuation_states",
+      "DELETE FROM personalities WHERE personality_id IN ('coder','professional') AND is_builtin = 1",
+      "UPDATE users SET personality_id = 'default', updated_at = CAST(strftime('%s','now') AS INTEGER) WHERE personality_id IN ('coder','professional')"
+    ]
+  }
+];
+
+async function runPendingMigrations(env) {
+  let appliedIds;
+  try {
+    const res = await env.DB.prepare("SELECT id FROM schema_migrations").all();
+    appliedIds = new Set((res.results || []).map(function (r) { return r.id; }));
+  } catch (err) {
+    console.error("schema_migrations read failed:", err.message);
+    throw err;
+  }
+  for (let i = 0; i < MIGRATIONS.length; i++) {
+    const m = MIGRATIONS[i];
+    if (appliedIds.has(m.id)) continue;
+    const batch = m.statements.map(function (sql) { return env.DB.prepare(sql); });
+    batch.push(env.DB.prepare("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)").bind(m.id, now()));
+    try {
+      await env.DB.batch(batch);
+      console.log("Applied schema migration " + m.id + ": " + m.label);
+    } catch (err) {
+      console.error("Schema migration " + m.id + " failed:", err.message);
+      throw err;
+    }
+  }
+}
+
+// Periodic, non-critical housekeeping. Runs at most once per day (KV marker),
+// marker written before the deletes so a failing delete does not hammer D1 on
+// every request. Failures are logged, never fatal to request handling.
+const PURGE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const UPDATE_DEDUP_RETENTION_S = 7 * 24 * 60 * 60;
+
+async function runMaintenance(env) {
+  try {
+    const marker = await env.KV.get("nyra:purge:last_run");
+    const last = marker ? parseInt(marker, 10) : 0;
+    const t = Date.now();
+    if (Number.isFinite(last) && t - last < PURGE_INTERVAL_MS) return;
+    await env.KV.put("nyra:purge:last_run", String(t), { expirationTtl: 172800 });
+    await env.DB.prepare("DELETE FROM thread_messages WHERE created_at < ?").bind(now() - (CONTEXT_TTL * 2)).run();
+    await env.DB.prepare("DELETE FROM processed_updates WHERE received_at < ?").bind(Math.floor(Date.now() / 1000) - UPDATE_DEDUP_RETENTION_S).run();
+    console.log("Maintenance purge completed.");
+  } catch (err) {
+    console.error("Maintenance purge failed:", err.message);
+  }
+}
+
+// KV-gated schema bootstrap for the zero-config path (status page + cron).
+// Marker written BEFORE ensureSchema — same discipline as the purge marker —
+// so a failing schema build cannot hammer D1 on every invocation.
+const SCHEMA_CHECK_KEY = "nyra:schema:checked_at";
+
+export async function maybeInitSchema(env) {
+  try {
+    const last = parseInt((await env.KV.get(SCHEMA_CHECK_KEY)) || "0", 10);
+    if (Number.isFinite(last) && Date.now() - last < SCHEMA_PROBE_INTERVAL_MS) return;
+    await env.KV.put(SCHEMA_CHECK_KEY, String(Date.now()), { expirationTtl: 86400 });
+    await ensureSchema(env);
+  } catch (err) {
+    console.error("Schema initialisation failed:", err.message);
+  }
 }
 
 export async function getBotIdentity(env) {

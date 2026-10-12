@@ -1,9 +1,9 @@
 // Nyra — entry point: AI message pipeline, update routing, webhook and setup endpoints.
 import { MAX_TELEGRAM_LENGTH, MEMORY_UPDATE_INTERVAL, RATE_LIMIT_USER_PER_MIN, RATE_LIMIT_USER_PER_HOUR, RATE_LIMIT_CHAT_PER_HOUR, RATE_LIMIT_ADMIN_PER_MIN, RATE_LIMIT_CALLBACK_PER_MIN, RATE_LIMIT_SETUP_PER_MIN, RATE_LIMIT_CONN_TEST_PER_MIN, MAX_PERSONALITY_PROMPT, MAX_PERSONALITY_DESC, MAX_CUSTOM_INSTRUCTIONS, UNHEALTHY_FAILURE_THRESHOLD, UNHEALTHY_WARN_TTL, OPENAI_DEFAULT_URL, ANTHROPIC_DEFAULT_URL, STREAM_EDIT_THROTTLE_MS, STREAM_PLACEHOLDER } from "./config.js";
-import { now, okResponse, jsonResponse, truncate, escapeHtml, stripTelegramHtml, constantTimeEqual, buildUserContent, isAdmin, checkMemoryRate, checkRateLimit } from "./utils.js";
-import { getMasterKey } from "./crypto.js";
-import { tg, sendMessageReturn, sendMessage, sendMessageSafeResult, answerCallback, editMessage, deleteMessage, buildInlineKeyboard, startTypingHeartbeat } from "./telegram.js";
-import { ensureSchema, getBotIdentity, getUser, upsertUser, getChat, recordGroupChatAndCheckAccess, isUserBlocked, saveThreadMessage, getThreadContext, isGroupTrigger, determineThreadId, getFlowState, setFlowState, clearFlowState, getUserConnectionById, deleteUserConnection, toggleUserConnection, setDefaultConnection, updateUserConnectionTest, updateUsageStatsAsync, resolveUserActiveConnection } from "./db.js";
+import { now, okResponse, jsonResponse, truncate, escapeHtml, stripTelegramHtml, constantTimeEqual, buildUserContent, isAdmin, parseAdminIds, checkMemoryRate, checkRateLimit } from "./utils.js";
+import { getMasterKey, initSecrets, getWebhookSecret } from "./crypto.js";
+import { tg, sendMessageReturn, sendMessage, sendMessageSafeResult, answerCallback, editMessage, deleteMessage, buildInlineKeyboard, startTypingHeartbeat, ensureWebhook } from "./telegram.js";
+import { ensureSchema, maybeInitSchema, getBotIdentity, getUser, upsertUser, getChat, recordGroupChatAndCheckAccess, isUserBlocked, saveThreadMessage, getThreadContext, isGroupTrigger, determineThreadId, getFlowState, setFlowState, clearFlowState, getUserConnectionById, deleteUserConnection, toggleUserConnection, setDefaultConnection, updateUserConnectionTest, updateUsageStatsAsync, resolveUserActiveConnection } from "./db.js";
 import { normalizeError, humanizeError, shouldNotifyAdmin, testUserConnectionById, tryStreamWithFallback, notifyAdminOnError } from "./ai.js";
 import { buildContextMessages, getUserPersonality, consolidateMemory, consolidateChatSummary, incrementMessageCount } from "./memory.js";
 import { showNoConnectionMessage, showSettingsMenu, showModelList, showPersonalitiesForUser, showMyPersonalities, showPersonalityDetail, showMemorySubmenu, showCustomInstructionsMenu, showUsage, showPrivacy, sourceSuffix, sourceBackButton, showMyConnections, resolveUserConnectionShortId } from "./menus.js";
@@ -616,9 +616,37 @@ async function processMessage(env, ctx, message) {
   await handleAIMessage(env, ctx, message, from, chat, false, chat.id);
 }
 
+// GET / — status page and bootstrap endpoint. Idempotent: initialises the
+// schema (KV-gated) and registers/verifies the Telegram webhook from the
+// request's own origin, so a fresh one-click deployment becomes functional the
+// first time anything loads it (the post-deploy probe, a human, or a monitor).
+async function handleStatus(request, env, adminIds) {
+  const clientIp = request.headers.get("CF-Connecting-IP") || "unknown";
+  if (!checkMemoryRate("status:" + clientIp, 30, 60000)) return new Response("Too Many Requests", { status: 429 });
+  await maybeInitSchema(env);
+  const hook = await ensureWebhook(env, new URL(request.url).origin);
+  const hookLine = hook.ok
+    ? hook.status + " → " + hook.url
+    : "problem: " + hook.status + (hook.detail ? " — " + hook.detail : "");
+  const adminLine = adminIds.configured
+    ? adminIds.valid.length + " configured" + (adminIds.invalid.length ? "; " + adminIds.invalid.length + " non-numeric entr" + (adminIds.invalid.length === 1 ? "y" : "ies") + " ignored" : "")
+    : "NOT CONFIGURED — set ADMIN_IDS to your numeric Telegram user ID(s) in wrangler.toml [vars] and redeploy";
+  const body = [
+    "Nyra is running.",
+    "",
+    "Webhook:   " + hookLine,
+    "Admin IDs: " + adminLine,
+    "Queue:     " + (env.NYRA_QUEUE ? "bound (NYRA_QUEUE)" : "MISSING — check the queues config in wrangler.toml"),
+    "",
+    adminIds.configured ? "Send /start to the bot in Telegram." : "Admin commands are disabled until ADMIN_IDS is set."
+  ].join("\n");
+  return new Response(body, { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+}
+
 async function handleWebhook(request, env, ctx) {
   const secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "";
-  if (!env.TELEGRAM_SECRET || !constantTimeEqual(secret, env.TELEGRAM_SECRET)) {
+  const expectedSecret = await getWebhookSecret(env);
+  if (!expectedSecret || !constantTimeEqual(secret, expectedSecret)) {
     return new Response("Unauthorized", { status: 401 });
   }
   const masterKey = getMasterKey(env);
@@ -632,12 +660,36 @@ async function handleWebhook(request, env, ctx) {
     console.error("ensureSchema failed:", err.message);
     return new Response("Service Unavailable", { status: 503 });
   }
-  ctx.waitUntil((async function () {
+  if (!env.NYRA_QUEUE) {
+    console.error("NYRA_QUEUE binding is missing. Deploy with the queue configuration from wrangler.toml.");
+    return new Response("Service Unavailable", { status: 503 });
+  }
+  // Durable acceptance: deduplicate by update_id, then enqueue before acking.
+  // Telegram retries on non-2xx, so an enqueue failure must free the dedup slot.
+  const updateId = typeof update.update_id === "number" ? update.update_id : null;
+  if (updateId !== null) {
+    let firstDelivery = true;
     try {
-      if (update.message) await processMessage(env, ctx, update.message);
-      else if (update.callback_query) await handleCallbackQuery(env, ctx, update.callback_query);
-    } catch (err) { console.error("Update processing failed:", err.message); }
-  })());
+      const inserted = await env.DB.prepare(
+        "INSERT INTO processed_updates (update_id, received_at) VALUES (?, ?) ON CONFLICT(update_id) DO NOTHING RETURNING update_id"
+      ).bind(updateId, Math.floor(Date.now() / 1000)).first();
+      firstDelivery = inserted != null;
+    } catch (err) {
+      console.error("update dedup insert failed:", err.message);
+      return new Response("Service Unavailable", { status: 503 });
+    }
+    if (!firstDelivery) return okResponse();
+  }
+  try {
+    await env.NYRA_QUEUE.send({ update: update });
+  } catch (err) {
+    console.error("update enqueue failed:", err.message);
+    if (updateId !== null) {
+      try { await env.DB.prepare("DELETE FROM processed_updates WHERE update_id = ?").bind(updateId).run(); }
+      catch (e) { console.error("dedup rollback failed:", e.message); }
+    }
+    return new Response("Service Unavailable", { status: 503 });
+  }
   return okResponse();
 }
 
@@ -646,19 +698,25 @@ async function handleSetup(request, env) {
   if (url.pathname !== "/setup") return new Response("Not Found", { status: 404 });
   const clientIp = request.headers.get("CF-Connecting-IP") || "unknown";
   if (!checkMemoryRate("setup:" + clientIp, RATE_LIMIT_SETUP_PER_MIN, 60000)) return new Response("Too Many Requests", { status: 429 });
-  const setupSecret = url.searchParams.get("secret") || "";
-  if (!env.TELEGRAM_SECRET || !constantTimeEqual(setupSecret, env.TELEGRAM_SECRET)) return new Response("Unauthorized", { status: 401 });
+  if (url.searchParams.has("secret")) {
+    // Secrets in the query string leak into logs/history/referrers — header only.
+    console.error("Rejected /setup request: secret provided via query string. Use the X-Setup-Secret header.");
+    return new Response("Unauthorized", { status: 401 });
+  }
+  const setupSecret = request.headers.get("X-Setup-Secret") || "";
+  const expectedSecret = await getWebhookSecret(env);
+  if (!expectedSecret || !constantTimeEqual(setupSecret, expectedSecret)) return new Response("Unauthorized", { status: 401 });
   const webhookUrl = url.searchParams.get("url");
   if (!webhookUrl) return new Response("Missing url parameter", { status: 400 });
   if (!webhookUrl.startsWith("https://")) return new Response("Webhook URL must use HTTPS", { status: 400 });
   try {
     const parsed = new URL(webhookUrl);
     if (parsed.host !== url.host) return new Response("Webhook URL must match this worker's host", { status: 400 });
-    if (!parsed.pathname.endsWith("/webhook")) return new Response("Webhook URL path must end with /webhook", { status: 400 });
+    if (parsed.pathname !== "/webhook") return new Response("Webhook URL path must be exactly /webhook", { status: 400 });
   } catch (err) { return new Response("Invalid webhook URL", { status: 400 }); }
   const result = await tg(env, "setWebhook", {
     url: webhookUrl,
-    secret_token: env.TELEGRAM_SECRET,
+    secret_token: expectedSecret,
     allowed_updates: ["message", "callback_query"],
     drop_pending_updates: true
   });
@@ -668,18 +726,61 @@ async function handleSetup(request, env) {
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_SECRET) {
-      console.error("Missing required environment configuration");
+    if (!env.TELEGRAM_BOT_TOKEN) {
+      console.error("TELEGRAM_BOT_TOKEN is not set.");
       return new Response("Server misconfigured", { status: 500 });
+    }
+    try { await initSecrets(env); } catch (err) {
+      console.error("Secret derivation failed:", err.message);
+      return new Response("Server misconfigured: secrets", { status: 500 });
     }
     if (!getMasterKey(env)) {
       console.error("ENCRYPTION_KEY missing or invalid.");
       return new Response("Server misconfigured: encryption key", { status: 500 });
     }
-    if (!env.ADMIN_IDS) console.error("ADMIN_IDS is not set.");
+    // ADMIN_IDS is a required one-click-deploy input; enforce at runtime so a
+    // missing/typo'd value is loud (status page + logs) instead of silent.
+    const adminIds = parseAdminIds(env.ADMIN_IDS);
+    if (!adminIds.configured) console.error("ADMIN_IDS is not set to numeric Telegram user ID(s) — admin commands are disabled.");
+    else if (adminIds.invalid.length) console.error("ADMIN_IDS has non-numeric entries (ignored): " + adminIds.invalid.join(", "));
     if (request.method === "POST" && url.pathname === "/webhook") return await handleWebhook(request, env, ctx);
     if (request.method === "GET" && url.pathname === "/setup") return await handleSetup(request, env);
-    if (request.method === "GET" && url.pathname === "/") return new Response("Nyra is running.", { status: 200 });
+    if (request.method === "GET" && url.pathname === "/") return await handleStatus(request, env, adminIds);
     return new Response("Not Found", { status: 404 });
+  },
+  // Cron: self-healing — schema probe (KV-gated) plus webhook re-verification
+  // of the learned URL (no-op until GET / has learned the origin). Runs every
+  // 5 minutes via [triggers] in wrangler.toml.
+  async scheduled(event, env, ctx) {
+    if (!env.TELEGRAM_BOT_TOKEN) return;
+    try { await initSecrets(env); } catch (err) {
+      console.error("Secret derivation failed:", err.message);
+      return;
+    }
+    await maybeInitSchema(env);
+    const res = await ensureWebhook(env, null);
+    if (!res.ok && res.status !== "awaiting_first_request") {
+      console.error("Webhook re-check failed [" + res.status + "]:" + (res.detail ? " " + res.detail : ""));
+    }
+  },
+  // Queue consumer: runs the full AI pipeline outside the webhook request lifecycle.
+  // Consumer invocations allow long wall time (vs. the 30s post-response waitUntil cap),
+  // so streaming, fallbacks, consolidation and heartbeats are no longer cut off at 30s.
+  async queue(batch, env, ctx) {
+    if (env.TELEGRAM_BOT_TOKEN) {
+      try { await initSecrets(env); } catch (err) { console.error("Secret derivation failed:", err.message); }
+    }
+    for (let i = 0; i < batch.messages.length; i++) {
+      const msg = batch.messages[i];
+      const update = msg.body && msg.body.update;
+      try {
+        if (update && update.message) await processMessage(env, ctx, update.message);
+        else if (update && update.callback_query) await handleCallbackQuery(env, ctx, update.callback_query);
+        msg.ack();
+      } catch (err) {
+        console.error("Queued update processing failed:", err.message);
+        try { msg.retry(); } catch (e) { console.error("queue retry failed:", e.message); }
+      }
+    }
   }
 };

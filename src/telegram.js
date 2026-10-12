@@ -1,6 +1,7 @@
 // Nyra — Telegram Bot API layer: calls, send/edit/delete, keyboards, typing heartbeat.
-import { TELEGRAM_API, MAX_TELEGRAM_LENGTH, TELEGRAM_TIMEOUT_MS, TELEGRAM_RETRY_MAX, TELEGRAM_RETRY_WAIT_CAP_MS, TYPING_HEARTBEAT_MS } from "./config.js";
+import { TELEGRAM_API, MAX_TELEGRAM_LENGTH, TELEGRAM_TIMEOUT_MS, TELEGRAM_RETRY_MAX, TELEGRAM_RETRY_WAIT_CAP_MS, TYPING_HEARTBEAT_MS, WEBHOOK_RECHECK_MS, WEBHOOK_ATTEMPT_GUARD_MS } from "./config.js";
 import { truncate, sleep, splitForTelegram, fetchWithTimeout } from "./utils.js";
+import { getWebhookSecret } from "./crypto.js";
 
 export async function tg(env, method, payload, attempt) {
   const currentAttempt = attempt || 0;
@@ -24,6 +25,77 @@ export async function tg(env, method, payload, attempt) {
   } catch (err) {
     console.error("Telegram fetch failed [" + method + "]:", err.message);
     return { ok: false, description: err.message };
+  }
+}
+
+// --- Automatic webhook registration (zero-config deployment) ---------------
+// The Worker registers its own Telegram webhook without any user step:
+//   * GET / (hit by the post-deploy probe) learns the public origin from the
+//     incoming request and registers it;
+//   * the scheduled handler re-verifies the learned URL (Telegram-side
+//     deletions then self-heal within one cron interval).
+// KV state bounds Telegram API traffic: at most one verification per
+// WEBHOOK_ATTEMPT_GUARD_MS, full re-checks at most per WEBHOOK_RECHECK_MS.
+const WEBHOOK_STATE_KEY = "nyra:webhook:state";
+
+async function readWebhookState(env) {
+  try {
+    const raw = await env.KV.get(WEBHOOK_STATE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (err) {
+    console.error("Webhook state read failed:", err.message);
+    return null;
+  }
+}
+
+async function writeWebhookState(env, state) {
+  try { await env.KV.put(WEBHOOK_STATE_KEY, JSON.stringify(state)); }
+  catch (err) { console.error("Webhook state write failed:", err.message); }
+}
+
+// origin: public origin (scheme://host) of the current request, or null from
+// the scheduled handler — then the already-learned URL is re-verified.
+export async function ensureWebhook(env, origin) {
+  try {
+    if (!env.TELEGRAM_BOT_TOKEN) return { ok: false, status: "no_token" };
+    const state = await readWebhookState(env);
+    const target = origin || (state && state.url) || null;
+    if (!target) return { ok: false, status: "awaiting_first_request" };
+    const nowMs = Date.now();
+    const webhookUrl = target.replace(/\/+$/, "") + "/webhook";
+    if (state && state.verifiedAt && nowMs - state.verifiedAt < WEBHOOK_RECHECK_MS && state.url === target) {
+      return { ok: true, status: "cached", url: webhookUrl };
+    }
+    if (state && state.attemptedAt && nowMs - state.attemptedAt < WEBHOOK_ATTEMPT_GUARD_MS) {
+      return { ok: false, status: "busy", url: state.url ? state.url.replace(/\/+$/, "") + "/webhook" : null };
+    }
+    // Claim the attempt window BEFORE any Telegram call (hammering guard).
+    await writeWebhookState(env, {
+      url: (state && state.url) || null,
+      attemptedAt: nowMs,
+      verifiedAt: (state && state.verifiedAt) || 0
+    });
+    const info = await tg(env, "getWebhookInfo", {});
+    if (info && info.ok && info.result && info.result.url === webhookUrl) {
+      await writeWebhookState(env, { url: target, attemptedAt: 0, verifiedAt: nowMs });
+      return { ok: true, status: "verified", url: webhookUrl };
+    }
+    const secret = await getWebhookSecret(env);
+    if (!secret) return { ok: false, status: "no_secret" };
+    const set = await tg(env, "setWebhook", {
+      url: webhookUrl,
+      secret_token: secret,
+      allowed_updates: ["message", "callback_query"]
+    });
+    if (set && set.ok) {
+      await writeWebhookState(env, { url: target, attemptedAt: 0, verifiedAt: nowMs });
+      console.log("Webhook registered: " + webhookUrl);
+      return { ok: true, status: "registered", url: webhookUrl };
+    }
+    return { ok: false, status: "error", detail: (set && set.description) || "setWebhook failed" };
+  } catch (err) {
+    console.error("ensureWebhook failed:", err.message);
+    return { ok: false, status: "error", detail: err.message };
   }
 }
 

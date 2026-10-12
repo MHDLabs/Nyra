@@ -24,10 +24,23 @@ export const AI_TEST_MAX_TOKENS = 16;
 export const TELEGRAM_TIMEOUT_MS = 10000;
 export const USER_LAST_SEEN_INTERVAL = 3600;
 export const TELEGRAM_RETRY_MAX = 1;
-export const TELEGRAM_RETRY_WAIT_CAP_MS = 3000;
+// Honor Telegram's retry_after up to 10s (was 3s): under-honoring a 429 backoff
+// risks secondary flood limits. Long sleeps are safe now that Telegram API calls
+// run inside queue consumers, not before the webhook ack.
+export const TELEGRAM_RETRY_WAIT_CAP_MS = 10000;
 export const CALLBACK_ID_MAX = 40;
 export const BOT_IDENTITY_TTL = 3600000;
 export const BOT_IDENTITY_NEGATIVE_TTL = 60000;
+// --- One-click deployment / self-healing ---------------------------------
+// Re-verify the Telegram webhook registration at most this often (GET / and
+// the */5 cron share the KV state).
+export const WEBHOOK_RECHECK_MS = 6 * 60 * 60 * 1000;
+// Hard cap on Telegram webhook-verification calls: one attempt per window,
+// regardless of how often the public status page is hit.
+export const WEBHOOK_ATTEMPT_GUARD_MS = 60000;
+// Cron: run the schema/maintenance probe at most this often (KV marker gate —
+// keeps D1 statement traffic negligible on the free plan).
+export const SCHEMA_PROBE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 export const CONSOLIDATE_USER_TRUNCATE = 800;
 export const CONSOLIDATE_ASSISTANT_TRUNCATE = 2000;
 export const FLOW_TTL = 1200;

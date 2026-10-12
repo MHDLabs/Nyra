@@ -49,7 +49,18 @@ export function serializeMemoryData(data) {
   s = JSON.stringify(cleaned);
   if (s.length <= MEMORY_MAX_CHARS) return s;
   delete cleaned.explicit_facts;
-  return JSON.stringify(cleaned);
+  s = JSON.stringify(cleaned);
+  if (s.length <= MEMORY_MAX_CHARS) return s;
+  // Final hard clamp: drop fields one by one until the payload fits. Without
+  // this, oversized individual fields (long name/style, large lists) could push
+  // the serialized form past MEMORY_MAX_CHARS.
+  const clampOrder = ["interests", "tools", "projects", "communication_style", "preferred_name"];
+  for (let i = 0; i < clampOrder.length; i++) {
+    delete cleaned[clampOrder[i]];
+    s = JSON.stringify(cleaned);
+    if (s.length <= MEMORY_MAX_CHARS) return s;
+  }
+  return JSON.stringify({ last_updated: cleaned.last_updated || now() });
 }
 
 export function formatMemoryForUser(raw, mode) {

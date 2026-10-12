@@ -191,10 +191,10 @@ export async function showUsage(env, chatId, messageId, userId) {
 
 export async function showPrivacy(env, chatId, messageId) {
   const text = "<b>Privacy</b>\n\n" +
-    "• Nyra stores a lightweight profile and a small structured memory.\n" +
+    "• Nyra stores a lightweight profile, a small structured memory, and recent conversation context for your chats.\n" +
+    "• Memory and conversations are stored in the project database; credentials are encrypted at rest, memory text is not.\n" +
     "• AI models are configured by administrators and shared across users.\n" +
-    "• Credentials are encrypted at rest and never exposed.\n" +
-    "• Admins cannot read your memory or conversations.\n\n" +
+    "• The app never shows your memory or conversations to other users — including admins.\n\n" +
     "Change memory behavior in Memory.";
   await editMessage(env, chatId, messageId, text, buildInlineKeyboard([[{ text: "Back", callback_data: "set:menu" }]]), "HTML");
 }
