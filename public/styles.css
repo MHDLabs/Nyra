@@ -1,0 +1,353 @@
+:root {
+  --tg-theme-bg-color: #ffffff;
+  --tg-theme-text-color: #000000;
+  --tg-theme-hint-color: #999999;
+  --tg-theme-link-color: #2481cc;
+  --tg-theme-button-color: #2481cc;
+  --tg-theme-button-text-color: #ffffff;
+  --tg-theme-secondary-bg-color: #f4f4f5;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+  background-color: var(--tg-theme-bg-color);
+  color: var(--tg-theme-text-color);
+  line-height: 1.5;
+  overflow-x: hidden;
+}
+
+#app {
+  min-height: 100vh;
+  padding-bottom: 20px;
+}
+
+.loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  gap: 16px;
+}
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--tg-theme-hint-color);
+  border-top-color: var(--tg-theme-button-color);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.header {
+  background: var(--tg-theme-secondary-bg-color);
+  padding: 16px;
+  border-bottom: 1px solid rgba(0,0,0,0.1);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.header h1 {
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.nav {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  overflow-x: auto;
+  border-bottom: 1px solid rgba(0,0,0,0.1);
+  -webkit-overflow-scrolling: touch;
+}
+
+.nav-btn {
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  color: var(--tg-theme-hint-color);
+  font-size: 15px;
+  white-space: nowrap;
+  cursor: pointer;
+  border-radius: 12px;
+  transition: all 0.2s;
+}
+
+.nav-btn.active {
+  background: var(--tg-theme-button-color);
+  color: var(--tg-theme-button-text-color);
+}
+
+.content {
+  padding: 16px;
+}
+
+.section {
+  display: none;
+}
+
+.section.active {
+  display: block;
+}
+
+.card {
+  background: var(--tg-theme-secondary-bg-color);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 12px;
+}
+
+.card-title {
+  font-size: 17px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.card-subtitle {
+  font-size: 14px;
+  color: var(--tg-theme-hint-color);
+  margin-bottom: 12px;
+}
+
+.card-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(0,0,0,0.05);
+}
+
+.card-row:last-child {
+  border-bottom: none;
+}
+
+.card-label {
+  font-size: 15px;
+}
+
+.card-value {
+  font-size: 15px;
+  color: var(--tg-theme-hint-color);
+}
+
+.btn {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  border: none;
+  background: var(--tg-theme-button-color);
+  color: var(--tg-theme-button-text-color);
+  font-size: 16px;
+  border-radius: 12px;
+  cursor: pointer;
+  margin-top: 12px;
+  transition: opacity 0.2s;
+}
+
+.btn:active {
+  opacity: 0.7;
+}
+
+.btn-secondary {
+  background: var(--tg-theme-secondary-bg-color);
+  color: var(--tg-theme-text-color);
+}
+
+.btn-danger {
+  background: #e53935;
+  color: white;
+}
+
+.list-item {
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(0,0,0,0.05);
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.list-item:active {
+  opacity: 0.7;
+}
+
+.list-item:last-child {
+  border-bottom: none;
+}
+
+.list-item-title {
+  font-size: 16px;
+  margin-bottom: 4px;
+}
+
+.list-item-subtitle {
+  font-size: 14px;
+  color: var(--tg-theme-hint-color);
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--tg-theme-button-color);
+  color: var(--tg-theme-button-text-color);
+}
+
+.badge-success {
+  background: #4caf50;
+  color: white;
+}
+
+.badge-warning {
+  background: #ff9800;
+  color: white;
+}
+
+.badge-danger {
+  background: #e53935;
+  color: white;
+}
+
+.empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--tg-theme-hint-color);
+}
+
+.chat-container {
+  height: calc(100vh - 160px);
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.message {
+  margin-bottom: 16px;
+  display: flex;
+  gap: 8px;
+}
+
+.message-user {
+  flex-direction: row-reverse;
+}
+
+.message-bubble {
+  max-width: 75%;
+  padding: 10px 14px;
+  border-radius: 16px;
+  word-wrap: break-word;
+}
+
+.message-user .message-bubble {
+  background: var(--tg-theme-button-color);
+  color: var(--tg-theme-button-text-color);
+  border-top-right-radius: 4px;
+}
+
+.message-assistant .message-bubble {
+  background: var(--tg-theme-secondary-bg-color);
+  border-top-left-radius: 4px;
+}
+
+.message-time {
+  font-size: 12px;
+  color: var(--tg-theme-hint-color);
+  margin-top: 4px;
+}
+
+.input-container {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 12px 16px;
+  background: var(--tg-theme-bg-color);
+  border-top: 1px solid rgba(0,0,0,0.1);
+}
+
+.input-wrapper {
+  display: flex;
+  gap: 8px;
+}
+
+.input-field {
+  flex: 1;
+  padding: 10px 14px;
+  border: 1px solid rgba(0,0,0,0.1);
+  border-radius: 20px;
+  font-size: 15px;
+  background: var(--tg-theme-secondary-bg-color);
+  color: var(--tg-theme-text-color);
+}
+
+.send-btn {
+  width: 40px;
+  height: 40px;
+  border: none;
+  background: var(--tg-theme-button-color);
+  color: var(--tg-theme-button-text-color);
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.admin-section {
+  border-top: 2px solid var(--tg-theme-button-color);
+  margin-top: 20px;
+  padding-top: 20px;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.stat-card {
+  background: var(--tg-theme-secondary-bg-color);
+  padding: 16px;
+  border-radius: 12px;
+  text-align: center;
+}
+
+.stat-value {
+  font-size: 24px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.stat-label {
+  font-size: 13px;
+  color: var(--tg-theme-hint-color);
+}
+
+.error {
+  background: #ffebee;
+  color: #c62828;
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.success {
+  background: #e8f5e9;
+  color: #2e7d32;
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-size: 14px;
+}

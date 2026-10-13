@@ -3,12 +3,16 @@ import { MAX_TELEGRAM_LENGTH, MEMORY_UPDATE_INTERVAL, RATE_LIMIT_USER_PER_MIN, R
 import { now, okResponse, jsonResponse, truncate, escapeHtml, stripTelegramHtml, constantTimeEqual, buildUserContent, isAdmin, parseAdminIds, checkMemoryRate, checkRateLimit } from "./utils.js";
 import { getMasterKey, initSecrets, getWebhookSecret } from "./crypto.js";
 import { tg, sendMessageReturn, sendMessage, sendMessageSafeResult, answerCallback, editMessage, deleteMessage, buildInlineKeyboard, startTypingHeartbeat, ensureWebhook } from "./telegram.js";
-import { ensureSchema, maybeInitSchema, getBotIdentity, getUser, upsertUser, getChat, recordGroupChatAndCheckAccess, isUserBlocked, saveThreadMessage, getThreadContext, isGroupTrigger, determineThreadId, getFlowState, setFlowState, clearFlowState, getUserConnectionById, deleteUserConnection, toggleUserConnection, setDefaultConnection, updateUserConnectionTest, updateUsageStatsAsync, resolveUserActiveConnection } from "./db.js";
+import { ensureSchema, maybeInitSchema, getBotIdentity, getUser, upsertUser, getChat, recordGroupChatAndCheckAccess, isUserBlocked, saveThreadMessage, getThreadContext, isGroupTrigger, determineThreadId, getFlowState, setFlowState, clearFlowState, getUserConnectionById, deleteUserConnection, toggleUserConnection, setDefaultConnection, updateUserConnectionTest, updateUsageStatsAsync, resolveUserActiveConnection, trackConnectionUsage } from "./db.js";
 import { normalizeError, humanizeError, shouldNotifyAdmin, testUserConnectionById, tryStreamWithFallback, notifyAdminOnError } from "./ai.js";
 import { buildContextMessages, getUserPersonality, consolidateMemory, consolidateChatSummary, incrementMessageCount } from "./memory.js";
 import { showNoConnectionMessage, showSettingsMenu, showModelList, showPersonalitiesForUser, showMyPersonalities, showPersonalityDetail, showMemorySubmenu, showCustomInstructionsMenu, showUsage, showPrivacy, sourceSuffix, sourceBackButton, showMyConnections, resolveUserConnectionShortId } from "./menus.js";
 import { startAddConnectionFlow, startEditConnectionFlow, flowPromptLabel, flowPromptApiKey, handleFlowMessage, handleFlowSkip, flowFetchModels, showModelPage, flowSelectModel, finalizeConnectionFromFlow } from "./flows.js";
 import { showAdminMenu, showAdminUsers, showAdminGroups, showAdminBlocked, showAdminStats, showAdminStatus, handleUserCommand } from "./commands.js";
+import { serveStatic, routeMiniAppAPI } from "./miniapp.js";
+import { getStaticAsset, getContentType } from "./assets.js";
+import { shouldReact, trySetReaction } from "./reactions.js";
+import { safeFormat } from "./formatter.js";
 
 async function handleAIMessage(env, ctx, message, from, chat, isGroup, threadId) {
   const userId = from.id;
@@ -170,23 +174,33 @@ async function handleAIMessage(env, ctx, message, from, chat, isGroup, threadId)
   }
 
   updateUsageStatsAsync(env, ctx, userId, true, null, finalUsage);
+  
+  // Track connection usage metrics
+  if (finalConn) {
+    const totalTokens = finalUsage ? ((finalUsage.in || 0) + (finalUsage.out || 0)) : 0;
+    ctx.waitUntil(trackConnectionUsage(env, finalConn.connection_id, userId, totalTokens));
+  }
+  
   const replyText = accumulated || "(empty response)";
+  const formatted = safeFormat(replyText, "HTML");
+  const sendText = formatted.text;
+  const parseMode = formatted.parseMode;
 
   let finalMsgId = placeholderMsgId;
-  if (accumulated.length > MAX_TELEGRAM_LENGTH) {
+  if (sendText.length > MAX_TELEGRAM_LENGTH) {
     await deleteMessage(env, chatId, placeholderMsgId);
-    const sentResult = await sendMessageReturn(env, chatId, accumulated, { parse_mode: "HTML", reply_to_message_id: replyToId });
+    const sentResult = await sendMessageReturn(env, chatId, sendText, { parse_mode: parseMode, reply_to_message_id: replyToId });
     if (sentResult && sentResult.ok && sentResult.result && typeof sentResult.result.message_id === "number") {
       finalMsgId = sentResult.result.message_id;
     }
-    await saveThreadMessage(env, chatId, threadId, finalMsgId, null, "assistant", accumulated);
+    await saveThreadMessage(env, chatId, threadId, finalMsgId, null, "assistant", replyText);
   } else {
-    const finalEdit = await editMessage(env, chatId, placeholderMsgId, replyText, undefined, "HTML");
+    const finalEdit = await editMessage(env, chatId, placeholderMsgId, sendText, undefined, parseMode);
     if (!finalEdit || !finalEdit.ok) {
       const desc = String(finalEdit ? finalEdit.description : "").toLowerCase();
       if (desc.indexOf("not modified") === -1) {
         await deleteMessage(env, chatId, placeholderMsgId);
-        const sentNew = await sendMessageReturn(env, chatId, replyText, { parse_mode: "HTML", reply_to_message_id: replyToId });
+        const sentNew = await sendMessageReturn(env, chatId, sendText, { parse_mode: parseMode, reply_to_message_id: replyToId });
         if (sentNew && sentNew.ok && sentNew.result && typeof sentNew.result.message_id === "number") {
           finalMsgId = sentNew.result.message_id;
         }
@@ -198,12 +212,16 @@ async function handleAIMessage(env, ctx, message, from, chat, isGroup, threadId)
   const counter = await incrementMessageCount(env, userId);
   if (counter >= MEMORY_UPDATE_INTERVAL && mode !== "none") {
     ctx.waitUntil((async function () {
-      const updatedUser = await getUser(env, userId);
-      const updatedContext = await getThreadContext(env, chatId, threadId);
-      await consolidateMemory(env, updatedUser, updatedContext, { user: userContent, assistant: replyText });
-      if (isGroup) {
-        const updatedChat = await getChat(env, chatId);
-        await consolidateChatSummary(env, updatedChat, userId, updatedContext, { user: userContent, assistant: replyText });
+      try {
+        const updatedUser = await getUser(env, userId);
+        const updatedContext = await getThreadContext(env, chatId, threadId);
+        await consolidateMemory(env, updatedUser, updatedContext, { user: userContent, assistant: replyText });
+        if (isGroup) {
+          const updatedChat = await getChat(env, chatId);
+          await consolidateChatSummary(env, updatedChat, userId, updatedContext, { user: userContent, assistant: replyText });
+        }
+      } catch (err) {
+        console.error("Memory consolidation background task failed:", err.message);
       }
     })());
   }
@@ -605,6 +623,12 @@ async function processMessage(env, ctx, message) {
   if (!hasContent) return;
 
   if (isGroup) {
+    // Try to set reaction (independent, fire-and-forget)
+    if (shouldReact(message, true)) {
+      const reactionText = message.text || message.caption || "";
+      trySetReaction(env, ctx, chat.id, message.message_id, reactionText);
+    }
+    
     const identity = await getBotIdentity(env);
     const trigger = isGroupTrigger(message, identity);
     if (!trigger.trigger) return;
@@ -743,9 +767,37 @@ export default {
     const adminIds = parseAdminIds(env.ADMIN_IDS);
     if (!adminIds.configured) console.error("ADMIN_IDS is not set to numeric Telegram user ID(s) — admin commands are disabled.");
     else if (adminIds.invalid.length) console.error("ADMIN_IDS has non-numeric entries (ignored): " + adminIds.invalid.join(", "));
+    // Webhook endpoint
     if (request.method === "POST" && url.pathname === "/webhook") return await handleWebhook(request, env, ctx);
+    
+    // Setup endpoint (admin only)
     if (request.method === "GET" && url.pathname === "/setup") return await handleSetup(request, env);
-    if (request.method === "GET" && url.pathname === "/") return await handleStatus(request, env, adminIds);
+    
+    // Mini App API endpoints
+    if (url.pathname.startsWith("/api/")) {
+      return await routeMiniAppAPI(env, ctx, request, url.pathname);
+    }
+    
+    // Mini App static files
+    const staticFile = serveStatic(url.pathname);
+    if (staticFile) {
+      const content = getStaticAsset(staticFile.file);
+      if (content) {
+        return new Response(content, {
+          status: 200,
+          headers: { 
+            "Content-Type": getContentType(staticFile.file),
+            "Cache-Control": "public, max-age=3600"
+          }
+        });
+      }
+    }
+    
+    // Status endpoint (fallback for root)
+    if (request.method === "GET" && url.pathname === "/") {
+      return await handleStatus(request, env, adminIds);
+    }
+    
     return new Response("Not Found", { status: 404 });
   },
   // Cron: self-healing — schema probe (KV-gated) plus webhook re-verification
@@ -770,6 +822,23 @@ export default {
     if (env.TELEGRAM_BOT_TOKEN) {
       try { await initSecrets(env); } catch (err) { console.error("Secret derivation failed:", err.message); }
     }
+    await ensureSchema(env);
+    const queueName = batch.queue || "nyra-updates";
+    // DLQ consumer: log permanently failed updates
+    if (queueName === "nyra-updates-dlq") {
+      for (let i = 0; i < batch.messages.length; i++) {
+        const msg = batch.messages[i];
+        try {
+          await logFailedUpdate(env, msg);
+          msg.ack();
+        } catch (err) {
+          console.error("DLQ logging failed:", err.message);
+          msg.ack(); // Ack anyway to prevent infinite loop
+        }
+      }
+      return;
+    }
+    // Main queue consumer
     for (let i = 0; i < batch.messages.length; i++) {
       const msg = batch.messages[i];
       const update = msg.body && msg.body.update;

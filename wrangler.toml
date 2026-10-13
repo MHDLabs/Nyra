@@ -44,6 +44,11 @@ database_name = "nyra"
 [[kv_namespaces]]
 binding = "KV"
 
+# Workers AI — available on all plans (generous free tier)
+# Used exclusively for reaction classification (sentiment analysis)
+[ai]
+binding = "AI"
+
 # Queue: the Telegram webhook acks immediately and hands every update to this
 # queue. The consumer runs the full AI pipeline with the long wall time that
 # queue invocations allow (a webhook request itself would be capped at 30s of
@@ -55,3 +60,16 @@ queue = "nyra-updates"
 [[queues.consumers]]
 queue = "nyra-updates"
 max_retries = 3
+max_batch_size = 10
+max_batch_timeout = 5
+dead_letter_queue = "nyra-updates-dlq"
+
+# Dead-letter queue for permanently failed updates (after 3 retries)
+[[queues.producers]]
+binding = "NYRA_DLQ"
+queue = "nyra-updates-dlq"
+
+[[queues.consumers]]
+queue = "nyra-updates-dlq"
+max_batch_size = 10
+max_batch_timeout = 30

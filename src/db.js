@@ -37,6 +37,7 @@ export async function ensureSchema(env) {
     ["users", "active_connection_id", "TEXT"],
     ["users", "fallback_enabled", "INTEGER DEFAULT 1"],
     ["users", "msg_counter", "INTEGER DEFAULT 0"],
+    ["users", "coding_mode", "INTEGER DEFAULT 0"],
     ["ai_connections", "is_global", "INTEGER DEFAULT 0"],
     ["ai_connections", "is_default", "INTEGER DEFAULT 0"],
     ["ai_connections", "description", "TEXT"],
@@ -91,6 +92,33 @@ const MIGRATIONS = [
       "DELETE FROM personalities WHERE personality_id IN ('coder','professional') AND is_builtin = 1",
       "UPDATE users SET personality_id = 'default', updated_at = CAST(strftime('%s','now') AS INTEGER) WHERE personality_id IN ('coder','professional')"
     ]
+  },
+  {
+    id: 2,
+    label: "add broadcast tables for admin mass-messaging",
+    statements: [
+      "CREATE TABLE IF NOT EXISTS broadcasts (broadcast_id TEXT PRIMARY KEY, created_by INTEGER NOT NULL, message TEXT NOT NULL, target_type TEXT NOT NULL, target_filter TEXT, status TEXT DEFAULT 'draft', total_count INTEGER DEFAULT 0, sent_count INTEGER DEFAULT 0, failed_count INTEGER DEFAULT 0, created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER)",
+      "CREATE INDEX IF NOT EXISTS idx_broadcasts_status ON broadcasts(status, created_at)",
+      "CREATE TABLE IF NOT EXISTS broadcast_recipients (id INTEGER PRIMARY KEY AUTOINCREMENT, broadcast_id TEXT NOT NULL, recipient_id INTEGER NOT NULL, status TEXT DEFAULT 'pending', error_message TEXT, created_at INTEGER NOT NULL, sent_at INTEGER, UNIQUE(broadcast_id, recipient_id))",
+      "CREATE INDEX IF NOT EXISTS idx_broadcast_recipients_status ON broadcast_recipients(broadcast_id, status)"
+    ]
+  },
+  {
+    id: 3,
+    label: "add connection usage tracking table",
+    statements: [
+      "CREATE TABLE IF NOT EXISTS connection_usage (id INTEGER PRIMARY KEY AUTOINCREMENT, connection_id TEXT NOT NULL, telegram_id INTEGER NOT NULL, tokens_used INTEGER DEFAULT 0, requests_count INTEGER DEFAULT 0, date TEXT NOT NULL, UNIQUE(connection_id, telegram_id, date))",
+      "CREATE INDEX IF NOT EXISTS idx_connection_usage_conn ON connection_usage(connection_id, date)",
+      "CREATE INDEX IF NOT EXISTS idx_connection_usage_user ON connection_usage(telegram_id, date)"
+    ]
+  },
+  {
+    id: 4,
+    label: "add failed_updates table for DLQ logging",
+    statements: [
+      "CREATE TABLE IF NOT EXISTS failed_updates (id INTEGER PRIMARY KEY AUTOINCREMENT, update_id INTEGER NOT NULL, user_id INTEGER, chat_id INTEGER, message_text TEXT, error_info TEXT, created_at INTEGER NOT NULL, replayed_at INTEGER)",
+      "CREATE INDEX IF NOT EXISTS idx_failed_updates_created ON failed_updates(created_at DESC)"
+    ]
   }
 ];
 
@@ -138,7 +166,85 @@ async function runMaintenance(env) {
     console.error("Maintenance purge failed:", err.message);
   }
 }
+/**
+ * Track connection usage (tokens and requests)
+ */
+export async function trackConnectionUsage(env, connectionId, telegramId, tokensUsed = 0) {
+  try {
+    const date = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+    await env.DB.prepare(`
+      INSERT INTO connection_usage (connection_id, telegram_id, tokens_used, requests_count, date)
+      VALUES (?, ?, ?, 1, ?)
+      ON CONFLICT(connection_id, telegram_id, date)
+      DO UPDATE SET 
+        tokens_used = tokens_used + excluded.tokens_used,
+        requests_count = requests_count + excluded.requests_count
+    `).bind(connectionId, telegramId, tokensUsed, date).run();
+  } catch (err) {
+    console.error("Connection usage tracking failed:", err.message);
+  }
+}
 
+/**
+ * Get connection usage stats by connection
+ */
+export async function getConnectionUsageStats(env, connectionId, days = 7) {
+  try {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - days);
+    const cutoff = cutoffDate.toISOString().split("T")[0];
+
+    const result = await env.DB.prepare(`
+      SELECT 
+        connection_id,
+        SUM(tokens_used) as total_tokens,
+        SUM(requests_count) as total_requests,
+        COUNT(DISTINCT telegram_id) as unique_users,
+        COUNT(DISTINCT date) as active_days
+      FROM connection_usage
+      WHERE connection_id = ? AND date >= ?
+      GROUP BY connection_id
+    `).bind(connectionId, cutoff).first();
+
+    return result || { total_tokens: 0, total_requests: 0, unique_users: 0, active_days: 0 };
+  } catch (err) {
+    console.error("Get connection usage stats failed:", err.message);
+    return { total_tokens: 0, total_requests: 0, unique_users: 0, active_days: 0 };
+  }
+}
+
+/**
+ * Get all connection usage summary for admin
+ */
+export async function getAllConnectionUsageStats(env, days = 7) {
+  try {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - days);
+    const cutoff = cutoffDate.toISOString().split("T")[0];
+
+    const result = await env.DB.prepare(`
+      SELECT 
+        cu.connection_id,
+        ac.label,
+        ac.provider,
+        ac.model,
+        SUM(cu.tokens_used) as total_tokens,
+        SUM(cu.requests_count) as total_requests,
+        COUNT(DISTINCT cu.telegram_id) as unique_users,
+        COUNT(DISTINCT cu.date) as active_days
+      FROM connection_usage cu
+      LEFT JOIN ai_connections ac ON cu.connection_id = ac.connection_id
+      WHERE cu.date >= ?
+      GROUP BY cu.connection_id, ac.label, ac.provider, ac.model
+      ORDER BY total_requests DESC
+    `).bind(cutoff).all();
+
+    return result.results || [];
+  } catch (err) {
+    console.error("Get all connection usage stats failed:", err.message);
+    return [];
+  }
+}
 // KV-gated schema bootstrap for the zero-config path (status page + cron).
 // Marker written BEFORE ensureSchema — same discipline as the purge marker —
 // so a failing schema build cannot hammer D1 on every invocation.
