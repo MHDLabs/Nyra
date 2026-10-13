@@ -1,6 +1,7 @@
 name = "nyra"
 main = "src/index.js"
 compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
 
 # One-click deploy: press the "Deploy to Cloudflare" button in the README.
 # The Cloudflare deploy flow asks for exactly two inputs — TELEGRAM_BOT_TOKEN
