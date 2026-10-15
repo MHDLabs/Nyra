@@ -1,24 +1,183 @@
 // Nyra — flows: add/edit connection wizard and text-input flows.
-import { RATE_LIMIT_CONN_TEST_PER_MIN, MAX_PERSONALITY_PROMPT, MAX_PERSONALITY_DESC, MAX_CUSTOM_INSTRUCTIONS, MAX_LABEL_LENGTH, MAX_DESCRIPTION_LENGTH, MAX_MODEL_LENGTH, MAX_URL_LENGTH, MAX_API_KEY_LENGTH, MODELS_PER_PAGE, OPENAI_DEFAULT_URL, ANTHROPIC_DEFAULT_URL } from "./config.js";
+import { RATE_LIMIT_CONN_TEST_PER_MIN, MAX_PERSONALITY_PROMPT, MAX_PERSONALITY_DESC, MAX_CUSTOM_INSTRUCTIONS, MAX_LABEL_LENGTH, MAX_DESCRIPTION_LENGTH, MAX_MODEL_LENGTH, MAX_URL_LENGTH, MAX_API_KEY_LENGTH, MODELS_PER_PAGE, OPENAI_DEFAULT_URL, ANTHROPIC_DEFAULT_URL, MAX_ROUTE_MODELS, MAX_ROUTE_TOKENS, MAX_ROUTE_LABEL_LENGTH, MAX_TOKEN_LABEL_LENGTH } from "./config.js";
 import { now, truncate, escapeHtml, isAdmin, checkRateLimit } from "./utils.js";
 import { encryptCredential, decryptCredential } from "./crypto.js";
 import { sendMessage, editMessage, deleteMessage, buildInlineKeyboard } from "./telegram.js";
-import { setFlowState, clearFlowState, getUserConnectionById, saveGlobalConnection, updateUserConnection, setDefaultConnection } from "./db.js";
+import { setFlowState, clearFlowState, getUserConnectionById, saveGlobalConnection, updateUserConnection, setDefaultConnection, saveRoute, addRouteModel, addRouteToken, isPersonalModelsAllowed, getPersonalModelLimit, countPersonalConnections } from "./db.js";
 import { humanizeError, fetchAvailableModels, testConnectionRaw } from "./ai.js";
 import { sourceSuffix } from "./menus.js";
 
+const ROUTE_PROVIDER_LABEL = { "openai-compatible": "OpenAI-compatible", "anthropic": "Anthropic" };
+
+async function canManageModels(env, userId) {
+  if (isAdmin(env, userId)) return true;
+  return await isPersonalModelsAllowed(env);
+}
+
+export async function startAddRouteFlow(env, chatId, userId, source) {
+  if (!isAdmin(env, userId)) { await sendMessage(env, chatId, "Only administrators can add routes."); return; }
+  await setFlowState(env, userId, { step: "route_label", flowType: "add_route", source: source || "set", models: [], tokens: [] });
+  await sendMessage(env, chatId, "<b>Add Route</b>\n\nStep 1/5: Send a label for this route (e.g. <i>Production</i>). Max " + MAX_ROUTE_LABEL_LENGTH + " characters.", {
+    parse_mode: "HTML",
+    reply_markup: buildInlineKeyboard([[{ text: "Cancel", callback_data: "flow:cancel" }]])
+  });
+}
+
+export async function startEditRouteFlow(env, chatId, userId, routeId, source) {
+  if (!isAdmin(env, userId)) { await sendMessage(env, chatId, "Only administrators can edit routes."); return; }
+  await setFlowState(env, userId, { step: "route_edit_label", flowType: "edit_route", routeId: routeId, source: source || "set" });
+  await sendMessage(env, chatId, "<b>Edit Route</b>\n\nSend a new label or press Skip to keep the current one.", {
+    parse_mode: "HTML",
+    reply_markup: buildInlineKeyboard([[{ text: "Skip", callback_data: "flow:skip" }], [{ text: "Cancel", callback_data: "flow:cancel" }]])
+  });
+}
+
+export async function routePromptProvider(env, chatId) {
+  await sendMessage(env, chatId, "Step 2/5: Choose the provider type.", {
+    reply_markup: buildInlineKeyboard([
+      [{ text: "OpenAI-compatible", callback_data: "flow:route_provider:openai-compatible" }],
+      [{ text: "Anthropic", callback_data: "flow:route_provider:anthropic" }],
+      [{ text: "Cancel", callback_data: "flow:cancel" }]
+    ])
+  });
+}
+
+export async function routePromptBaseUrl(env, chatId, provider) {
+  const url = provider === "anthropic" ? ANTHROPIC_DEFAULT_URL : OPENAI_DEFAULT_URL;
+  await sendMessage(env, chatId, "Step 3/5: Send the Base URL, or press Use Default.\n\nDefault: <code>" + escapeHtml(url) + "</code>", {
+    parse_mode: "HTML",
+    reply_markup: buildInlineKeyboard([[{ text: "Use Default", callback_data: "flow:route_default_url" }], [{ text: "Cancel", callback_data: "flow:cancel" }]])
+  });
+}
+
+export async function routePromptModels(env, chatId, current) {
+  const msg = "Step 4/5: Send one or more model names, separated by commas (order = fallback order).\n\nExample: <code>gpt-4o-mini, gpt-4o</code>\nMax " + MAX_ROUTE_MODELS + " models. The first one is the default." +
+    (current && current.length ? "\n\nCurrent: <code>" + escapeHtml(current.join(", ")) + "</code>" : "");
+  await sendMessage(env, chatId, msg, { parse_mode: "HTML", reply_markup: buildInlineKeyboard([[{ text: "Cancel", callback_data: "flow:cancel" }]]) });
+}
+
+export async function routePromptTokens(env, chatId, current) {
+  const msg = "Step 5/5: Send one or more API keys (tokens), separated by commas.\n\nThey rotate on failure. Max " + MAX_ROUTE_TOKENS + " tokens.\n\n⚠ Your message is deleted immediately after Nyra reads it." +
+    (current && current.length ? "\n\nCurrent: " + current.length + " token(s) saved." : "");
+  const rows = [[{ text: "Keep Existing", callback_data: "flow:route_keep_tokens" }], [{ text: "Cancel", callback_data: "flow:cancel" }]];
+  await sendMessage(env, chatId, msg, { parse_mode: "HTML", reply_markup: buildInlineKeyboard(rows) });
+}
+
+export async function routePromptReview(env, chatId, state) {
+  const lines = ["<b>Review Route</b>", ""];
+  lines.push("Label: <b>" + escapeHtml(state.label) + "</b>");
+  lines.push("Provider: " + escapeHtml(ROUTE_PROVIDER_LABEL[state.provider] || state.provider));
+  lines.push("Base URL: <code>" + escapeHtml(state.base_url) + "</code>");
+  lines.push("Models: <code>" + escapeHtml((state.models || []).join(", ")) + "</code>");
+  lines.push("Tokens: " + ((state.tokens || []).length) + " (encrypted)");
+  await sendMessage(env, chatId, lines.join("\n"), {
+    parse_mode: "HTML",
+    reply_markup: buildInlineKeyboard([[{ text: "Save Route", callback_data: "flow:route_save" }], [{ text: "Cancel", callback_data: "flow:cancel" }]])
+  });
+}
+
+export async function handleRouteFlowStep(env, chatId, userId, text, message, flowState) {
+  const step = flowState.step;
+  if (step === "route_label" || step === "route_edit_label") {
+    if (text.length === 0 || text.length > MAX_ROUTE_LABEL_LENGTH) { await sendMessage(env, chatId, "Label must be 1–" + MAX_ROUTE_LABEL_LENGTH + " characters."); return true; }
+    flowState.label = text;
+    if (flowState.flowType === "edit_route") {
+      const { updateRoute } = await import("./db.js");
+      await updateRoute(env, userId, flowState.routeId, { label: text });
+      await clearFlowState(env, userId);
+      await sendMessage(env, chatId, "✅ Route label updated.", { reply_markup: buildInlineKeyboard([[{ text: "Manage Routes", callback_data: "route:list" }]]) });
+      return true;
+    }
+    flowState.step = "route_provider";
+    await setFlowState(env, userId, flowState);
+    await routePromptProvider(env, chatId);
+    return true;
+  }
+  if (step === "route_base_url") {
+    if (text.length === 0 || text.length > MAX_URL_LENGTH) { await sendMessage(env, chatId, "URL must be 1–" + MAX_URL_LENGTH + " characters."); return true; }
+    let url;
+    try { url = new URL(text); if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("bad protocol"); }
+    catch (err) { await sendMessage(env, chatId, "That doesn't look like a valid URL."); return true; }
+    flowState.base_url = url.toString().replace(/\/+$/, "");
+    flowState.step = "route_models";
+    await setFlowState(env, userId, flowState);
+    await routePromptModels(env, chatId, null);
+    return true;
+  }
+  if (step === "route_models") {
+    const parts = text.split(/[,\n]+/).map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
+    if (parts.length === 0 || parts.length > MAX_ROUTE_MODELS) { await sendMessage(env, chatId, "Send 1–" + MAX_ROUTE_MODELS + " model names separated by commas."); return true; }
+    for (let i = 0; i < parts.length; i++) if (parts[i].length > MAX_MODEL_LENGTH) { await sendMessage(env, chatId, "Model name too long: <code>" + escapeHtml(parts[i]) + "</code>", { parse_mode: "HTML" }); return true; }
+    flowState.models = parts;
+    flowState.step = "route_tokens";
+    await setFlowState(env, userId, flowState);
+    await routePromptTokens(env, chatId, flowState.tokens);
+    return true;
+  }
+  if (step === "route_tokens") {
+    const delResult = await deleteMessage(env, chatId, message.message_id);
+    if (!delResult || !delResult.ok) await sendMessage(env, chatId, "⚠ I could not delete your API key message. Please delete it manually.");
+    const parts = text.split(/[,\n]+/).map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
+    if (parts.length === 0 || parts.length > MAX_ROUTE_TOKENS) { await sendMessage(env, chatId, "Send 1–" + MAX_ROUTE_TOKENS + " API keys separated by commas."); return true; }
+    for (let i = 0; i < parts.length; i++) if (parts[i].length > MAX_API_KEY_LENGTH) { await sendMessage(env, chatId, "An API key is too long."); return true; }
+    flowState.tokens = parts;
+    flowState.step = "route_confirm";
+    await setFlowState(env, userId, flowState);
+    await routePromptReview(env, chatId, flowState);
+    return true;
+  }
+  await sendMessage(env, chatId, "Please follow the current step or send /cancel.");
+  return true;
+}
+
+export async function finalizeRouteFromFlow(env, chatId, userId, flowState) {
+  try {
+    const models = flowState.models || [];
+    const tokens = flowState.tokens || [];
+    if (models.length === 0) { await clearFlowState(env, userId); await sendMessage(env, chatId, "No models set. Route cancelled."); return; }
+    let routeId = flowState.routeId;
+    if (flowState.flowType === "edit_route" && routeId) {
+      const { updateRoute } = await import("./db.js");
+      await updateRoute(env, userId, routeId, { label: flowState.label, provider: flowState.provider, base_url: flowState.base_url });
+      for (let i = 0; i < models.length; i++) await addRouteModel(env, userId, routeId, models[i]);
+      for (let i = 0; i < tokens.length; i++) await addRouteToken(env, userId, routeId, tokens[i]);
+    } else {
+      routeId = await saveRoute(env, userId, { label: flowState.label, provider: flowState.provider, base_url: flowState.base_url, models: models, tokens: tokens });
+    }
+    await clearFlowState(env, userId);
+    await sendMessage(env, chatId, "✅ Route saved.\n\nLabel: <b>" + escapeHtml(flowState.label) + "</b>\nModels: <code>" + escapeHtml(models.join(", ")) + "</code>\nTokens: " + tokens.length, {
+      parse_mode: "HTML",
+      reply_markup: buildInlineKeyboard([[{ text: "Manage Routes", callback_data: "route:list" }]])
+    });
+  } catch (err) {
+    console.error("finalizeRouteFromFlow failed:", err.message);
+    await clearFlowState(env, userId);
+    await sendMessage(env, chatId, "⚠ Could not save the route. Try again.");
+  }
+}
+
 export async function startAddConnectionFlow(env, chatId, userId, source) {
   if (!isAdmin(env, userId)) {
-    await sendMessage(env, chatId, "Only administrators can add models.");
-    return;
+    if (!(await isPersonalModelsAllowed(env))) {
+      await sendMessage(env, chatId, "Only administrators can add models.");
+      return;
+    }
+    const limit = await getPersonalModelLimit(env);
+    const count = await countPersonalConnections(env, userId);
+    if (count >= limit) {
+      await sendMessage(env, chatId, "You have reached the personal model limit (" + limit + "). Remove one first.");
+      return;
+    }
   }
-  await setFlowState(env, userId, { step: "provider", flowType: "add", source: source || "set" });
+  const personal = !isAdmin(env, userId);
+  await setFlowState(env, userId, { step: "provider", flowType: "add", source: source || "set", personal: personal });
   const rows = [
     [{ text: "OpenAI-compatible", callback_data: "flow:provider:openai-compatible" }],
     [{ text: "Anthropic", callback_data: "flow:provider:anthropic" }],
     [{ text: "Cancel", callback_data: "flow:cancel" }]
   ];
-  await sendMessage(env, chatId, "<b>Add Model</b>\n\nStep 1/7: Choose the provider type.", { parse_mode: "HTML", reply_markup: buildInlineKeyboard(rows) });
+  const header = personal ? "Add Personal Model" : "Add Model";
+  await sendMessage(env, chatId, "<b>" + header + "</b>\n\nStep 1/7: Choose the provider type.", { parse_mode: "HTML", reply_markup: buildInlineKeyboard(rows) });
 }
 
 export async function startEditConnectionFlow(env, chatId, userId, connectionId, source) {
@@ -142,10 +301,25 @@ export async function handleFlowMessage(env, ctx, message, from, chat, flowState
     return true;
   }
 
+  if (flowState.flowType === "add_route" || flowState.flowType === "edit_route") {
+    return await handleRouteFlowStep(env, chatId, userId, text, message, flowState);
+  }
+
   if (!isAdmin(env, userId) && (flowState.flowType === "add" || flowState.flowType === "edit")) {
-    await clearFlowState(env, userId);
-    await sendMessage(env, chatId, "Only administrators can configure models.");
-    return true;
+    if (flowState.flowType === "add" && await isPersonalModelsAllowed(env)) {
+      // Personal model: allowed, but enforce the configured per-user limit.
+      const limit = await getPersonalModelLimit(env);
+      const count = await countPersonalConnections(env, userId);
+      if (count >= limit) {
+        await clearFlowState(env, userId);
+        await sendMessage(env, chatId, "You have reached the personal model limit (" + limit + "). Remove one first.");
+        return true;
+      }
+    } else {
+      await clearFlowState(env, userId);
+      await sendMessage(env, chatId, "Only administrators can configure models.");
+      return true;
+    }
   }
 
   const step = flowState.step;
@@ -215,6 +389,7 @@ export async function handleFlowMessage(env, ctx, message, from, chat, flowState
 
 export async function handleFlowSkip(env, chatId, userId, flowState) {
   const step = flowState.step;
+  if (step === "route_edit_label") { await clearFlowState(env, userId); await sendMessage(env, chatId, "Route unchanged.", { reply_markup: buildInlineKeyboard([[{ text: "Manage Routes", callback_data: "route:list" }]]) }); return; }
   if (step === "edit_label") { flowState.step = "edit_description"; await setFlowState(env, userId, flowState); await flowPromptDescription(env, chatId, flowState.description); return; }
   if (step === "description") { flowState.description = ""; flowState.step = "base_url"; await setFlowState(env, userId, flowState); await flowPromptBaseUrl(env, chatId, flowState.provider, null); return; }
   if (step === "base_url") { flowState.base_url = flowState.provider === "anthropic" ? ANTHROPIC_DEFAULT_URL : OPENAI_DEFAULT_URL; flowState.step = "api_key"; await setFlowState(env, userId, flowState); await flowPromptApiKey(env, chatId, false); return; }
@@ -277,11 +452,12 @@ export async function flowSelectModel(env, chatId, userId, flowState, index) {
 }
 
 export async function finalizeConnectionFromFlow(env, chatId, userId, flowState) {
-  if (!isAdmin(env, userId)) {
+  if (!isAdmin(env, userId) && !(await isPersonalModelsAllowed(env))) {
     await clearFlowState(env, userId);
     await sendMessage(env, chatId, "Only administrators can configure models.");
     return;
   }
+  const personal = !isAdmin(env, userId);
   const source = flowState.source || "set";
   const sfx = sourceSuffix(source);
   try {
@@ -313,16 +489,20 @@ export async function finalizeConnectionFromFlow(env, chatId, userId, flowState)
       provider: flowState.provider,
       base_url: flowState.base_url,
       model: flowState.model,
-      api_key: apiKey
+      api_key: apiKey,
+      personal: personal
     });
-    try {
-      const existingDefault = await env.DB.prepare("SELECT connection_id FROM ai_connections WHERE is_global = 1 AND is_default = 1").first();
-      if (!existingDefault) {
-        await setDefaultConnection(env, userId, newId);
-      }
-    } catch (e) {}
+    if (!personal) {
+      try {
+        const existingDefault = await env.DB.prepare("SELECT connection_id FROM ai_connections WHERE is_global = 1 AND is_default = 1").first();
+        if (!existingDefault) {
+          await setDefaultConnection(env, userId, newId);
+        }
+      } catch (e) {}
+    }
     await clearFlowState(env, userId);
-    await sendMessage(env, chatId, "✅ Model saved and tested.\n\nLabel: " + escapeHtml(flowState.label) + "\nModel: <code>" + escapeHtml(flowState.model) + "</code>\nLatency: " + (test.latency || "?") + " ms", { parse_mode: "HTML", reply_markup: buildInlineKeyboard([[{ text: "Manage Models", callback_data: "myconn:list" + sfx }]]) });
+    const suffix = personal ? "Personal model saved and tested." : "Model saved and tested.";
+    await sendMessage(env, chatId, "✅ " + suffix + "\n\nLabel: " + escapeHtml(flowState.label) + "\nModel: <code>" + escapeHtml(flowState.model) + "</code>\nLatency: " + (test.latency || "?") + " ms", { parse_mode: "HTML", reply_markup: buildInlineKeyboard([[{ text: "Manage Models", callback_data: "myconn:list" + sfx }]]) });
   } catch (err) {
     console.error("finalizeConnectionFromFlow failed:", err.message);
     try { await sendMessage(env, chatId, "⚠ Test failed unexpectedly. Try /settings again."); } catch (e) {}

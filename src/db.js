@@ -11,7 +11,7 @@ let botIdentityCache = { id: null, username: null, expiresAt: 0 };
 export async function ensureSchema(env) {
   if (schemaReady) return;
   const statements = [
-    "CREATE TABLE IF NOT EXISTS users (telegram_id INTEGER PRIMARY KEY, first_name TEXT, last_name TEXT, username TEXT, language_code TEXT, preferred_name TEXT, personality_id TEXT DEFAULT 'default', custom_instructions TEXT, memory_mode TEXT DEFAULT 'normal', memory_data TEXT DEFAULT '{}', usage_stats TEXT DEFAULT '{}', fallback_enabled INTEGER DEFAULT 1, msg_counter INTEGER DEFAULT 0, active_connection_id TEXT, created_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS users (telegram_id INTEGER PRIMARY KEY, first_name TEXT, last_name TEXT, username TEXT, language_code TEXT, preferred_name TEXT, personality_id TEXT DEFAULT 'default', custom_instructions TEXT, memory_mode TEXT DEFAULT 'normal', memory_data TEXT DEFAULT '{}', usage_stats TEXT DEFAULT '{}', fallback_enabled INTEGER DEFAULT 1, msg_counter INTEGER DEFAULT 0, active_connection_id TEXT, active_route_id TEXT, created_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
     "CREATE INDEX IF NOT EXISTS idx_users_last_seen ON users(last_seen_at)",
     "CREATE TABLE IF NOT EXISTS chats (chat_id INTEGER PRIMARY KEY, chat_type TEXT NOT NULL, title TEXT, enabled INTEGER DEFAULT 0, mode TEXT DEFAULT 'disabled', summary TEXT DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
     "CREATE INDEX IF NOT EXISTS idx_chats_enabled ON chats(enabled)",
@@ -26,6 +26,13 @@ export async function ensureSchema(env) {
     "CREATE TABLE IF NOT EXISTS blocked_users (telegram_id INTEGER PRIMARY KEY, reason TEXT, blocked_at INTEGER NOT NULL, blocked_by INTEGER NOT NULL)",
     "CREATE TABLE IF NOT EXISTS processed_updates (update_id INTEGER PRIMARY KEY, received_at INTEGER NOT NULL)",
     "CREATE INDEX IF NOT EXISTS idx_processed_updates_received ON processed_updates(received_at)",
+    "CREATE TABLE IF NOT EXISTS routes (route_id TEXT PRIMARY KEY, telegram_id INTEGER NOT NULL, label TEXT NOT NULL, provider TEXT NOT NULL, base_url TEXT, is_default INTEGER DEFAULT 0, display_order INTEGER DEFAULT 100, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
+    "CREATE INDEX IF NOT EXISTS idx_routes_user ON routes(telegram_id, is_default)",
+    "CREATE TABLE IF NOT EXISTS route_models (model_id TEXT PRIMARY KEY, route_id TEXT NOT NULL, model TEXT NOT NULL, label TEXT, is_default INTEGER DEFAULT 0, display_order INTEGER DEFAULT 100, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
+    "CREATE INDEX IF NOT EXISTS idx_route_models_route ON route_models(route_id, is_default)",
+    "CREATE TABLE IF NOT EXISTS route_tokens (token_id TEXT PRIMARY KEY, route_id TEXT NOT NULL, label TEXT, encrypted_key TEXT NOT NULL, key_iv TEXT NOT NULL, encryption_version INTEGER DEFAULT 2, enabled INTEGER DEFAULT 1, is_primary INTEGER DEFAULT 0, display_order INTEGER DEFAULT 100, consecutive_failures INTEGER DEFAULT 0, last_success_at INTEGER, last_used_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
+    "CREATE INDEX IF NOT EXISTS idx_route_tokens_route ON route_tokens(route_id, is_primary)",
+    "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL, updated_by INTEGER)",
     "CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)"
   ];
   const schemaErrors = [];
@@ -35,6 +42,7 @@ export async function ensureSchema(env) {
   }
   const alters = [
     ["users", "active_connection_id", "TEXT"],
+    ["users", "active_route_id", "TEXT"],
     ["users", "fallback_enabled", "INTEGER DEFAULT 1"],
     ["users", "msg_counter", "INTEGER DEFAULT 0"],
     ["users", "coding_mode", "INTEGER DEFAULT 0"],
@@ -451,14 +459,15 @@ export async function saveGlobalConnection(env, adminId, params) {
   const ts = now();
   const encrypted = await encryptCredential(env, adminId, params.api_key);
   const connectionId = generateShortId();
+  const isGlobal = params.is_global === 0 || params.is_global === false || params.personal ? 0 : 1;
   let maxOrder = 100;
   try {
     const row = await env.DB.prepare("SELECT MAX(display_order) AS m FROM ai_connections WHERE is_global = 1").first();
     if (row && row.m !== null && row.m !== undefined) maxOrder = row.m + 10;
   } catch (err) {}
   await env.DB.prepare(
-    "INSERT INTO ai_connections (connection_id, telegram_id, label, provider, base_url, model, encrypted_key, key_iv, encryption_version, enabled, is_global, is_default, description, display_order, consecutive_failures, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 2, 1, 1, 0, ?, ?, 0, ?, ?)"
-  ).bind(connectionId, adminId, params.label, params.provider, params.base_url, params.model, encrypted.ct, encrypted.iv, params.description || "", maxOrder, ts, ts).run();
+    "INSERT INTO ai_connections (connection_id, telegram_id, label, provider, base_url, model, encrypted_key, key_iv, encryption_version, enabled, is_global, is_default, description, display_order, consecutive_failures, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 2, 1, ?, 0, ?, ?, 0, ?, ?)"
+  ).bind(connectionId, adminId, params.label, params.provider, params.base_url, params.model, encrypted.ct, encrypted.iv, isGlobal, params.description || "", maxOrder, ts, ts).run();
   invalidateUserConnectionsCache(null);
   return connectionId;
 }
@@ -624,4 +633,308 @@ export async function resolveUserActiveConnection(env, user) {
     return { connection: target, switched: true, previousMissing: !!(user && user.active_connection_id) };
   }
   return { connection: conn, switched: false, previousMissing: false };
+}
+
+// --- Routes (multi-model + multi-token fallback groups) --------------------
+
+let userRoutesCache = new Map();
+
+function invalidateUserRoutesCache(userId) {
+  if (userId) userRoutesCache.delete(String(userId));
+  else userRoutesCache.clear();
+}
+
+export async function getUserRoutes(env, userId, forceRefresh) {
+  const key = String(userId);
+  const cached = userRoutesCache.get(key);
+  if (!forceRefresh && cached && cached.expiresAt > Date.now()) return cached.routes;
+  try {
+    const result = await env.DB.prepare("SELECT * FROM routes WHERE telegram_id = ? ORDER BY is_default DESC, display_order ASC, created_at ASC").bind(userId).all();
+    const list = result.results || [];
+    userRoutesCache.set(key, { routes: list, expiresAt: Date.now() + CONNECTION_CACHE_TTL_MS });
+    return list;
+  } catch (err) {
+    console.error("getUserRoutes failed:", err.message);
+    return [];
+  }
+}
+
+export async function getRouteById(env, userId, routeId) {
+  try {
+    return await env.DB.prepare("SELECT * FROM routes WHERE route_id = ? AND telegram_id = ?").bind(routeId, userId).first();
+  } catch (err) { return null; }
+}
+
+export async function getRouteModels(env, routeId) {
+  try {
+    const result = await env.DB.prepare("SELECT * FROM route_models WHERE route_id = ? ORDER BY is_default DESC, display_order ASC, created_at ASC").bind(routeId).all();
+    return result.results || [];
+  } catch (err) { return []; }
+}
+
+export async function getRouteTokens(env, routeId) {
+  try {
+    const result = await env.DB.prepare("SELECT * FROM route_tokens WHERE route_id = ? ORDER BY is_primary DESC, display_order ASC, created_at ASC").bind(routeId).all();
+    return result.results || [];
+  } catch (err) { return []; }
+}
+
+/** Full route bundle: route + ordered models + ordered tokens. */
+export async function getRouteBundle(env, userId, routeId) {
+  const route = await getRouteById(env, userId, routeId);
+  if (!route) return null;
+  const models = await getRouteModels(env, routeId);
+  const tokens = await getRouteTokens(env, routeId);
+  return { route: route, models: models, tokens: tokens };
+}
+
+/** Expand a route into an ordered list of synthetic connections the AI layer can
+ * stream through: for each model (default first), for each enabled token. */
+export function buildRoutePlan(bundle) {
+  if (!bundle || !bundle.route) return [];
+  const route = bundle.route;
+  const models = bundle.models.filter(function (m) { return true; });
+  const tokens = bundle.tokens.filter(function (t) { return t.enabled === 1; });
+  const plan = [];
+  for (let mi = 0; mi < models.length; mi++) {
+    const m = models[mi];
+    for (let ti = 0; ti < tokens.length; ti++) {
+      const t = tokens[ti];
+      plan.push({
+        connection_id: route.route_id + ":" + t.token_id + ":" + m.model_id,
+        route_id: route.route_id,
+        token_id: t.token_id,
+        model_id: m.model_id,
+        telegram_id: route.telegram_id,
+        label: route.label,
+        provider: route.provider,
+        base_url: route.base_url,
+        model: m.model,
+        encrypted_key: t.encrypted_key,
+        key_iv: t.key_iv,
+        is_global: 1,
+        is_fast: 0,
+        is_route: true,
+        consecutive_failures: t.consecutive_failures || 0,
+        is_primary: mi === 0 && ti === 0
+      });
+    }
+  }
+  return plan;
+}
+
+/** The user's active (or default) enabled route, if any. */
+export async function resolveUserActiveRoute(env, user) {
+  const routes = await getUserRoutes(env, user.telegram_id);
+  if (routes.length === 0) return null;
+  let route = null;
+  if (user && user.active_route_id) {
+    for (let i = 0; i < routes.length; i++) if (routes[i].route_id === user.active_route_id) { route = routes[i]; break; }
+  }
+  if (!route) {
+    for (let i = 0; i < routes.length; i++) if (routes[i].is_default === 1) { route = routes[i]; break; }
+  }
+  if (!route) route = routes[0];
+  const models = await getRouteModels(env, route.route_id);
+  const tokens = await getRouteTokens(env, route.route_id);
+  const enabledTokens = tokens.filter(function (t) { return t.enabled === 1; });
+  if (models.length === 0 || enabledTokens.length === 0) return null;
+  return { route: route, models: models, tokens: tokens };
+}
+
+export async function saveRoute(env, userId, params) {
+  const ts = now();
+  const routeId = generateShortId();
+  let maxOrder = 100;
+  try {
+    const row = await env.DB.prepare("SELECT MAX(display_order) AS m FROM routes WHERE telegram_id = ?").bind(userId).first();
+    if (row && row.m !== null && row.m !== undefined) maxOrder = row.m + 10;
+  } catch (err) {}
+  const models = params.models || [];
+  const tokens = params.tokens || [];
+  await env.DB.prepare("INSERT INTO routes (route_id, telegram_id, label, provider, base_url, is_default, display_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)")
+    .bind(routeId, userId, params.label, params.provider, params.base_url || "", maxOrder, ts, ts).run();
+  const inserts = [];
+  for (let i = 0; i < models.length; i++) {
+    inserts.push(env.DB.prepare("INSERT INTO route_models (model_id, route_id, model, label, is_default, display_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(generateShortId(), routeId, models[i], models[i], i === 0 ? 1 : 0, 100 + i * 10, ts, ts));
+  }
+  for (let i = 0; i < tokens.length; i++) {
+    const enc = await encryptCredential(env, userId, tokens[i]);
+    inserts.push(env.DB.prepare("INSERT INTO route_tokens (token_id, route_id, label, encrypted_key, key_iv, encryption_version, enabled, is_primary, display_order, consecutive_failures, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 2, 1, ?, ?, 0, ?, ?)")
+      .bind(generateShortId(), routeId, "token " + (i + 1), enc.ct, enc.iv, i === 0 ? 1 : 0, 100 + i * 10, ts, ts));
+  }
+  if (inserts.length > 0) await env.DB.batch(inserts);
+  invalidateUserRoutesCache(userId);
+  return routeId;
+}
+
+export async function updateRoute(env, userId, routeId, updates) {
+  const route = await getRouteById(env, userId, routeId);
+  if (!route) return false;
+  const fields = [];
+  const values = [];
+  if (updates.label !== undefined) { fields.push("label = ?"); values.push(updates.label); }
+  if (updates.provider !== undefined) { fields.push("provider = ?"); values.push(updates.provider); }
+  if (updates.base_url !== undefined) { fields.push("base_url = ?"); values.push(updates.base_url); }
+  if (fields.length === 0) return true;
+  fields.push("updated_at = ?"); values.push(now());
+  values.push(routeId);
+  try {
+    await env.DB.prepare("UPDATE routes SET " + fields.join(", ") + " WHERE route_id = ?").bind.apply(null, values).run();
+    invalidateUserRoutesCache(userId);
+    return true;
+  } catch (err) { console.error("updateRoute failed:", err.message); return false; }
+}
+
+export async function deleteRoute(env, userId, routeId) {
+  const route = await getRouteById(env, userId, routeId);
+  if (!route) return false;
+  try {
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM route_models WHERE route_id = ?").bind(routeId),
+      env.DB.prepare("DELETE FROM route_tokens WHERE route_id = ?").bind(routeId),
+      env.DB.prepare("DELETE FROM routes WHERE route_id = ?").bind(routeId)
+    ]);
+    try { await env.DB.prepare("UPDATE users SET active_route_id = NULL, updated_at = ? WHERE active_route_id = ?").bind(now(), routeId).run(); } catch (e) {}
+    invalidateUserRoutesCache(userId);
+    return true;
+  } catch (err) { console.error("deleteRoute failed:", err.message); return false; }
+}
+
+export async function setDefaultRoute(env, userId, routeId) {
+  const route = await getRouteById(env, userId, routeId);
+  if (!route) return false;
+  try {
+    await env.DB.batch([
+      env.DB.prepare("UPDATE routes SET is_default = 0 WHERE telegram_id = ?").bind(userId),
+      env.DB.prepare("UPDATE routes SET is_default = 1, updated_at = ? WHERE route_id = ? AND telegram_id = ?").bind(now(), routeId, userId)
+    ]);
+    invalidateUserRoutesCache(userId);
+    return true;
+  } catch (err) { console.error("setDefaultRoute failed:", err.message); return false; }
+}
+
+export async function addRouteModel(env, userId, routeId, model) {
+  const route = await getRouteById(env, userId, routeId);
+  if (!route) return false;
+  const ts = now();
+  let count = 0;
+  try { const row = await env.DB.prepare("SELECT COUNT(*) AS c FROM route_models WHERE route_id = ?").bind(routeId).first(); count = row ? row.c : 0; } catch (e) {}
+  try {
+    await env.DB.prepare("INSERT INTO route_models (model_id, route_id, model, label, is_default, display_order, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?, ?)")
+      .bind(generateShortId(), routeId, model, model, 100 + count * 10, ts, ts).run();
+    invalidateUserRoutesCache(userId);
+    return true;
+  } catch (err) { return false; }
+}
+
+export async function removeRouteModel(env, userId, routeId, modelId) {
+  const route = await getRouteById(env, userId, routeId);
+  if (!route) return false;
+  try {
+    await env.DB.prepare("DELETE FROM route_models WHERE model_id = ? AND route_id = ?").bind(modelId, routeId).run();
+    invalidateUserRoutesCache(userId);
+    return true;
+  } catch (err) { return false; }
+}
+
+export async function setRouteDefaultModel(env, userId, routeId, modelId) {
+  const route = await getRouteById(env, userId, routeId);
+  if (!route) return false;
+  try {
+    await env.DB.batch([
+      env.DB.prepare("UPDATE route_models SET is_default = 0 WHERE route_id = ?").bind(routeId),
+      env.DB.prepare("UPDATE route_models SET is_default = 1, updated_at = ? WHERE model_id = ? AND route_id = ?").bind(now(), modelId, routeId)
+    ]);
+    invalidateUserRoutesCache(userId);
+    return true;
+  } catch (err) { return false; }
+}
+
+export async function addRouteToken(env, userId, routeId, apiKey, label) {
+  const route = await getRouteById(env, userId, routeId);
+  if (!route) return false;
+  const ts = now();
+  let count = 0;
+  try { const row = await env.DB.prepare("SELECT COUNT(*) AS c FROM route_tokens WHERE route_id = ?").bind(routeId).first(); count = row ? row.c : 0; } catch (e) {}
+  const enc = await encryptCredential(env, userId, apiKey);
+  try {
+    await env.DB.prepare("INSERT INTO route_tokens (token_id, route_id, label, encrypted_key, key_iv, encryption_version, enabled, is_primary, display_order, consecutive_failures, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 2, 1, 0, ?, 0, ?, ?)")
+      .bind(generateShortId(), routeId, label || ("token " + (count + 1)), enc.ct, enc.iv, 100 + count * 10, ts, ts).run();
+    invalidateUserRoutesCache(userId);
+    return true;
+  } catch (err) { return false; }
+}
+
+export async function removeRouteToken(env, userId, routeId, tokenId) {
+  const route = await getRouteById(env, userId, routeId);
+  if (!route) return false;
+  try {
+    await env.DB.prepare("DELETE FROM route_tokens WHERE token_id = ? AND route_id = ?").bind(tokenId, routeId).run();
+    invalidateUserRoutesCache(userId);
+    return true;
+  } catch (err) { return false; }
+}
+
+export async function toggleRouteToken(env, userId, routeId, tokenId) {
+  const route = await getRouteById(env, userId, routeId);
+  if (!route) return false;
+  try {
+    const tok = await env.DB.prepare("SELECT enabled FROM route_tokens WHERE token_id = ? AND route_id = ?").bind(tokenId, routeId).first();
+    if (!tok) return false;
+    await env.DB.prepare("UPDATE route_tokens SET enabled = ?, updated_at = ? WHERE token_id = ?").bind(tok.enabled === 1 ? 0 : 1, now(), tokenId).run();
+    invalidateUserRoutesCache(userId);
+    return true;
+  } catch (err) { return false; }
+}
+
+export async function recordRouteTokenFailure(env, tokenId) {
+  try {
+    await env.DB.prepare("UPDATE route_tokens SET consecutive_failures = consecutive_failures + 1, updated_at = ? WHERE token_id = ?").bind(now(), tokenId).run();
+    invalidateUserRoutesCache(null);
+  } catch (err) {}
+}
+
+export async function recordRouteTokenSuccess(env, tokenId) {
+  try {
+    await env.DB.prepare("UPDATE route_tokens SET consecutive_failures = 0, last_success_at = ?, last_used_at = ?, updated_at = ? WHERE token_id = ?").bind(now(), now(), now(), tokenId).run();
+    invalidateUserRoutesCache(null);
+  } catch (err) {}
+}
+
+// --- App settings (global deployment toggles) ------------------------------
+
+export async function getSetting(env, key, fallback) {
+  try {
+    const row = await env.DB.prepare("SELECT value FROM app_settings WHERE key = ?").bind(key).first();
+    if (!row) return fallback;
+    return row.value;
+  } catch (err) { return fallback; }
+}
+
+export async function setSetting(env, key, value, updatedBy) {
+  try {
+    await env.DB.prepare("INSERT INTO app_settings (key, value, updated_at, updated_by) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by")
+      .bind(key, String(value), now(), updatedBy || null).run();
+    return true;
+  } catch (err) { console.error("setSetting failed:", err.message); return false; }
+}
+
+export async function isPersonalModelsAllowed(env) {
+  const v = await getSetting(env, "allow_personal_models", "0");
+  return v === "1" || v === "true";
+}
+
+export async function getPersonalModelLimit(env) {
+  const v = await getSetting(env, "personal_model_limit", "5");
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) && n > 0 ? n : 5;
+}
+
+export async function countPersonalConnections(env, userId) {
+  try {
+    const row = await env.DB.prepare("SELECT COUNT(*) AS c FROM ai_connections WHERE telegram_id = ? AND is_global = 0").bind(userId).first();
+    return row ? row.c : 0;
+  } catch (err) { return 0; }
 }

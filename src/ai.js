@@ -3,7 +3,8 @@ import { AI_PRIMARY_ATTEMPT_TIMEOUT_MS, AI_MAX_PRIMARY_ATTEMPTS, AI_RETRY_DELAYS
 import { truncate, escapeHtml, sleep, isOpenRouterUrl, fetchWithTimeout, getAdminIds } from "./utils.js";
 import { decryptCredential } from "./crypto.js";
 import { sendMessage } from "./telegram.js";
-import { getEnabledUserConnections, getUserConnectionById, recordConnectionFailure, recordConnectionSuccess } from "./db.js";
+import { getEnabledUserConnections, getUserConnectionById, recordConnectionFailure, recordConnectionSuccess, resolveUserActiveRoute, buildRoutePlan, recordRouteTokenFailure, recordRouteTokenSuccess } from "./db.js";
+import { decideNextAction, brainInputFromError } from "./brain.js";
 
 export function normalizeError(err, httpStatus) {
   const status = httpStatus || (err && err.status);
@@ -555,17 +556,23 @@ export async function testUserConnectionById(env, userId, connectionId) {
 }
 
 export async function* tryStreamWithFallback(env, user, messages, options) {
+  const fallbackEnabled = !user || user.fallback_enabled !== 0;
+  const budgetStart = Date.now();
+  const totalBudgetMs = (options && options.totalBudgetMs) || AI_STREAM_TOTAL_BUDGET_MS;
+  const stallTimeoutBase = (options && options.stallTimeoutMs) || AI_STREAM_STALL_TIMEOUT_MS;
+
+  // Preferred path: a user route (ordered model × token fallback plan).
+  const bundle = user ? await resolveUserActiveRoute(env, user) : null;
+  if (bundle) {
+    yield* streamViaRoute(env, user, bundle, messages, options, totalBudgetMs, stallTimeoutBase, budgetStart, fallbackEnabled);
+    return;
+  }
+
   const conns = await getEnabledUserConnections(env, user.telegram_id);
   if (conns.length === 0) {
     yield { type: "error", category: "no_connection", error: null, connection: null, attempts: 0, fallbackUsed: false, partial: false };
     return;
   }
-  const fallbackEnabled = !user || user.fallback_enabled !== 0;
-  const budgetStart = Date.now();
-  // Fast-mode connections pass tighter budgets so an inline (webhook-path) run
-  // finishes well inside the 30s ctx.waitUntil cap.
-  const totalBudgetMs = (options && options.totalBudgetMs) || AI_STREAM_TOTAL_BUDGET_MS;
-  const stallTimeoutBase = (options && options.stallTimeoutMs) || AI_STREAM_STALL_TIMEOUT_MS;
 
   let primaryConn = null;
   if (user && user.active_connection_id) {
@@ -588,6 +595,7 @@ export async function* tryStreamWithFallback(env, user, messages, options) {
   let lastCategory = "unknown";
   let lastConn = null;
   let totalAttempts = 0;
+  const totalResources = ordered.length;
 
   for (let i = 0; i < ordered.length; i++) {
     const conn = ordered[i];
@@ -640,9 +648,92 @@ export async function* tryStreamWithFallback(env, user, messages, options) {
     }
 
     if (!isRetryableCategory(lastCategory) && !fallbackEnabled) break;
+    // Consult the brain so a non-retryable failure still advances when sensible.
+    if (i + 1 < ordered.length) {
+      const verdict = await decideNextAction(env, brainInputFromError(lastError, lastCategory, { attempt: totalAttempts, tokensRemaining: totalResources - 1 - i, modelsRemaining: totalResources - 1 - i }));
+      if (verdict.action === "stop") break;
+    }
   }
 
   yield { type: "error", category: lastCategory, error: lastError, connection: lastConn || primaryConn, attempts: totalAttempts, fallbackUsed: false, partial: false };
+}
+
+/** Stream through a user route: ordered model × token plan, brain-guided. */
+async function* streamViaRoute(env, user, bundle, messages, options, totalBudgetMs, stallTimeoutBase, budgetStart, fallbackEnabled) {
+  const plan = buildRoutePlan(bundle);
+  if (plan.length === 0) {
+    yield { type: "error", category: "no_connection", error: null, connection: null, attempts: 0, fallbackUsed: false, partial: false };
+    return;
+  }
+  const modelIds = [];
+  for (let i = 0; i < bundle.models.length; i++) if (modelIds.indexOf(bundle.models[i].model_id) === -1) modelIds.push(bundle.models[i].model_id);
+  const tokenIds = [];
+  for (let i = 0; i < bundle.tokens.length; i++) if (bundle.tokens[i].enabled === 1) tokenIds.push(bundle.tokens[i].token_id);
+
+  let lastError = null;
+  let lastCategory = "unknown";
+  let lastConn = null;
+  let totalAttempts = 0;
+
+  for (let i = 0; i < plan.length; i++) {
+    const conn = plan[i];
+    const isPrimary = i === 0;
+    if (!isPrimary && !fallbackEnabled && !isRetryableCategory(lastCategory)) break;
+    if ((conn.consecutive_failures || 0) >= UNHEALTHY_FAILURE_THRESHOLD) continue;
+    if (totalBudgetMs - (Date.now() - budgetStart) < 3000) break;
+
+    const maxAttemptsForConn = isPrimary ? AI_MAX_PRIMARY_ATTEMPTS : 1;
+    let advanceToModel = null;
+
+    for (let attempt = 0; attempt < maxAttemptsForConn; attempt++) {
+      if (totalBudgetMs - (Date.now() - budgetStart) < 3000) break;
+      if (attempt > 0) await sleep(AI_RETRY_DELAYS_MS[attempt - 1] || 1000);
+      totalAttempts++;
+      const stallTimeout = Math.min(stallTimeoutBase, totalBudgetMs - (Date.now() - budgetStart));
+      let currentUsage = null;
+      let attemptYielded = false;
+
+      try {
+        for await (const event of streamProviderResponse(env, conn, messages, options, stallTimeout)) {
+          if (event.type === "text") { attemptYielded = true; yield { type: "text", text: event.text }; }
+          else if (event.type === "usage") { currentUsage = event.usage; }
+        }
+        await recordRouteTokenSuccess(env, conn.token_id);
+        yield { type: "done", connection: conn, usage: currentUsage, attempts: totalAttempts, fallbackUsed: !isPrimary };
+        return;
+      } catch (err) {
+        lastError = err;
+        lastCategory = normalizeError(err, err.status);
+        lastConn = conn;
+        await recordRouteTokenFailure(env, conn.token_id);
+      }
+
+      if (attemptYielded) {
+        yield { type: "error", category: lastCategory, error: lastError, connection: lastConn, attempts: totalAttempts, fallbackUsed: !isPrimary, partial: true };
+        return;
+      }
+
+      const attemptTokensLeft = tokenIds.length - tokenIds.indexOf(conn.token_id) - 1;
+      const attemptModelsLeft = modelIds.length - modelIds.indexOf(conn.model_id) - 1;
+      const verdict = await decideNextAction(env, brainInputFromError(lastError, lastCategory, { attempt: attempt + 1, tokensRemaining: attemptTokensLeft, modelsRemaining: attemptModelsLeft }));
+      if (verdict.action === "stop") {
+        yield { type: "error", category: lastCategory, error: lastError, connection: lastConn, attempts: totalAttempts, fallbackUsed: !isPrimary, partial: false };
+        return;
+      }
+      if (verdict.action === "retry_same" && attempt + 1 < maxAttemptsForConn) continue;
+      if (verdict.action === "next_model" && attemptModelsLeft > 0) {
+        advanceToModel = modelIds[modelIds.indexOf(conn.model_id) + 1];
+      }
+      break;
+    }
+
+    // After the per-conn attempts, jump to the next model block if instructed.
+    if (advanceToModel) {
+      while (i + 1 < plan.length && plan[i + 1].model_id !== advanceToModel) i++;
+    }
+  }
+
+  yield { type: "error", category: lastCategory, error: lastError, connection: lastConn, attempts: totalAttempts, fallbackUsed: false, partial: false };
 }
 
 export async function notifyAdminOnError(env, opts) {

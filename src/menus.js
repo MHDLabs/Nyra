@@ -2,7 +2,7 @@
 import { UNHEALTHY_FAILURE_THRESHOLD, CONNECTIONS_PER_PAGE } from "./config.js";
 import { truncate, escapeHtml, safeCallbackId, isAdmin } from "./utils.js";
 import { sendMessage, editMessage, buildInlineKeyboard } from "./telegram.js";
-import { getUser, getUserConnections, getEnabledUserConnections, getUserConnectionById, parseUsageStats } from "./db.js";
+import { getUser, getUserConnections, getEnabledUserConnections, getUserConnectionById, parseUsageStats, getUserRoutes, getRouteById, getRouteModels, getRouteTokens, isPersonalModelsAllowed, getPersonalModelLimit } from "./db.js";
 import { formatMemoryForUser, listAvailablePersonalities } from "./memory.js";
 
 export async function showNoConnectionMessage(env, chatId, isGroup) {
@@ -31,7 +31,13 @@ export async function showSettingsMenu(env, chatId, messageId, userId) {
   rows.push([{ text: "Memory", callback_data: "set:mem" }, { text: "Instructions" + (hasCI ? " ✓" : ""), callback_data: "set:ci" }]);
   rows.push([{ text: "Fallback: " + (fallbackOn ? "On" : "Off"), callback_data: "set:fallback" }]);
   rows.push([{ text: "Usage", callback_data: "set:usage" }, { text: "Privacy", callback_data: "set:privacy" }]);
-  if (admin) rows.push([{ text: "🛠 Manage Models", callback_data: "myconn:list:set" }]);
+  if (admin) {
+    rows.push([{ text: "🛠 Manage Models", callback_data: "myconn:list:set" }]);
+    rows.push([{ text: "🧭 Routes", callback_data: "route:list" }]);
+  } else {
+    const personalOn = await isPersonalModelsAllowed(env);
+    if (personalOn) rows.push([{ text: "🔑 My Personal Models", callback_data: "mypersonal:menu" }]);
+  }
   rows.push([{ text: "Close", callback_data: "set:close" }]);
   await editMessage(env, chatId, messageId, lines.join("\n"), buildInlineKeyboard(rows), "HTML");
 }
@@ -252,4 +258,120 @@ export async function resolveUserConnectionShortId(env, userId, shortId) {
   const conns = await getUserConnections(env, userId);
   for (let i = 0; i < conns.length; i++) if (safeCallbackId(conns[i].connection_id) === shortId) return conns[i].connection_id;
   return null;
+}
+
+export async function showRoutesList(env, chatId, messageId, userId, source) {
+  if (!isAdmin(env, userId)) {
+    await editMessage(env, chatId, messageId, "Only administrators can manage routes.", buildInlineKeyboard([[sourceBackButton(source)]]), "HTML");
+    return;
+  }
+  const user = await getUser(env, userId);
+  const routes = await getUserRoutes(env, userId);
+  const activeRouteId = user ? user.active_route_id : null;
+  const lines = ["<b>Routes</b>", "", "<i>A route groups multiple models and multiple API keys into one ordered fallback plan.</i>", ""];
+  const rows = [];
+  if (routes.length === 0) {
+    lines.push("No routes yet. Create one to combine models and tokens.");
+    rows.push([{ text: "➕ Add Route", callback_data: "route:add" }]);
+  } else {
+    for (let i = 0; i < routes.length; i++) {
+      const r = routes[i];
+      const models = await getRouteModels(env, r.route_id);
+      const tokens = await getRouteTokens(env, r.route_id);
+      const enabledTokens = tokens.filter(function (t) { return t.enabled === 1; }).length;
+      const mark = r.route_id === activeRouteId ? "● " : "○ ";
+      const defaultMark = r.is_default === 1 ? " ★" : "";
+      lines.push(mark + "<b>" + escapeHtml(r.label) + "</b>" + defaultMark);
+      lines.push("   " + escapeHtml(r.provider) + " — " + models.length + " model(s), " + enabledTokens + "/" + tokens.length + " token(s)");
+      const shortId = safeCallbackId(r.route_id);
+      rows.push([{ text: (r.route_id === activeRouteId ? "✓ " : "") + truncate(r.label, 30), callback_data: "route:view:" + shortId }]);
+    }
+    rows.push([{ text: "➕ Add Route", callback_data: "route:add" }]);
+  }
+  rows.push([sourceBackButton(source)]);
+  await editMessage(env, chatId, messageId, lines.join("\n"), buildInlineKeyboard(rows), "HTML");
+}
+
+export async function showRouteDetail(env, chatId, messageId, userId, routeId, source) {
+  if (!isAdmin(env, userId)) {
+    await editMessage(env, chatId, messageId, "Only administrators can manage routes.", buildInlineKeyboard([[sourceBackButton(source)]]), "HTML");
+    return;
+  }
+  const route = await getRouteById(env, userId, routeId);
+  if (!route) { await editMessage(env, chatId, messageId, "Route not found.", buildInlineKeyboard([[{ text: "Back", callback_data: "route:list" }]]), "HTML"); return; }
+  const models = await getRouteModels(env, routeId);
+  const tokens = await getRouteTokens(env, routeId);
+  const lines = ["<b>Route: " + escapeHtml(route.label) + "</b>", ""];
+  lines.push("Provider: " + escapeHtml(route.provider));
+  lines.push("Base URL: <code>" + escapeHtml(route.base_url || "") + "</code>");
+  lines.push("Default: " + (route.is_default === 1 ? "yes" : "no"));
+  lines.push("");
+  lines.push("<b>Models</b> (order = fallback)");
+  const rows = [];
+  for (let i = 0; i < models.length; i++) {
+    const m = models[i];
+    lines.push((m.is_default === 1 ? "★ " : "• ") + "<code>" + escapeHtml(m.model) + "</code>");
+    const mrow = [{ text: (m.is_default === 1 ? "★ " : "") + truncate(m.model, 30), callback_data: "route:mdef:" + safeCallbackId(routeId) + ":" + safeCallbackId(m.model_id) }];
+    mrow.push({ text: "🗑", callback_data: "route:mdel:" + safeCallbackId(routeId) + ":" + safeCallbackId(m.model_id) });
+    rows.push(mrow);
+  }
+  lines.push("");
+  lines.push("<b>Tokens</b>");
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    lines.push((t.enabled === 1 ? "✓ " : "✗ ") + escapeHtml(t.label) + (t.is_primary === 1 ? " (primary)" : ""));
+    rows.push([{ text: (t.enabled === 1 ? "⏸ " : "▶️ ") + truncate(t.label, 24), callback_data: "route:ttog:" + safeCallbackId(routeId) + ":" + safeCallbackId(t.token_id) }, { text: "🗑", callback_data: "route:tdel:" + safeCallbackId(routeId) + ":" + safeCallbackId(t.token_id) }]);
+  }
+  rows.push([{ text: "➕ Add Model", callback_data: "route:madd:" + safeCallbackId(routeId) }, { text: "➕ Add Token", callback_data: "route:tadd:" + safeCallbackId(routeId) }]);
+  const actionRow = [];
+  if (route.is_default !== 1) actionRow.push({ text: "★ Set Default", callback_data: "route:def:" + safeCallbackId(routeId) });
+  actionRow.push({ text: "✏️ Rename", callback_data: "route:edit:" + safeCallbackId(routeId) });
+  rows.push(actionRow);
+  rows.push([{ text: "🗑 Delete Route", callback_data: "route:del:" + safeCallbackId(routeId) }]);
+  rows.push([{ text: "Back", callback_data: "route:list" }]);
+  await editMessage(env, chatId, messageId, lines.join("\n"), buildInlineKeyboard(rows), "HTML");
+}
+
+export async function resolveRouteShortId(env, userId, shortId) {
+  const routes = await getUserRoutes(env, userId);
+  for (let i = 0; i < routes.length; i++) if (safeCallbackId(routes[i].route_id) === shortId) return routes[i].route_id;
+  return null;
+}
+
+export async function resolveRouteItemShortId(env, routeId, shortId) {
+  const models = await getRouteModels(env, routeId);
+  for (let i = 0; i < models.length; i++) if (safeCallbackId(models[i].model_id) === shortId) return models[i].model_id;
+  const tokens = await getRouteTokens(env, routeId);
+  for (let i = 0; i < tokens.length; i++) if (safeCallbackId(tokens[i].token_id) === shortId) return tokens[i].token_id;
+  return null;
+}
+
+export async function showPersonalModelsMenu(env, chatId, messageId, userId) {
+  if (isAdmin(env, userId)) {
+    await editMessage(env, chatId, messageId, "Administrators manage shared models via Manage Models.", buildInlineKeyboard([[{ text: "Back", callback_data: "set:menu" }]]), "HTML");
+    return;
+  }
+  const allowed = await isPersonalModelsAllowed(env);
+  const lines = ["<b>My Personal Models</b>", ""];
+  const rows = [];
+  if (!allowed) {
+    lines.push("Personal models are currently disabled by the administrator.");
+    rows.push([{ text: "Back", callback_data: "set:menu" }]);
+    await editMessage(env, chatId, messageId, lines.join("\n"), buildInlineKeyboard(rows), "HTML");
+    return;
+  }
+  const limit = await getPersonalModelLimit(env);
+  const mine = (await getUserConnections(env, userId)).filter(function (c) { return c.is_global === 0; });
+  lines.push("You can add up to " + limit + " personal models. Used: " + mine.length + "/" + limit + ".");
+  lines.push("");
+  if (mine.length === 0) lines.push("No personal models yet.");
+  for (let i = 0; i < mine.length; i++) {
+    const c = mine[i];
+    lines.push((c.enabled === 1 ? "✓ " : "✗ ") + "<b>" + escapeHtml(c.label) + "</b> — <code>" + escapeHtml(c.model) + "</code>");
+    const shortId = safeCallbackId(c.connection_id);
+    rows.push([{ text: "✏️ " + truncate(c.label, 24), callback_data: "mypersonal:edit:" + shortId }, { text: "🗑", callback_data: "mypersonal:del:" + shortId }]);
+  }
+  if (mine.length < limit) rows.push([{ text: "➕ Add Personal Model", callback_data: "mypersonal:add" }]);
+  rows.push([{ text: "Back", callback_data: "set:menu" }]);
+  await editMessage(env, chatId, messageId, lines.join("\n"), buildInlineKeyboard(rows), "HTML");
 }

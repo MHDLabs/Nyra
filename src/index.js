@@ -1,13 +1,13 @@
 // Nyra — entry point: AI message pipeline, update routing, webhook and setup endpoints.
-import { MAX_TELEGRAM_LENGTH, MEMORY_UPDATE_INTERVAL, RATE_LIMIT_USER_PER_MIN, RATE_LIMIT_USER_PER_HOUR, RATE_LIMIT_CHAT_PER_HOUR, RATE_LIMIT_ADMIN_PER_MIN, RATE_LIMIT_CALLBACK_PER_MIN, RATE_LIMIT_SETUP_PER_MIN, RATE_LIMIT_CONN_TEST_PER_MIN, MAX_PERSONALITY_PROMPT, MAX_PERSONALITY_DESC, MAX_CUSTOM_INSTRUCTIONS, UNHEALTHY_FAILURE_THRESHOLD, UNHEALTHY_WARN_TTL, OPENAI_DEFAULT_URL, ANTHROPIC_DEFAULT_URL, STREAM_EDIT_THROTTLE_MS, STREAM_PLACEHOLDER, FAST_STREAM_BUDGET_MS, FAST_STALL_TIMEOUT_MS } from "./config.js";
+import { MAX_TELEGRAM_LENGTH, MEMORY_UPDATE_INTERVAL, RATE_LIMIT_USER_PER_MIN, RATE_LIMIT_USER_PER_HOUR, RATE_LIMIT_CHAT_PER_HOUR, RATE_LIMIT_ADMIN_PER_MIN, RATE_LIMIT_CALLBACK_PER_MIN, RATE_LIMIT_SETUP_PER_MIN, RATE_LIMIT_CONN_TEST_PER_MIN, MAX_PERSONALITY_PROMPT, MAX_PERSONALITY_DESC, MAX_CUSTOM_INSTRUCTIONS, MAX_MODEL_LENGTH, MAX_API_KEY_LENGTH, UNHEALTHY_FAILURE_THRESHOLD, UNHEALTHY_WARN_TTL, OPENAI_DEFAULT_URL, ANTHROPIC_DEFAULT_URL, STREAM_EDIT_THROTTLE_MS, STREAM_PLACEHOLDER, FAST_STREAM_BUDGET_MS, FAST_STALL_TIMEOUT_MS } from "./config.js";
 import { now, okResponse, jsonResponse, truncate, escapeHtml, stripTelegramHtml, constantTimeEqual, buildUserContent, isAdmin, parseAdminIds, checkMemoryRate, checkRateLimit } from "./utils.js";
 import { getMasterKey, initSecrets, getWebhookSecret } from "./crypto.js";
 import { tg, sendMessageReturn, sendMessage, sendMessageSafeResult, answerCallback, editMessage, deleteMessage, buildInlineKeyboard, startTypingHeartbeat, ensureWebhook } from "./telegram.js";
-import { ensureSchema, maybeInitSchema, getBotIdentity, getUser, upsertUser, getChat, recordGroupChatAndCheckAccess, isUserBlocked, saveThreadMessage, getThreadContext, isGroupTrigger, determineThreadId, getFlowState, setFlowState, clearFlowState, getUserConnectionById, deleteUserConnection, toggleUserConnection, setDefaultConnection, setConnectionFast, updateUserConnectionTest, updateUsageStatsAsync, resolveUserActiveConnection, trackConnectionUsage } from "./db.js";
+import { ensureSchema, maybeInitSchema, getBotIdentity, getUser, upsertUser, getChat, recordGroupChatAndCheckAccess, isUserBlocked, saveThreadMessage, getThreadContext, isGroupTrigger, determineThreadId, getFlowState, setFlowState, clearFlowState, getUserConnectionById, deleteUserConnection, toggleUserConnection, setDefaultConnection, setConnectionFast, updateUserConnectionTest, updateUsageStatsAsync, resolveUserActiveConnection, trackConnectionUsage, addRouteModel, addRouteToken, setDefaultRoute, deleteRoute, setRouteDefaultModel, removeRouteModel, removeRouteToken, toggleRouteToken } from "./db.js";
 import { normalizeError, humanizeError, shouldNotifyAdmin, testUserConnectionById, tryStreamWithFallback, notifyAdminOnError } from "./ai.js";
 import { buildContextMessages, getUserPersonality, consolidateMemory, consolidateChatSummary, incrementMessageCount } from "./memory.js";
-import { showNoConnectionMessage, showSettingsMenu, showModelList, showPersonalitiesForUser, showMyPersonalities, showPersonalityDetail, showMemorySubmenu, showCustomInstructionsMenu, showUsage, showPrivacy, sourceSuffix, sourceBackButton, showMyConnections, resolveUserConnectionShortId } from "./menus.js";
-import { startAddConnectionFlow, startEditConnectionFlow, flowPromptLabel, flowPromptApiKey, handleFlowMessage, handleFlowSkip, flowFetchModels, showModelPage, flowSelectModel, finalizeConnectionFromFlow } from "./flows.js";
+import { showNoConnectionMessage, showSettingsMenu, showModelList, showPersonalitiesForUser, showMyPersonalities, showPersonalityDetail, showMemorySubmenu, showCustomInstructionsMenu, showUsage, showPrivacy, sourceSuffix, sourceBackButton, showMyConnections, resolveUserConnectionShortId, showRoutesList, showRouteDetail, resolveRouteShortId, resolveRouteItemShortId, showPersonalModelsMenu } from "./menus.js";
+import { startAddConnectionFlow, startEditConnectionFlow, flowPromptLabel, flowPromptApiKey, handleFlowMessage, handleFlowSkip, flowFetchModels, showModelPage, flowSelectModel, finalizeConnectionFromFlow, startAddRouteFlow, startEditRouteFlow, routePromptBaseUrl, routePromptModels, routePromptReview, finalizeRouteFromFlow } from "./flows.js";
 import { showAdminMenu, showAdminUsers, showAdminGroups, showAdminBlocked, showAdminStats, showAdminStatus, handleUserCommand } from "./commands.js";
 import { serveStatic, routeMiniAppAPI } from "./miniapp.js";
 import { getStaticAsset, getContentType } from "./assets.js";
@@ -317,9 +317,82 @@ async function handleCallbackQuery(env, ctx, query) {
       return;
     }
     if (action === "save" || action === "retry_test") {
+      if (flowState.flowType === "add_route" || flowState.flowType === "edit_route") {
+        await editMessage(env, chatId, messageId, "Saving route...");
+        await finalizeRouteFromFlow(env, chatId, userId, flowState);
+        return;
+      }
       if (!flowState.encrypted_key || !flowState.model) { await editMessage(env, chatId, messageId, "Flow state incomplete. Restart."); return; }
       await editMessage(env, chatId, messageId, "Testing connection... This may take up to 10 seconds.");
       await finalizeConnectionFromFlow(env, chatId, userId, flowState);
+      return;
+    }
+    if (action === "route_provider") {
+      const provider = parts[2];
+      if (provider !== "openai-compatible" && provider !== "anthropic") return;
+      flowState.provider = provider;
+      flowState.step = "route_base_url";
+      await setFlowState(env, userId, flowState);
+      await editMessage(env, chatId, messageId, "Provider: " + provider);
+      await routePromptBaseUrl(env, chatId, provider);
+      return;
+    }
+    if (action === "route_default_url") {
+      flowState.base_url = flowState.provider === "anthropic" ? ANTHROPIC_DEFAULT_URL : OPENAI_DEFAULT_URL;
+      flowState.step = "route_models";
+      await setFlowState(env, userId, flowState);
+      await editMessage(env, chatId, messageId, "Using default URL.");
+      await routePromptModels(env, chatId, null);
+      return;
+    }
+    if (action === "route_save") {
+      await editMessage(env, chatId, messageId, "Saving route...");
+      await finalizeRouteFromFlow(env, chatId, userId, flowState);
+      return;
+    }
+    if (action === "route_keep_tokens") {
+      flowState.step = "route_confirm";
+      await setFlowState(env, userId, flowState);
+      await routePromptReview(env, chatId, flowState);
+      return;
+    }
+    return;
+  }
+
+  if (namespace === "route") {
+    await answerCallback(env, query.id, "");
+    if (!isAdmin(env, userId)) { await editMessage(env, chatId, messageId, "Only administrators can manage routes.", buildInlineKeyboard([[{ text: "Back", callback_data: "set:menu" }]]), "HTML"); return; }
+    const action = parts[1];
+    if (action === "list") { await showRoutesList(env, chatId, messageId, userId, "set"); return; }
+    if (action === "add") { await startAddRouteFlow(env, chatId, userId, "set"); return; }
+    const routeId = await resolveRouteShortId(env, userId, parts[2]);
+    if (!routeId) { await editMessage(env, chatId, messageId, "Route not found.", buildInlineKeyboard([[{ text: "Back", callback_data: "route:list" }]]), "HTML"); return; }
+    if (action === "view") { await showRouteDetail(env, chatId, messageId, userId, routeId, "set"); return; }
+    if (action === "def") { await setDefaultRoute(env, userId, routeId); await showRoutesList(env, chatId, messageId, userId, "set"); return; }
+    if (action === "edit") { await startEditRouteFlow(env, chatId, userId, routeId, "set"); return; }
+    if (action === "del") { await deleteRoute(env, userId, routeId); await showRoutesList(env, chatId, messageId, userId, "set"); return; }
+    if (action === "madd") { await setFlowState(env, userId, { flowType: "route_add_model", routeId: routeId }); await sendMessage(env, chatId, "Send the model name to add."); return; }
+    if (action === "tadd") { await setFlowState(env, userId, { flowType: "route_add_token", routeId: routeId }); await sendMessage(env, chatId, "Send the API key to add.\n\n⚠ Your message will be deleted immediately after Nyra reads it."); return; }
+    const itemId = await resolveRouteItemShortId(env, routeId, parts[3]);
+    if (action === "mdef") { await setRouteDefaultModel(env, userId, routeId, itemId); await showRouteDetail(env, chatId, messageId, userId, routeId, "set"); return; }
+    if (action === "mdel") { await removeRouteModel(env, userId, routeId, itemId); await showRouteDetail(env, chatId, messageId, userId, routeId, "set"); return; }
+    if (action === "ttog") { await toggleRouteToken(env, userId, routeId, itemId); await showRouteDetail(env, chatId, messageId, userId, routeId, "set"); return; }
+    if (action === "tdel") { await removeRouteToken(env, userId, routeId, itemId); await showRouteDetail(env, chatId, messageId, userId, routeId, "set"); return; }
+    return;
+  }
+
+  if (namespace === "mypersonal") {
+    await answerCallback(env, query.id, "");
+    const action = parts[1];
+    if (action === "menu") { await showPersonalModelsMenu(env, chatId, messageId, userId); return; }
+    if (action === "add") { await startAddConnectionFlow(env, chatId, userId, "set"); return; }
+    const connId = await resolveUserConnectionShortId(env, userId, parts[2]);
+    if (!connId) { await editMessage(env, chatId, messageId, "Model not found.", buildInlineKeyboard([[{ text: "Back", callback_data: "set:menu" }]]), "HTML"); return; }
+    if (action === "edit") { await startEditConnectionFlow(env, chatId, userId, connId, "set"); return; }
+    if (action === "del") {
+      const conn = await getUserConnectionById(env, userId, connId);
+      if (conn && conn.is_global === 0) { await deleteUserConnection(env, userId, connId); }
+      await showPersonalModelsMenu(env, chatId, messageId, userId);
       return;
     }
     return;
@@ -626,8 +699,30 @@ async function processMessage(env, ctx, message) {
       } else if (flowState.flowType === "custom_instructions" || flowState.flowType === "personality_edit") {
         await handleFlowMessage(env, ctx, message, from, chat, flowState);
         return;
+      } else if (flowState.flowType === "add_route" || flowState.flowType === "edit_route") {
+        await handleFlowMessage(env, ctx, message, from, chat, flowState);
+        return;
+      } else if (flowState.flowType === "route_add_model") {
+        if (!isAdmin(env, from.id)) { await clearFlowState(env, from.id); return; }
+        const modelName = text.trim();
+        if (modelName.length === 0 || modelName.length > MAX_MODEL_LENGTH) { await sendMessage(env, chat.id, "Model name must be 1–" + MAX_MODEL_LENGTH + " characters."); return; }
+        await addRouteModel(env, from.id, flowState.routeId, modelName);
+        await clearFlowState(env, from.id);
+        await sendMessage(env, chat.id, "✅ Model added to route.", { reply_markup: buildInlineKeyboard([[{ text: "Back to Route", callback_data: "route:list" }]]) });
+        return;
+      } else if (flowState.flowType === "route_add_token") {
+        if (!isAdmin(env, from.id)) { await clearFlowState(env, from.id); return; }
+        const key = text.trim();
+        const delResult = await deleteMessage(env, chat.id, message.message_id);
+        if (!delResult || !delResult.ok) await sendMessage(env, chat.id, "⚠ I could not delete your API key message. Please delete it manually.");
+        if (key.length === 0 || key.length > MAX_API_KEY_LENGTH) { await sendMessage(env, chat.id, "API key length is invalid."); return; }
+        await addRouteToken(env, from.id, flowState.routeId, key);
+        await clearFlowState(env, from.id);
+        await sendMessage(env, chat.id, "✅ Token added to route.", { reply_markup: buildInlineKeyboard([[{ text: "Back to Route", callback_data: "route:list" }]]) });
+        return;
       } else if (flowState.step === "label" || flowState.step === "description" || flowState.step === "base_url" || flowState.step === "api_key" || flowState.step === "model" ||
-                 flowState.step === "edit_label" || flowState.step === "edit_description" || flowState.step === "edit_base_url" || flowState.step === "edit_api_key" || flowState.step === "edit_model") {
+                 flowState.step === "edit_label" || flowState.step === "edit_description" || flowState.step === "edit_base_url" || flowState.step === "edit_api_key" || flowState.step === "edit_model" ||
+                 flowState.step === "route_label" || flowState.step === "route_edit_label" || flowState.step === "route_base_url" || flowState.step === "route_models" || flowState.step === "route_tokens") {
         await handleFlowMessage(env, ctx, message, from, chat, flowState);
         return;
       } else {

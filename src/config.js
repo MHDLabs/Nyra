@@ -75,6 +75,29 @@ export const STREAM_PLACEHOLDER = "⏳";
 export const FAST_STREAM_BUDGET_MS = 25000;
 export const FAST_STALL_TIMEOUT_MS = 15000;
 
+// --- Routes (multi-model + multi-token fallback groups) --------------------
+// A route groups one provider/base_url with several models and several API
+// tokens. The AI layer walks tokens first (cheapest failover), then models.
+export const MAX_ROUTE_MODELS = 20;
+export const MAX_ROUTE_TOKENS = 10;
+export const ROUTES_PER_PAGE = 6;
+export const MAX_ROUTE_LABEL_LENGTH = 50;
+export const MAX_TOKEN_LABEL_LENGTH = 40;
+export const ROUTE_TOKEN_UNHEALTHY_THRESHOLD = 3;
+export const ROUTE_TOKEN_COOLDOWN_TTL = 300;
+// Personal (non-global) routes/connections are opt-in per deployment: an admin
+// flips `allow_personal_models` in the Mini App admin panel.
+export const SETTING_ALLOW_PERSONAL_MODELS = "allow_personal_models";
+export const SETTING_PERSONAL_MODEL_LIMIT = "personal_model_limit";
+export const DEFAULT_PERSONAL_MODEL_LIMIT = 5;
+// --- Workers AI error brain ------------------------------------------------
+// The brain reads a provider error and picks the recovery action (retry the
+// same endpoint, fail over to the next token/model, or give up). Its verdicts
+// are cached by error signature so the free AI tier is barely touched.
+export const AI_BRAIN_TIMEOUT_MS = 2500;
+export const AI_BRAIN_CACHE_TTL = 3600;
+export const AI_BRAIN_MODEL = "@cf/meta/llama-3.1-8b-instruct";
+
 export const LANGUAGE_RULE_PROMPT = "Language rule: Always respond in Persian (Farsi) by default, regardless of what language the user writes in — even if they write in English, mix languages, or ask about a technical topic. The only exception: when the user explicitly requests a different language in their message (for example \"answer in English\", \"به انگلیسی جواب بده\", \"en français\"), respond in that language for that single reply, then return to Persian for the next replies. Do not switch language just because the user wrote in another language, used an English term, or the topic is technical.";
 
 export const PERSIAN_STYLE_RULES_PROMPT = "Persian writing rules for every response:\n\nAvoid the machine-like patterns common in AI writing. Do not:\n- Open with clichés (در دنیای امروز، لازم به ذکر است، در این مقاله قصد داریم)\n- Use filler adverbs (در واقع، بدون شک، به طور کلی) unless they carry real meaning\n- Force artificial contrasts (فقط X نیست؛ Y است) — state the point directly\n- Fake suspense (چیزی که کمتر کسی می‌داند، نکته‌ای که اغلب نادیده گرفته می‌شود)\n- Use dramatic colons in prose — colons are for lists, labels, quotes\n- Ask rhetorical questions then answer them immediately\n- Comment on importance (که نشان‌دهنده تعهد است، که گواهی بر کیفیت است)\n- Attribute vaguely (کارشناسان معتقدند، تحقیقات نشان می‌دهد) — cite or drop\n- Use weak nominal verbs (نقش ایفا می‌کند) — use direct verbs (X را انجام می‌دهد)\n- Rotate technical terms for variety — pick one and stick to it\n- Chain staccato sentences (ساده است. سریع است. دقیق است.) unless deliberate\n- End with philosophical lines (آینده در راه نیست؛ همین حالا اینجاست)\n- Add repetitive summaries (در پایان می‌توان گفت، در مجموع)\n- Sprinkle decorative emojis or bold words\n- Build bullet lists for two short sentences\n- Chain three equal adjectives (سریع، دقیق و هوشمند) without real content\n- Chain «می‌تواند» sentences — be direct about what something does\n- Add generic CTAs (همین امروز قدم اول را بردارید)\n\nVocabulary: Prefer Persian words when the field uses them (رایانه، پایگاه داده، پرونده، بارگیری، پوشه، پیوند، گذرواژه، کارساز، سامانه، فناوری، سازوکار، فرایند، روش، واکاوی، گروه، فهرست، دیدگاه، نمایه، قالب). Keep the loanword when it IS the term of the field (الگوریتم، پروتکل، کامپایلر، API، توکن، کرنل، URL، نام محصولات و برندها). Never invent a Persian term. Readability always wins over purity. Be consistent within a single reply.\n\nThe active personality below may add its own flavor — humor, warmth, formality — but the anti-cliché rules above always apply. A funny reply can be funny without using «در دنیای امروز» or «بیایید صادق باشیم».";
