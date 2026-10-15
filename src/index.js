@@ -1,9 +1,9 @@
 // Nyra — entry point: AI message pipeline, update routing, webhook and setup endpoints.
-import { MAX_TELEGRAM_LENGTH, MEMORY_UPDATE_INTERVAL, RATE_LIMIT_USER_PER_MIN, RATE_LIMIT_USER_PER_HOUR, RATE_LIMIT_CHAT_PER_HOUR, RATE_LIMIT_ADMIN_PER_MIN, RATE_LIMIT_CALLBACK_PER_MIN, RATE_LIMIT_SETUP_PER_MIN, RATE_LIMIT_CONN_TEST_PER_MIN, MAX_PERSONALITY_PROMPT, MAX_PERSONALITY_DESC, MAX_CUSTOM_INSTRUCTIONS, UNHEALTHY_FAILURE_THRESHOLD, UNHEALTHY_WARN_TTL, OPENAI_DEFAULT_URL, ANTHROPIC_DEFAULT_URL, STREAM_EDIT_THROTTLE_MS, STREAM_PLACEHOLDER } from "./config.js";
+import { MAX_TELEGRAM_LENGTH, MEMORY_UPDATE_INTERVAL, RATE_LIMIT_USER_PER_MIN, RATE_LIMIT_USER_PER_HOUR, RATE_LIMIT_CHAT_PER_HOUR, RATE_LIMIT_ADMIN_PER_MIN, RATE_LIMIT_CALLBACK_PER_MIN, RATE_LIMIT_SETUP_PER_MIN, RATE_LIMIT_CONN_TEST_PER_MIN, MAX_PERSONALITY_PROMPT, MAX_PERSONALITY_DESC, MAX_CUSTOM_INSTRUCTIONS, UNHEALTHY_FAILURE_THRESHOLD, UNHEALTHY_WARN_TTL, OPENAI_DEFAULT_URL, ANTHROPIC_DEFAULT_URL, STREAM_EDIT_THROTTLE_MS, STREAM_PLACEHOLDER, FAST_STREAM_BUDGET_MS, FAST_STALL_TIMEOUT_MS } from "./config.js";
 import { now, okResponse, jsonResponse, truncate, escapeHtml, stripTelegramHtml, constantTimeEqual, buildUserContent, isAdmin, parseAdminIds, checkMemoryRate, checkRateLimit } from "./utils.js";
 import { getMasterKey, initSecrets, getWebhookSecret } from "./crypto.js";
 import { tg, sendMessageReturn, sendMessage, sendMessageSafeResult, answerCallback, editMessage, deleteMessage, buildInlineKeyboard, startTypingHeartbeat, ensureWebhook } from "./telegram.js";
-import { ensureSchema, maybeInitSchema, getBotIdentity, getUser, upsertUser, getChat, recordGroupChatAndCheckAccess, isUserBlocked, saveThreadMessage, getThreadContext, isGroupTrigger, determineThreadId, getFlowState, setFlowState, clearFlowState, getUserConnectionById, deleteUserConnection, toggleUserConnection, setDefaultConnection, updateUserConnectionTest, updateUsageStatsAsync, resolveUserActiveConnection, trackConnectionUsage } from "./db.js";
+import { ensureSchema, maybeInitSchema, getBotIdentity, getUser, upsertUser, getChat, recordGroupChatAndCheckAccess, isUserBlocked, saveThreadMessage, getThreadContext, isGroupTrigger, determineThreadId, getFlowState, setFlowState, clearFlowState, getUserConnectionById, deleteUserConnection, toggleUserConnection, setDefaultConnection, setConnectionFast, updateUserConnectionTest, updateUsageStatsAsync, resolveUserActiveConnection, trackConnectionUsage } from "./db.js";
 import { normalizeError, humanizeError, shouldNotifyAdmin, testUserConnectionById, tryStreamWithFallback, notifyAdminOnError } from "./ai.js";
 import { buildContextMessages, getUserPersonality, consolidateMemory, consolidateChatSummary, incrementMessageCount } from "./memory.js";
 import { showNoConnectionMessage, showSettingsMenu, showModelList, showPersonalitiesForUser, showMyPersonalities, showPersonalityDetail, showMemorySubmenu, showCustomInstructionsMenu, showUsage, showPrivacy, sourceSuffix, sourceBackButton, showMyConnections, resolveUserConnectionShortId } from "./menus.js";
@@ -53,6 +53,10 @@ async function handleAIMessage(env, ctx, message, from, chat, isGroup, threadId)
     await sendMessage(env, chatId, "ℹ Your previous model is no longer available. Switched to <b>" + escapeHtml(connection.label) + "</b>.", { parse_mode: "HTML" });
   }
 
+  // Mark the resolved object as group/private so the prompt builder and the
+  // memory consolidator know whether to attribute messages to specific speakers.
+  user.is_group = isGroup;
+
   if ((connection.consecutive_failures || 0) >= UNHEALTHY_FAILURE_THRESHOLD) {
     const warnKey = "unhealthy:" + userId + ":" + connection.connection_id;
     try {
@@ -74,6 +78,12 @@ async function handleAIMessage(env, ctx, message, from, chat, isGroup, threadId)
 
   const messages = buildContextMessages(personality, user, chatRow, recentContext, userContent, mode);
   const streamOptions = { max_tokens: 2048, temperature: 0.7 };
+  // Fast models stream with a tighter budget so the whole answer fits inside the
+  // 30s ctx.waitUntil window when the webhook path runs them inline.
+  if (connection.is_fast === 1) {
+    streamOptions.totalBudgetMs = FAST_STREAM_BUDGET_MS;
+    streamOptions.stallTimeoutMs = FAST_STALL_TIMEOUT_MS;
+  }
   const replyToId = isGroup ? message.message_id : undefined;
 
   const placeholderResult = await sendMessageSafeResult(env, chatId, STREAM_PLACEHOLDER, { reply_to_message_id: replyToId });
@@ -214,6 +224,7 @@ async function handleAIMessage(env, ctx, message, from, chat, isGroup, threadId)
     ctx.waitUntil((async function () {
       try {
         const updatedUser = await getUser(env, userId);
+        if (updatedUser) updatedUser.is_group = isGroup;
         const updatedContext = await getThreadContext(env, chatId, threadId);
         await consolidateMemory(env, updatedUser, updatedContext, { user: userContent, assistant: replyText });
         if (isGroup) {
@@ -227,6 +238,21 @@ async function handleAIMessage(env, ctx, message, from, chat, isGroup, threadId)
   }
 }
 
+
+// If the sender's resolved model is marked fast, run the AI pipeline inline from
+// the webhook request instead of enqueuing it. This skips the queue consumer's
+// batch window (up to max_batch_timeout) plus the extra hop, so a high-speed API
+// answers immediately. Falls back to "not fast" on any lookup error.
+async function isFastMessage(env, from) {
+  try {
+    const user = await getUser(env, from.id);
+    if (!user) return false;
+    const resolved = await resolveUserActiveConnection(env, user);
+    return !!(resolved.connection && resolved.connection.is_fast === 1);
+  } catch (err) {
+    return false;
+  }
+}
 
 function parseMyconnSource(action, parts) {
   if (action === "list" || action === "add") {
@@ -428,6 +454,7 @@ async function handleCallbackQuery(env, ctx, query) {
     const connId = await resolveUserConnectionShortId(env, userId, shortId);
     if (!connId) { await editMessage(env, chatId, messageId, "Connection not found.", buildInlineKeyboard([[sourceBackButton(source)]]), "HTML"); return; }
     if (action === "tog") { await toggleUserConnection(env, userId, connId); await showMyConnections(env, chatId, messageId, userId, source); return; }
+    if (action === "fast") { await setConnectionFast(env, userId, connId); await showMyConnections(env, chatId, messageId, userId, source); return; }
     if (action === "del") { await deleteUserConnection(env, userId, connId); await showMyConnections(env, chatId, messageId, userId, source); return; }
     if (action === "def") { await setDefaultConnection(env, userId, connId); await showMyConnections(env, chatId, messageId, userId, source); return; }
     if (action === "edit") { await startEditConnectionFlow(env, chatId, userId, connId, source); return; }
@@ -703,6 +730,34 @@ async function handleWebhook(request, env, ctx) {
       return new Response("Service Unavailable", { status: 503 });
     }
     if (!firstDelivery) return okResponse();
+  }
+  // Fast path: a message whose resolved model is marked fast is processed inline
+  // (no queue wait). Command messages and button taps are cheap (no AI call) so
+  // they are always handled inline too — this is what makes commands and menus
+  // feel instant instead of waiting for the queue consumer's batch window.
+  const msgUpdate = update.message;
+  const cbUpdate = update.callback_query;
+  if (cbUpdate && cbUpdate.from && !cbUpdate.from.is_bot) {
+    ctx.waitUntil(handleCallbackQuery(env, ctx, cbUpdate));
+    return okResponse();
+  }
+  if (msgUpdate && msgUpdate.from && !msgUpdate.from.is_bot && msgUpdate.chat) {
+    const ctype = msgUpdate.chat.type;
+    if (ctype === "private" || ctype === "group" || ctype === "supergroup") {
+      const isCommand = typeof msgUpdate.text === "string" && msgUpdate.text.trim().startsWith("/");
+      if (isCommand) {
+        ctx.waitUntil(processMessage(env, ctx, msgUpdate));
+        return okResponse();
+      }
+      try {
+        if (await isFastMessage(env, msgUpdate.from)) {
+          ctx.waitUntil(processMessage(env, ctx, msgUpdate));
+          return okResponse();
+        }
+      } catch (err) {
+        console.error("fast path failed, using queue:", err.message);
+      }
+    }
   }
   try {
     await env.NYRA_QUEUE.send({ update: update });

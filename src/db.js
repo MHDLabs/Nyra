@@ -42,7 +42,8 @@ export async function ensureSchema(env) {
     ["ai_connections", "is_default", "INTEGER DEFAULT 0"],
     ["ai_connections", "description", "TEXT"],
     ["ai_connections", "display_order", "INTEGER DEFAULT 100"],
-    ["ai_connections", "last_test_diagnostic", "TEXT"]
+    ["ai_connections", "last_test_diagnostic", "TEXT"],
+    ["ai_connections", "is_fast", "INTEGER DEFAULT 0"]
   ];
   for (let i = 0; i < alters.length; i++) {
     const table = alters[i][0];
@@ -361,7 +362,7 @@ export async function saveThreadMessage(env, chatId, threadId, messageId, userId
 export async function getThreadContext(env, chatId, threadId) {
   try {
     const result = await env.DB.prepare(
-      "SELECT role, content FROM thread_messages WHERE chat_id = ? AND thread_id = ? ORDER BY created_at DESC, message_id DESC LIMIT ?"
+      "SELECT tm.role, tm.content, tm.user_id, COALESCE(NULLIF(u.first_name, ''), NULLIF(u.username, ''), CAST(tm.user_id AS TEXT)) AS user_name FROM thread_messages tm LEFT JOIN users u ON u.telegram_id = tm.user_id WHERE tm.chat_id = ? AND tm.thread_id = ? ORDER BY tm.created_at DESC, tm.message_id DESC LIMIT ?"
     ).bind(chatId, threadId, MAX_CONTEXT_MESSAGES).all();
     const rows = result.results || [];
     return rows.reverse();
@@ -523,6 +524,21 @@ export async function setDefaultConnection(env, adminId, connectionId) {
     invalidateUserConnectionsCache(null);
     return true;
   } catch (err) { console.error("setDefaultConnection failed:", err.message); return false; }
+}
+
+/** Toggle fast-mode on a global connection. Fast models stream straight from
+ * the webhook request instead of waiting in the queue consumer's batch window. */
+export async function setConnectionFast(env, adminId, connectionId) {
+  if (!isAdmin(env, adminId)) return false;
+  const conn = await getUserConnectionById(env, adminId, connectionId);
+  if (!conn) return false;
+  if (conn.is_global === 1 && !isAdmin(env, adminId)) return false;
+  try {
+    const newState = conn.is_fast === 1 ? 0 : 1;
+    await env.DB.prepare("UPDATE ai_connections SET is_fast = ?, updated_at = ? WHERE connection_id = ?").bind(newState, now(), connectionId).run();
+    invalidateUserConnectionsCache(null);
+    return true;
+  } catch (err) { console.error("setConnectionFast failed:", err.message); return false; }
 }
 
 export async function updateUserConnectionTest(env, userId, connectionId, status, error, latencyMs, diagnostic) {

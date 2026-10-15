@@ -69,6 +69,11 @@ export const CONNECTION_CACHE_TTL_MS = 15000;
 export const NYRA_VARIANTS = ["نیرا", "نيرا"];
 export const STREAM_EDIT_THROTTLE_MS = 1200;
 export const STREAM_PLACEHOLDER = "⏳";
+// Fast-mode models (admin opt-in) bypass the queue and stream straight from the
+// webhook request. ctx.waitUntil caps post-response work at 30s, so the total
+// streaming budget must stay safely below that.
+export const FAST_STREAM_BUDGET_MS = 25000;
+export const FAST_STALL_TIMEOUT_MS = 15000;
 
 export const LANGUAGE_RULE_PROMPT = "Language rule: Always respond in Persian (Farsi) by default, regardless of what language the user writes in — even if they write in English, mix languages, or ask about a technical topic. The only exception: when the user explicitly requests a different language in their message (for example \"answer in English\", \"به انگلیسی جواب بده\", \"en français\"), respond in that language for that single reply, then return to Persian for the next replies. Do not switch language just because the user wrote in another language, used an English term, or the topic is technical.";
 

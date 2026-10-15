@@ -562,6 +562,10 @@ export async function* tryStreamWithFallback(env, user, messages, options) {
   }
   const fallbackEnabled = !user || user.fallback_enabled !== 0;
   const budgetStart = Date.now();
+  // Fast-mode connections pass tighter budgets so an inline (webhook-path) run
+  // finishes well inside the 30s ctx.waitUntil cap.
+  const totalBudgetMs = (options && options.totalBudgetMs) || AI_STREAM_TOTAL_BUDGET_MS;
+  const stallTimeoutBase = (options && options.stallTimeoutMs) || AI_STREAM_STALL_TIMEOUT_MS;
 
   let primaryConn = null;
   if (user && user.active_connection_id) {
@@ -592,20 +596,20 @@ export async function* tryStreamWithFallback(env, user, messages, options) {
       if (!fallbackEnabled && !isRetryableCategory(lastCategory)) break;
       if ((conn.consecutive_failures || 0) >= UNHEALTHY_FAILURE_THRESHOLD) continue;
     }
-    const budgetRemaining = AI_STREAM_TOTAL_BUDGET_MS - (Date.now() - budgetStart);
+    const budgetRemaining = totalBudgetMs - (Date.now() - budgetStart);
     if (budgetRemaining < 3000) break;
 
     const maxAttemptsForConn = isPrimary ? AI_MAX_PRIMARY_ATTEMPTS : 1;
 
     for (let attempt = 0; attempt < maxAttemptsForConn; attempt++) {
-      const remaining = AI_STREAM_TOTAL_BUDGET_MS - (Date.now() - budgetStart);
+      const remaining = totalBudgetMs - (Date.now() - budgetStart);
       if (remaining < 3000) break;
       if (attempt > 0) {
         const delay = AI_RETRY_DELAYS_MS[attempt - 1] || 1000;
         await sleep(delay);
       }
       totalAttempts++;
-      const stallTimeout = Math.min(AI_STREAM_STALL_TIMEOUT_MS, AI_STREAM_TOTAL_BUDGET_MS - (Date.now() - budgetStart));
+      const stallTimeout = Math.min(stallTimeoutBase, totalBudgetMs - (Date.now() - budgetStart));
       let currentUsage = null;
       let attemptYielded = false;
 

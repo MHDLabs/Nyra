@@ -215,7 +215,7 @@ export async function showMyConnections(env, chatId, messageId, userId, source) 
   }
   const sfx = sourceSuffix(source);
   const conns = await getUserConnections(env, userId);
-  const lines = ["<b>Manage Models</b>", "", "<i>These models are shared with all users.</i>", ""];
+  const lines = ["<b>Manage Models</b>", "", "<i>These models are shared with all users.</i>", "<i>⚡ Fast marks a model as high-speed: its replies skip the queue and answer immediately.</i>", ""];
   const rows = [];
   if (conns.length === 0) {
     lines.push("No models yet.");
@@ -226,8 +226,9 @@ export async function showMyConnections(env, chatId, messageId, userId, source) 
       const enabledMark = c.enabled === 1 ? "✓" : "✗";
       const globalMark = c.is_global === 1 ? " [Global]" : " [Personal]";
       const defaultMark = c.is_default === 1 ? " ★" : "";
+      const fastMark = c.is_fast === 1 ? " ⚡" : "";
       const healthMark = (c.consecutive_failures || 0) >= UNHEALTHY_FAILURE_THRESHOLD ? " ⚠" : "";
-      lines.push(enabledMark + " <b>" + escapeHtml(c.label) + "</b>" + globalMark + defaultMark + healthMark);
+      lines.push(enabledMark + " <b>" + escapeHtml(c.label) + "</b>" + globalMark + defaultMark + fastMark + healthMark);
       lines.push("   " + escapeHtml(c.provider) + " / <code>" + escapeHtml(c.model) + "</code>");
       const shortId = safeCallbackId(c.connection_id);
       rows.push([
@@ -237,6 +238,7 @@ export async function showMyConnections(env, chatId, messageId, userId, source) 
       ]);
       const row2 = [];
       if (c.is_global === 1 && c.is_default !== 1) row2.push({ text: "⭐ Set Default", callback_data: "myconn:def:" + shortId + sfx });
+      row2.push({ text: c.is_fast === 1 ? "⚡ Fast: On" : "⚡ Fast: Off", callback_data: "myconn:fast:" + shortId + sfx });
       row2.push({ text: "🗑 Delete", callback_data: "myconn:del:" + shortId + sfx });
       rows.push(row2);
     }

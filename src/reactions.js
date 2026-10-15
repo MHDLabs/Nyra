@@ -1,5 +1,5 @@
 // Workers AI reaction classification
-import { checkRateLimit, escapeHtml } from "./utils.js";
+import { checkRateLimit, containsNyraWord } from "./utils.js";
 import { tg } from "./telegram.js";
 
 const REACTION_TIMEOUT_MS = 4000; // 4s deadline
@@ -115,15 +115,15 @@ export async function trySetReaction(env, ctx, chatId, messageId, text) {
 }
 
 /**
- * Check if message should trigger reaction
- * Only react in groups, not in private chats
+ * Check if message should trigger reaction.
+ * Groups only, and strictly only when the message actually addresses Nyra by
+ * name (Nyra / نیرا / نيرا). Without this, the bot reacted to every message in
+ * a busy group, which is exactly the reported bug.
  */
 export function shouldReact(message, isGroup) {
   if (!isGroup) return false;
-  if (!message.text && !message.caption) return false;
-  
-  const text = message.text || message.caption || "";
-  if (text.length < 10) return false; // Too short to classify meaningfully
-  
-  return true;
+  const text = ((message.text || message.caption || "") + "").trim();
+  if (!text) return false;
+  if (text.length < 3) return false; // Nothing meaningful to classify
+  return containsNyraWord(text);
 }
