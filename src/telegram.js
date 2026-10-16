@@ -53,42 +53,66 @@ async function writeWebhookState(env, state) {
   catch (err) { console.error("Webhook state write failed:", err.message); }
 }
 
+// Short, non-reversible tag for a webhook secret. Only the tag is persisted, so
+// a rotated TELEGRAM_SECRET is detectable without storing the secret in KV.
+async function secretFingerprint(secret) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret));
+  const bytes = new Uint8Array(digest).subarray(0, 8);
+  let hex = "";
+  for (let i = 0; i < bytes.length; i++) hex += bytes[i].toString(16).padStart(2, "0");
+  return hex;
+}
+
 // origin: public origin (scheme://host) of the current request, or null from
 // the scheduled handler — then the already-learned URL is re-verified.
 export async function ensureWebhook(env, origin) {
   try {
     if (!env.TELEGRAM_BOT_TOKEN) return { ok: false, status: "no_token" };
+    const secret = await getWebhookSecret(env);
+    if (!secret) return { ok: false, status: "no_secret" };
+    // Telegram stores the secret_token from the last successful setWebhook, so
+    // a changed TELEGRAM_SECRET must invalidate the cached state — otherwise
+    // the cache would report "verified" while Telegram still sends the old
+    // value and every update is rejected as unauthorized.
+    const secretTag = await secretFingerprint(secret);
     const state = await readWebhookState(env);
+    // A stored state belongs to the current secret only when its tag matches.
+    // The learned URL is independent of the secret, so it survives rotation.
+    const rotated = !state || state.secretTag !== secretTag;
     const target = origin || (state && state.url) || null;
     if (!target) return { ok: false, status: "awaiting_first_request" };
     const nowMs = Date.now();
     const webhookUrl = target.replace(/\/+$/, "") + "/webhook";
-    if (state && state.verifiedAt && nowMs - state.verifiedAt < WEBHOOK_RECHECK_MS && state.url === target) {
+    // Only a verification performed with this exact secret can be reused.
+    if (!rotated && state.verifiedAt && nowMs - state.verifiedAt < WEBHOOK_RECHECK_MS && state.url === target) {
       return { ok: true, status: "cached", url: webhookUrl };
     }
-    if (state && state.attemptedAt && nowMs - state.attemptedAt < WEBHOOK_ATTEMPT_GUARD_MS) {
-      return { ok: false, status: "busy", url: state.url ? state.url.replace(/\/+$/, "") + "/webhook" : null };
+    if (!rotated && state.attemptedAt && nowMs - state.attemptedAt < WEBHOOK_ATTEMPT_GUARD_MS) {
+      return { ok: false, status: "busy", url: webhookUrl };
     }
     // Claim the attempt window BEFORE any Telegram call (hammering guard).
     await writeWebhookState(env, {
       url: (state && state.url) || null,
       attemptedAt: nowMs,
-      verifiedAt: (state && state.verifiedAt) || 0
+      verifiedAt: rotated ? 0 : (state && state.verifiedAt) || 0,
+      secretTag: secretTag
     });
-    const info = await tg(env, "getWebhookInfo", {});
-    if (info && info.ok && info.result && info.result.url === webhookUrl) {
-      await writeWebhookState(env, { url: target, attemptedAt: 0, verifiedAt: nowMs });
-      return { ok: true, status: "verified", url: webhookUrl };
+    // getWebhookInfo only reports the URL, never the secret_token, so it can
+    // confirm a registration only when the secret has not changed.
+    if (!rotated) {
+      const info = await tg(env, "getWebhookInfo", {});
+      if (info && info.ok && info.result && info.result.url === webhookUrl) {
+        await writeWebhookState(env, { url: target, attemptedAt: 0, verifiedAt: nowMs, secretTag: secretTag });
+        return { ok: true, status: "verified", url: webhookUrl };
+      }
     }
-    const secret = await getWebhookSecret(env);
-    if (!secret) return { ok: false, status: "no_secret" };
     const set = await tg(env, "setWebhook", {
       url: webhookUrl,
       secret_token: secret,
       allowed_updates: ["message", "callback_query"]
     });
     if (set && set.ok) {
-      await writeWebhookState(env, { url: target, attemptedAt: 0, verifiedAt: nowMs });
+      await writeWebhookState(env, { url: target, attemptedAt: 0, verifiedAt: nowMs, secretTag: secretTag });
       console.log("Webhook registered: " + webhookUrl);
       return { ok: true, status: "registered", url: webhookUrl };
     }
