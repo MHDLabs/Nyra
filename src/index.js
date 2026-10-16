@@ -1,7 +1,7 @@
 // Nyra — entry point: AI message pipeline, update routing, webhook and setup endpoints.
 import { MAX_TELEGRAM_LENGTH, MEMORY_UPDATE_INTERVAL, RATE_LIMIT_USER_PER_MIN, RATE_LIMIT_USER_PER_HOUR, RATE_LIMIT_CHAT_PER_HOUR, RATE_LIMIT_ADMIN_PER_MIN, RATE_LIMIT_CALLBACK_PER_MIN, RATE_LIMIT_SETUP_PER_MIN, RATE_LIMIT_CONN_TEST_PER_MIN, MAX_PERSONALITY_PROMPT, MAX_PERSONALITY_DESC, MAX_CUSTOM_INSTRUCTIONS, MAX_MODEL_LENGTH, MAX_API_KEY_LENGTH, UNHEALTHY_FAILURE_THRESHOLD, UNHEALTHY_WARN_TTL, OPENAI_DEFAULT_URL, ANTHROPIC_DEFAULT_URL, STREAM_EDIT_THROTTLE_MS, STREAM_PLACEHOLDER, FAST_STREAM_BUDGET_MS, FAST_STALL_TIMEOUT_MS } from "./config.js";
 import { now, okResponse, jsonResponse, truncate, escapeHtml, stripTelegramHtml, constantTimeEqual, buildUserContent, isAdmin, parseAdminIds, checkMemoryRate, checkRateLimit } from "./utils.js";
-import { getMasterKey, initSecrets, getWebhookSecret } from "./crypto.js";
+import { getMasterKey, getWebhookSecret, validateSecrets } from "./crypto.js";
 import { tg, sendMessageReturn, sendMessage, sendMessageSafeResult, answerCallback, editMessage, deleteMessage, buildInlineKeyboard, startTypingHeartbeat, ensureWebhook } from "./telegram.js";
 import { ensureSchema, maybeInitSchema, getBotIdentity, getUser, upsertUser, getChat, recordGroupChatAndCheckAccess, isUserBlocked, saveThreadMessage, getThreadContext, isGroupTrigger, determineThreadId, getFlowState, setFlowState, clearFlowState, getUserConnectionById, deleteUserConnection, toggleUserConnection, setDefaultConnection, setConnectionFast, updateUserConnectionTest, updateUsageStatsAsync, resolveUserActiveConnection, trackConnectionUsage, addRouteModel, addRouteToken, setDefaultRoute, deleteRoute, setRouteDefaultModel, removeRouteModel, removeRouteToken, toggleRouteToken } from "./db.js";
 import { normalizeError, humanizeError, shouldNotifyAdmin, testUserConnectionById, tryStreamWithFallback, notifyAdminOnError } from "./ai.js";
@@ -900,17 +900,16 @@ async function handleSetup(request, env) {
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    if (!env.TELEGRAM_BOT_TOKEN) {
-      console.error("TELEGRAM_BOT_TOKEN is not set.");
-      return new Response("Server misconfigured", { status: 500 });
-    }
-    try { await initSecrets(env); } catch (err) {
-      console.error("Secret derivation failed:", err.message);
-      return new Response("Server misconfigured: secrets", { status: 500 });
+    // All three secrets are mandatory manual entries. A deployment without any
+    // one of them crashes loudly on every request — no derivation, no fallback.
+    const missing = validateSecrets(env);
+    if (missing) {
+      console.error("Server misconfigured — missing required secret(s): " + missing.join(", "));
+      return new Response("Server misconfigured: missing " + missing.join(", "), { status: 500 });
     }
     if (!getMasterKey(env)) {
-      console.error("ENCRYPTION_KEY missing or invalid.");
-      return new Response("Server misconfigured: encryption key", { status: 500 });
+      console.error("ENCRYPTION_KEY is not a valid 32-byte base64 key.");
+      return new Response("Server misconfigured: invalid ENCRYPTION_KEY", { status: 500 });
     }
     // ADMIN_IDS is a required one-click-deploy input; enforce at runtime so a
     // missing/typo'd value is loud (status page + logs) instead of silent.
@@ -954,9 +953,9 @@ export default {
   // of the learned URL (no-op until GET / has learned the origin). Runs every
   // 5 minutes via [triggers] in wrangler.toml.
   async scheduled(event, env, ctx) {
-    if (!env.TELEGRAM_BOT_TOKEN) return;
-    try { await initSecrets(env); } catch (err) {
-      console.error("Secret derivation failed:", err.message);
+    const missing = validateSecrets(env);
+    if (missing) {
+      console.error("Scheduled run skipped — missing required secret(s): " + missing.join(", "));
       return;
     }
     await maybeInitSchema(env);
@@ -969,8 +968,13 @@ export default {
   // Consumer invocations allow long wall time (vs. the 30s post-response waitUntil cap),
   // so streaming, fallbacks, consolidation and heartbeats are no longer cut off at 30s.
   async queue(batch, env, ctx) {
-    if (env.TELEGRAM_BOT_TOKEN) {
-      try { await initSecrets(env); } catch (err) { console.error("Secret derivation failed:", err.message); }
+    const missing = validateSecrets(env);
+    if (missing) {
+      console.error("Queue batch skipped — missing required secret(s): " + missing.join(", "));
+      for (let i = 0; i < batch.messages.length; i++) {
+        try { batch.messages[i].retry(); } catch (e) { console.error("queue retry failed:", e.message); }
+      }
+      return;
     }
     await ensureSchema(env);
     const queueName = batch.queue || "nyra-updates";

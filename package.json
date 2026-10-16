@@ -13,6 +13,12 @@
       "TELEGRAM_BOT_TOKEN": {
         "description": "REQUIRED — your Telegram bot token from @BotFather (format `123456789:AA...`). Get it: message @BotFather → /mybots → your bot → API Token."
       },
+      "TELEGRAM_SECRET": {
+        "description": "REQUIRED — random webhook secret token, also used as the X-Setup-Secret header for /setup. Generate with `openssl rand -hex 32`. Never reuse the bot token."
+      },
+      "ENCRYPTION_KEY": {
+        "description": "REQUIRED — base64-encoded 32-byte master key that encrypts every stored API key. Generate with `openssl rand -base64 32`. Losing it makes existing stored keys unreadable."
+      },
       "ADMIN_IDS": {
         "description": "REQUIRED — numeric Telegram user ID(s) of the administrator(s), digits only (e.g. `123456789`), comma-separated for several. Find yours by sending any message to @userinfobot."
       }

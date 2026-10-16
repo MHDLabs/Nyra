@@ -14,16 +14,27 @@ English · [فارسی](README.fa.md)
 
 Nyra connects your Telegram bot to any AI provider you choose — OpenAI, Anthropic, or any OpenAI-compatible endpoint (OpenRouter, Groq, Ollama, …). It runs as a single Cloudflare Worker with no build step, no server to maintain, and no framework to learn. Your API keys are encrypted at rest, and everything else lives in Cloudflare D1 and KV.
 
-## 🚀 Deploy to Cloudflare
+## ⚡ Quick start (one-click)
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/MHDLabs/Nyra)
 
-One click, then **exactly two inputs** — nothing else needs configuration:
+The button above is the **only** place the one-click flow starts. Press it, sign in to Cloudflare, and fill in the four required inputs — Nyra generates nothing for you, so every secret must be supplied:
 
-1. **`TELEGRAM_BOT_TOKEN`** — your bot token from [@BotFather](https://t.me/BotFather).
-2. **`ADMIN_IDS`** — numeric Telegram user ID(s) of the administrator(s), comma-separated (send any message to [@userinfobot](https://t.me/userinfobot) to learn yours).
+1. **`TELEGRAM_BOT_TOKEN`** — your bot token from [@BotFather](https://t.me/BotFather) (format `123456789:AA...`).
+2. **`TELEGRAM_SECRET`** — random webhook secret token; also the `X-Setup-Secret` header for `/setup`.
+3. **`ENCRYPTION_KEY`** — base64-encoded 32-byte master key that encrypts every stored API key.
+4. **`ADMIN_IDS`** — numeric Telegram user ID(s) of the administrator(s), comma-separated (send any message to [@userinfobot](https://t.me/userinfobot) to learn yours).
 
-Everything else is automatic: Cloudflare provisions D1, KV and the queue from `wrangler.toml`, the `workers.dev` domain is enabled, the webhook secret and encryption key are derived from your bot token, and the Worker registers the Telegram webhook itself on first contact — no curl, no manual webhook step. The flow surfaces both inputs as required (with descriptions of where to find them); the status page (`GET /`) additionally warns at runtime if `ADMIN_IDS` is missing or malformed.
+Generate the two random secrets on your own machine (macOS/Linux; on Windows use WSL or Git Bash) and paste them into the form:
+
+```bash
+openssl rand -hex 32      # → TELEGRAM_SECRET   (64 hex chars, accepted by Telegram)
+openssl rand -base64 32   # → ENCRYPTION_KEY    (exactly 32 bytes when decoded)
+```
+
+No `openssl`? Any cryptographically secure generator works, as long as the output matches the format above — for example `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` for `TELEGRAM_SECRET` and the same with `toString('base64')` for `ENCRYPTION_KEY`. Never use the bot token, a password you typed by hand, or an online "random string" site as either value.
+
+Everything else is automatic: Cloudflare provisions D1, KV and the queue from `wrangler.toml`, the `workers.dev` domain is enabled, and the Worker registers the Telegram webhook itself on first contact — no curl, no manual webhook step. The flow marks all four inputs as required (with descriptions of where to find or how to generate them); the status page (`GET /`) additionally warns at runtime if `ADMIN_IDS` is missing or malformed, and every request returns HTTP 500 until all three secrets are valid.
 
 Prefer the CLI? The full manual flow is in [Setup](#-setup) → *Option B*.
 
@@ -40,7 +51,7 @@ Prefer the CLI? The full manual flow is in [Setup](#-setup) → *Option B*.
 - **🛡️ Rate limiting & blocking** — per-user, per-chat, and per-admin limits, plus an admin block list.
 - **🛠️ Admin panel** — manage users, chats, group modes, connections, and block list, and view stats and system status — all inline in Telegram.
 
-## � Project structure
+## 📁 Project structure
 
 The Worker is split into small, focused ES modules under `src/` — Wrangler bundles them automatically, so there is still no build step:
 
@@ -59,23 +70,25 @@ src/
 └── commands.js  user commands and the admin panel
 ```
 
-## �📋 Requirements
+## 📋 Requirements
 
 - A [Cloudflare account](https://dash.cloudflare.com) (free plan is enough — Workers, D1, KV and Queues all work on Free; Queues Free includes 10,000 operations/day, which suits personal/small-group use)
 - A Telegram bot token from [@BotFather](https://t.me/BotFather)
 - An API key from an AI provider (OpenAI-compatible or Anthropic)
-- One-click button: nothing beyond the three items above
+- **One-click button:** nothing beyond a bot token, two generated secrets, and your admin user ID
 - Manual setup only: [Node.js](https://nodejs.org) and the [Wrangler](https://developers.cloudflare.com/workers/wrangler/) CLI
 
 ## 🚀 Setup
 
 ### Option A — one-click (recommended)
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/MHDLabs/Nyra)
+Use the **Deploy to Cloudflare** button in [Quick start](#-quick-start-one-click) — it is the single entry point for the one-click flow.
 
 1. Press the button and sign in to Cloudflare.
-2. The flow asks for exactly two inputs — every other value is provisioned or derived automatically:
+2. The flow asks for four required inputs — nothing is generated or derived for you:
    - `TELEGRAM_BOT_TOKEN` — the token from @BotFather.
+   - `TELEGRAM_SECRET` — `openssl rand -hex 32`.
+   - `ENCRYPTION_KEY` — `openssl rand -base64 32`.
    - `ADMIN_IDS` — numeric Telegram user ID(s) of the admin(s), comma-separated.
 3. Click **Deploy**. Cloudflare provisions D1, KV and the queue from `wrangler.toml`, enables the `nyra.<subdomain>.workers.dev` domain, and runs the deploy script, which ends with a status-page probe.
 4. The Worker bootstraps itself: first contact initialises the schema and **registers the Telegram webhook automatically** — no curl, no manual step. Open `https://nyra.<your-subdomain>.workers.dev/` once to confirm; you should see `Webhook: registered → …` and `Admin IDs: 1 configured`.
@@ -83,7 +96,7 @@ src/
 
 Notes:
 - The built-in cron trigger re-verifies the webhook registration every few minutes, so it self-heals if Telegram-side registration is ever lost.
-- Upgrading an existing deployment? Keep any real `database_id` / KV `id` in `wrangler.toml`, and keep your existing `TELEGRAM_SECRET` / `ENCRYPTION_KEY` secrets — explicit secrets always win over derived values.
+- Upgrading an existing deployment? Keep any real `database_id` / KV `id` in `wrangler.toml`, and keep the exact `TELEGRAM_SECRET` / `ENCRYPTION_KEY` you already use — changing `ENCRYPTION_KEY` makes previously stored API keys unreadable, and changing `TELEGRAM_SECRET` requires re-registering the webhook.
 
 ### Option B — manual CLI setup
 
@@ -101,12 +114,18 @@ Manual creation (`wrangler d1 create nyra`, `wrangler kv namespace create KV`) s
 
 #### 3. Set the secrets
 
+All three are required. Generate the random ones first, then push each value:
+
 ```bash
-wrangler secret put TELEGRAM_BOT_TOKEN   # paste the @BotFather token — the only required secret
-# Optional overrides (auto-derived from the token when omitted):
-# wrangler secret put TELEGRAM_SECRET     # openssl rand -hex 32
-# wrangler secret put ENCRYPTION_KEY      # openssl rand -base64 32
+openssl rand -hex 32       # → prints the value to use for TELEGRAM_SECRET
+openssl rand -base64 32    # → prints the value to use for ENCRYPTION_KEY
+
+wrangler secret put TELEGRAM_BOT_TOKEN   # paste the @BotFather token
+wrangler secret put TELEGRAM_SECRET      # paste the `openssl rand -hex 32` output
+wrangler secret put ENCRYPTION_KEY       # paste the `openssl rand -base64 32` output
 ```
+
+`ENCRYPTION_KEY` must decode to exactly 32 bytes; `TELEGRAM_SECRET` may contain `A-Z a-z 0-9 _ -` (hex satisfies Telegram's charset). Store both somewhere safe — the Worker returns HTTP 500 on every request if either is missing or malformed, and a changed `ENCRYPTION_KEY` makes existing stored API keys undecryptable.
 
 Set your admin Telegram user ID(s) in `wrangler.toml` under `[vars] → ADMIN_IDS` (comma-separated for multiple admins).
 
@@ -118,7 +137,7 @@ wrangler deploy
 
 #### 5. Register the webhook (automatic; `/setup` for manual overrides)
 
-No manual step: the deploy probe or the first visit to `GET /` registers the webhook using the runtime secret, and the cron re-verifies it. To register by hand (only meaningful when `TELEGRAM_SECRET` is explicitly set — a derived secret cannot be quoted), run once (the secret travels **only in a header**, never in the URL):
+No manual step: the deploy probe or the first visit to `GET /` registers the webhook using the runtime secret, and the cron re-verifies it. To register by hand, run once (the secret travels **only in a header**, never in the URL):
 
 ```bash
 curl -H "X-Setup-Secret: <TELEGRAM_SECRET>" \
@@ -139,10 +158,10 @@ In a private chat with the bot, open `/admin` → **Connections** and add a prov
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `TELEGRAM_BOT_TOKEN` | ✅ | Bot token from @BotFather — the only required secret (prompted by the deploy button) |
+| `TELEGRAM_BOT_TOKEN` | ✅ | Bot token from @BotFather (prompted by the deploy button) |
+| `TELEGRAM_SECRET` | ✅ | Webhook secret token Telegram sends with every call; also gates `/setup`. Generate with `openssl rand -hex 32`. No derivation — the Worker fails with HTTP 500 without it |
+| `ENCRYPTION_KEY` | ✅ | Base64-encoded 32-byte key for AES-256-GCM encryption of stored API keys. Generate with `openssl rand -base64 32`. Must decode to exactly 32 bytes |
 | `ADMIN_IDS` | ✅ | Numeric Telegram admin ID(s), comma-separated (prompted by the deploy button) |
-| `TELEGRAM_SECRET` | optional | Secret token Telegram sends with every webhook call; also gates `/setup`. **Auto-derived from the bot token** when unset — set explicitly only to override |
-| `ENCRYPTION_KEY` | optional | Base64-encoded 32-byte key for AES-256-GCM encryption of stored API keys. **Auto-derived from the bot token** when unset |
 | `TELEGRAM_BOT_ID` / `TELEGRAM_BOT_USERNAME` | optional | Cached bot identity; fetched automatically when omitted |
 
 D1 is bound as `DB`, KV as `KV`, and the update queue as `NYRA_QUEUE` (see `wrangler.toml`). Update flow: Telegram → webhook (acks immediately, after `update_id` dedup) → queue → consumer, which runs the full AI pipeline — so long streaming replies are not cut off by the 30-second post-response limit that applies to webhook requests.
@@ -168,18 +187,19 @@ The schema is created on first use — triggered by the status page, the first w
 
 ## 🔐 Security notes
 
-- Webhook updates are rejected unless they carry the effective webhook secret (your explicit `TELEGRAM_SECRET`, or the value derived from your bot token); the comparison is constant-time. Duplicates are dropped by `update_id` before processing.
-- Provider API keys are encrypted with AES-256-GCM using keys derived per owner from your `ENCRYPTION_KEY` — or from the bot-token-derived master key when `ENCRYPTION_KEY` is unset.
-- **Derived-secret trade-off:** with auto-derived secrets, anyone who obtains your bot token can also derive the master key, so treat the token itself as a secret. Set an explicit `ENCRYPTION_KEY` for defense in depth, and note that rotating the bot token *without* an explicit `ENCRYPTION_KEY` makes previously stored keys unreadable (existing installations that already have both secrets set are unaffected).
+- Webhook updates are rejected unless they carry the webhook secret (`TELEGRAM_SECRET`); the comparison is constant-time. Duplicates are dropped by `update_id` before processing.
+- Provider API keys are encrypted with AES-256-GCM using keys derived per owner from `ENCRYPTION_KEY`.
+- **All secrets are explicit.** Nothing is derived from the bot token, so obtaining the token does not reveal the webhook secret or the master key. Each secret is independent: rotate `TELEGRAM_SECRET` freely (then re-register the webhook), but treat `ENCRYPTION_KEY` as permanent — changing it makes every previously stored API key undecryptable.
+- **The Worker refuses to run misconfigured.** Missing or malformed `TELEGRAM_BOT_TOKEN`, `TELEGRAM_SECRET` or `ENCRYPTION_KEY` makes every request return HTTP 500 (`Server misconfigured: …`) and logs the exact missing name, instead of silently starting with a weak or absent key.
 - `/setup` is rate-limited, requires the secret in the `X-Setup-Secret` header (query-string secrets are rejected), and only accepts a URL on the worker's own host with the exact `/webhook` path.
 - Rate limits are best-effort: they are KV-backed (eventually consistent across edge locations) and fail open if KV is unavailable — an availability-over-strictness trade-off.
 - **Data storage:** memory and conversation history are stored in Cloudflare D1. Credentials are encrypted; memory/conversations are not encrypted at rest and are readable by whoever has access to your Cloudflare account's D1. The app itself never exposes one user's memory or chats to other users — including admins.
-- Local secrets belong in `.dev.vars` (gitignored) — see `.dev.vars.example` (only the bot token is required there).
-- The worker refuses to process requests when no usable encryption key exists — neither a valid explicit `ENCRYPTION_KEY` nor a bot token to derive one from.
+- Local secrets belong in `.dev.vars` (gitignored) — see `.dev.vars.example`; all three secrets are required there too.
+- The worker refuses to process requests when any of the three secrets is missing or malformed (see `validateSecrets` in `src/crypto.js`).
 
 ## 🧪 Tests
 
-Pure helpers (message splitting, memory serialization, crypto — including token-derived secrets — sanitizers, admin-ID validation, deploy-URL extraction) are covered by Node's built-in test runner — no dependencies to install:
+Pure helpers (message splitting, memory serialization, crypto — including mandatory-secret validation — sanitizers, admin-ID validation, deploy-URL extraction) are covered by Node's built-in test runner — no dependencies to install:
 
 ```bash
 npm test

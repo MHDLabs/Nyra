@@ -4,9 +4,10 @@ compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
 # One-click deploy: press the "Deploy to Cloudflare" button in the README.
-# The Cloudflare deploy flow asks for exactly two inputs — TELEGRAM_BOT_TOKEN
-# (example below) and ADMIN_IDS ([vars] below) — and provisions D1, KV and the
-# queue automatically. Everything else is derived/configured automatically.
+# The Cloudflare deploy flow prompts for TELEGRAM_BOT_TOKEN, TELEGRAM_SECRET,
+# ENCRYPTION_KEY and ADMIN_IDS, and provisions D1, KV and the queue
+# automatically. Nothing is generated or derived — all three secrets must be
+# provided by you (see the README for the openssl commands that generate them).
 
 # Expose the Worker on https://nyra.<your-subdomain>.workers.dev so it works
 # without any custom domain.
@@ -19,12 +20,16 @@ workers_dev = true
 # uses 1 of the 5 cron triggers allowed per account on the free plan.
 crons = ["*/5 * * * *"]
 
-# Secrets (set with `wrangler secret put <NAME>` — never put them here).
-# Only TELEGRAM_BOT_TOKEN is required — it is one of the two deploy prompts:
-#   TELEGRAM_BOT_TOKEN  — bot token from @BotFather (REQUIRED)
-# Optional overrides, derived from the bot token when absent (src/crypto.js):
-#   TELEGRAM_SECRET     — webhook secret (auto-derived via HKDF)
-#   ENCRYPTION_KEY      — base64 32-byte key (auto-derived via HKDF)
+# Secrets — ALL THREE ARE MANDATORY and must be set manually; nothing is derived
+# from the bot token. Set them with `wrangler secret put <NAME>` (never commit
+# them here) or as inputs to the Deploy to Cloudflare flow:
+#   TELEGRAM_BOT_TOKEN  — bot token from @BotFather
+#   TELEGRAM_SECRET     — webhook secret token; also the X-Setup-Secret header
+#                         for /setup. Generate: openssl rand -hex 32
+#   ENCRYPTION_KEY      — base64-encoded 32-byte master key that wraps every
+#                         stored API key. Generate: openssl rand -base64 32
+# The Worker refuses every request (HTTP 500 "Server misconfigured") when any of
+# the three is missing, blank, or malformed — see validateSecrets() in src/crypto.js.
 
 [vars]
 # REQUIRED — the second deploy-flow prompt: comma-separated numeric Telegram

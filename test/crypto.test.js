@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { getMasterKey, initSecrets, getWebhookSecret, encryptCredential, decryptCredential } from "../src/crypto.js";
+import { getMasterKey, validateSecrets, getWebhookSecret, encryptCredential, decryptCredential } from "../src/crypto.js";
 import { bytesToBase64 } from "../src/utils.js";
 
 function testEnv(fill) {
@@ -43,48 +43,48 @@ test("different master keys produce different ciphertext", async () => {
   assert.notEqual(ct1, ct2);
 });
 
-// --- Derived secrets (one-click deployment) --------------------------------
+// --- Mandatory manual secrets (nothing is derived from the bot token) -------
 
-test("derived webhook secret is deterministic, 64-char lowercase hex", async () => {
-  const env = { TELEGRAM_BOT_TOKEN: "123456789:AA-derivation-a" };
-  const a = await getWebhookSecret(env);
-  const b = await getWebhookSecret(env);
-  assert.equal(a, b);
-  // Telegram secret_token charset: A-Za-z0-9_- — hex satisfies it.
-  assert.match(a, /^[0-9a-f]{64}$/);
+test("webhook secret comes only from TELEGRAM_SECRET", async () => {
+  assert.equal(await getWebhookSecret({ TELEGRAM_SECRET: "explicit-secret" }), "explicit-secret");
+  assert.equal(await getWebhookSecret({ TELEGRAM_SECRET: "  padded  " }), "padded");
+  assert.equal(await getWebhookSecret({ TELEGRAM_SECRET: "   " }), null);
+  assert.equal(await getWebhookSecret({}), null);
+  // A bot token alone must never produce a webhook secret.
+  assert.equal(await getWebhookSecret({ TELEGRAM_BOT_TOKEN: "1:AAA" }), null);
 });
 
-test("different bot tokens derive different webhook secrets", async () => {
-  const a = await getWebhookSecret({ TELEGRAM_BOT_TOKEN: "1:AAA" });
-  const b = await getWebhookSecret({ TELEGRAM_BOT_TOKEN: "1:BBB" });
-  assert.notEqual(a, b);
-  assert.match(b, /^[0-9a-f]{64}$/);
-});
-
-test("explicit env secrets always win over derived values", async () => {
-  const env = { TELEGRAM_BOT_TOKEN: "1:AAA", TELEGRAM_SECRET: "explicit-secret" };
-  assert.equal(await getWebhookSecret(env), "explicit-secret");
-  const envKey = { TELEGRAM_BOT_TOKEN: "1:AAA", ENCRYPTION_KEY: bytesToBase64(new Uint8Array(32).fill(9)) };
-  await initSecrets(envKey);
-  const key = getMasterKey(envKey);
-  assert.ok(key instanceof Uint8Array);
-  assert.deepEqual(key, new Uint8Array(32).fill(9));
-});
-
-test("token-only env: master key derives and encrypt/decrypt round trips", async () => {
-  const env = { TELEGRAM_BOT_TOKEN: "999:token-only-master" };
-  await initSecrets(env);
+test("master key comes only from ENCRYPTION_KEY", () => {
+  const env = { ENCRYPTION_KEY: bytesToBase64(new Uint8Array(32).fill(9)) };
   const key = getMasterKey(env);
   assert.ok(key instanceof Uint8Array);
-  assert.equal(key.length, 32);
-  const { ct, iv } = await encryptCredential(env, 42, "sk-derived-roundtrip");
-  assert.equal(await decryptCredential(env, 42, ct, iv), "sk-derived-roundtrip");
-  // encryptCredential also self-initialises: a fresh module import order is
-  // covered by the explicit call above; wrong owner still fails.
-  await assert.rejects(() => decryptCredential(env, 43, ct, iv), /DECRYPTION_FAILED/);
+  assert.deepEqual(key, new Uint8Array(32).fill(9));
+  // A bot token alone must never produce a master key.
+  assert.equal(getMasterKey({ TELEGRAM_BOT_TOKEN: "999:token-only" }), null);
 });
 
-test("no token and no env key: no master key, no webhook secret", async () => {
-  assert.equal(getMasterKey({}), null);
-  assert.equal(await getWebhookSecret({}), null);
+test("validateSecrets reports every missing or malformed secret", () => {
+  assert.deepEqual(validateSecrets({}), ["TELEGRAM_BOT_TOKEN", "TELEGRAM_SECRET", "ENCRYPTION_KEY"]);
+  assert.deepEqual(
+    validateSecrets({ TELEGRAM_BOT_TOKEN: "1:AAA", TELEGRAM_SECRET: "s", ENCRYPTION_KEY: bytesToBase64(new Uint8Array(16)) }),
+    ["ENCRYPTION_KEY (must be 32 bytes, base64-encoded)"]);
+  assert.deepEqual(validateSecrets({ TELEGRAM_BOT_TOKEN: "  ", TELEGRAM_SECRET: "s" }), [
+    "TELEGRAM_BOT_TOKEN",
+    "ENCRYPTION_KEY"
+  ]);
+  assert.equal(validateSecrets({ TELEGRAM_BOT_TOKEN: "1:AAA", TELEGRAM_SECRET: "s", ENCRYPTION_KEY: bytesToBase64(new Uint8Array(32)) }), null);
+});
+
+test("encryption refuses to work without an explicit master key", async () => {
+  const env = { TELEGRAM_BOT_TOKEN: "999:token-only-master" };
+  assert.equal(getMasterKey(env), null);
+  await assert.rejects(() => encryptCredential(env, 42, "sk-x"), /ENCRYPTION_KEY_MISSING/);
+  await assert.rejects(() => decryptCredential(env, 42, "AAA", "AAA"), /ENCRYPTION_KEY_MISSING/);
+});
+
+test("explicit key round trips and rejects a different owner", async () => {
+  const env = { ENCRYPTION_KEY: bytesToBase64(new Uint8Array(32).fill(5)) };
+  const { ct, iv } = await encryptCredential(env, 42, "sk-explicit-roundtrip");
+  assert.equal(await decryptCredential(env, 42, ct, iv), "sk-explicit-roundtrip");
+  await assert.rejects(() => decryptCredential(env, 43, ct, iv), /DECRYPTION_FAILED/);
 });

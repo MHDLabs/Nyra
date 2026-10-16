@@ -1,18 +1,22 @@
 # Copy this file to `.dev.vars` for local development with `wrangler dev`.
 # NEVER commit `.dev.vars` — it is gitignored for a reason.
 #
-# Only the bot token is required. The webhook secret and the encryption key
-# are derived from it automatically at runtime (see src/crypto.js), so the two
-# overrides below stay commented unless you want to pin your own values.
-# (Deployments that already have them set keep using them unchanged.)
+# All three secrets are required and must be set manually. Nothing is derived
+# from the bot token, and the Worker refuses every request (HTTP 500) if any of
+# them is missing or malformed — see validateSecrets() in src/crypto.js.
 # ADMIN_IDS is not a secret: it comes from [vars] in wrangler.toml.
 
-# Bot token from @BotFather — the only secret you must provide.
+# Bot token from @BotFather.
 TELEGRAM_BOT_TOKEN=
 
-# Optional overrides (auto-derived from TELEGRAM_BOT_TOKEN when omitted):
-# TELEGRAM_SECRET=
-# ENCRYPTION_KEY=
+# Webhook secret token; also the X-Setup-Secret header for /setup.
+# Generate: openssl rand -hex 32
+TELEGRAM_SECRET=
+
+# Base64-encoded 32-byte master key that encrypts every stored API key.
+# Generate: openssl rand -base64 32
+# Keep it stable — changing it makes existing stored keys undecryptable.
+ENCRYPTION_KEY=
 
 # Optional: cached bot identity (fetched automatically if omitted)
 # TELEGRAM_BOT_ID=
