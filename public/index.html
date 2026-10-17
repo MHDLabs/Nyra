@@ -2,19 +2,82 @@
 <html lang="fa" dir="rtl">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Nyra</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Nyra AI</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+  <canvas id="space-canvas"></canvas>
+
   <div id="app">
-    <div class="loading">
+    <!-- Loading / auth gate -->
+    <div id="loading">
       <div class="spinner"></div>
-      <p>در حال بارگذاری...</p>
+      <span>در حال بارگذاری Nyra...</span>
+    </div>
+
+    <!-- Main shell (revealed after auth) -->
+    <div id="shell" class="hidden">
+      <header class="header">
+        <div class="logo">
+          <div class="logo-icon"></div>
+          <span>Nyra <span id="user-name"></span></span>
+        </div>
+        <button id="theme-btn" class="icon-btn" type="button" onclick="window.toggleTheme()">🌓</button>
+      </header>
+
+      <nav class="tabs" id="tabs-container"></nav>
+
+      <main class="content">
+        <!-- Chat -->
+        <div id="sec-chat" class="section active">
+          <div id="welcome-screen" class="welcome-screen">
+            <div class="blackhole-container">
+              <div class="bh-glow"></div>
+              <canvas id="blackhole-canvas"></canvas>
+            </div>
+            <h1 class="welcome-title">Nyra AI</h1>
+            <p class="welcome-sub">هر چیزی که بخوای... فقط بپرس</p>
+            <div class="chips">
+              <div class="chip" data-msg="سیاه‌چاله چیست؟">🌌 سیاه‌چاله چیست؟</div>
+              <div class="chip" data-msg="یک ایده کسب‌وکار بده">💡 ایده کسب‌وکار</div>
+              <div class="chip" data-msg="یک کد React بنویس">💻 کد React</div>
+              <div class="chip" data-msg="یک داستان علمی‌تخیلی کوتاه">📚 داستان کوتاه</div>
+            </div>
+          </div>
+
+          <div id="chat-log" class="chat-log hidden"></div>
+
+          <div class="chat-input-area">
+            <div class="input-wrapper">
+              <textarea id="chat-input" rows="1" placeholder="پیام خود را بنویسید..."></textarea>
+              <button id="send-btn" class="send-btn" type="button" disabled>➤</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Models -->
+        <div id="sec-models" class="section"></div>
+
+        <!-- Routes (admin) -->
+        <div id="sec-routes" class="section"></div>
+
+        <!-- Personal models -->
+        <div id="sec-personal" class="section"></div>
+
+        <!-- Settings -->
+        <div id="sec-settings" class="section"></div>
+
+        <!-- Admin -->
+        <div id="sec-admin" class="section"></div>
+      </main>
     </div>
   </div>
-  <div id="toast" class="toast" hidden></div>
+
+  <div id="toast"></div>
+
   <script src="/app.js"></script>
 </body>
 </html>
