@@ -1,0 +1,152 @@
+{
+  "src": "src/ai.js",
+  "outDir": "src/providers",
+  "barrel": "src/providers/index.js",
+  "barrelHeader": [
+    "// Nyra — provider layer barrel.",
+    "//",
+    "// `src/ai.js` re-exports this file, so importing \"./ai.js\" still yields the",
+    "// same public surface. Only `public` symbols cross this boundary:",
+    "//   errors.js    error classification + user-facing text",
+    "//   content.js   message content -> provider wire shapes",
+    "//   openai.js    OpenAI-compatible chat (non-streaming + streaming) + /models",
+    "//   anthropic.js Anthropic messages (non-streaming + streaming) + /models",
+    "//   stream.js    stream dispatch + stall watchdog"
+  ],
+  "public": [
+    "normalizeError",
+    "humanizeError",
+    "shouldNotifyAdmin",
+    "testConnectionRaw",
+    "testUserConnectionById",
+    "generateWithConnection",
+    "fetchAvailableModels",
+    "tryStreamWithFallback",
+    "notifyAdminOnError"
+  ],
+  "shared": [
+    "parseProviderError",
+    "isRetryableCategory",
+    "toOpenAIContent",
+    "toAnthropicContent",
+    "buildProviderHeaders",
+    "generateOpenAICompatible",
+    "generateAnthropic",
+    "streamOpenAICompatible",
+    "streamAnthropic",
+    "streamProviderResponse",
+    "fetchOpenAICompatibleModels",
+    "fetchAnthropicModels",
+    "streamViaRoute"
+  ],
+  "ignore": [],
+  "modules": {
+    "errors.js": {
+      "header": [
+        "// Provider error taxonomy: turn an opaque network/provider failure into one",
+        "// of a fixed set of categories, and map that category to text the user can",
+        "// actually act on. Kept dependency-free so every other module can import it."
+      ],
+      "symbols": [
+        "normalizeError",
+        "humanizeError",
+        "isRetryableCategory",
+        "shouldNotifyAdmin",
+        "parseProviderError"
+      ]
+    },
+    "content.js": {
+      "header": [
+        "// Internal content -> provider wire shapes. The contract is documented on",
+        "// `toOpenAIContent` below; `toAnthropicContent` reshapes the same internal",
+        "// form for the Anthropic Messages API."
+      ],
+      "symbols": ["toOpenAIContent", "toAnthropicContent"]
+    },
+    "openai.js": {
+      "header": [
+        "// OpenAI-compatible provider: /chat/completions (buffered and streamed) and",
+        "// the paginated /models listing. Covers OpenAI itself, OpenRouter, Groq,",
+        "// Together, Fireworks, DeepSeek, Ollama and anything else speaking the same",
+        "// dialect."
+      ],
+      "extraImports": [
+        "import { parseProviderError } from \"./errors.js\";",
+        "import { toOpenAIContent } from \"./content.js\";"
+      ],
+      "symbols": [
+        "buildProviderHeaders",
+        "generateOpenAICompatible",
+        "streamOpenAICompatible",
+        "fetchOpenAICompatibleModels"
+      ]
+    },
+    "anthropic.js": {
+      "header": [
+        "// Anthropic Messages API. System prompts are lifted out of the message list",
+        "// into the top-level `system` field, and the SSE event names differ from the",
+        "// OpenAI dialect, so this is a genuinely separate adapter rather than a",
+        "// configuration of openai.js."
+      ],
+      "extraImports": [
+        "import { parseProviderError, normalizeError } from \"./errors.js\";",
+        "import { toAnthropicContent } from \"./content.js\";"
+      ],
+      "symbols": [
+        "generateAnthropic",
+        "streamAnthropic",
+        "fetchAnthropicModels"
+      ]
+    },
+    "stream.js": {
+      "header": [
+        "// Streaming dispatch. Credentials are decrypted once here, and a stall",
+        "// watchdog aborts the request if the provider stops emitting for too long —",
+        "// a hung SSE connection would otherwise burn the entire fallback budget."
+      ],
+      "extraImports": [
+        "import { streamOpenAICompatible } from \"./openai.js\";",
+        "import { streamAnthropic } from \"./anthropic.js\";"
+      ],
+      "symbols": ["streamProviderResponse"]
+    },
+    "models.js": {
+      "header": [
+        "// Model listing and connection testing. `testConnectionRaw` deliberately",
+        "// races the provider call against a hard timeout: a provider that accepts the",
+        "// TCP connection and then never answers would otherwise hang the admin UI."
+      ],
+      "extraImports": [
+        "import { normalizeError } from \"./errors.js\";",
+        "import { buildProviderHeaders, generateOpenAICompatible, fetchOpenAICompatibleModels } from \"./openai.js\";",
+        "import { generateAnthropic, fetchAnthropicModels } from \"./anthropic.js\";"
+      ],
+      "symbols": [
+        "fetchAvailableModels",
+        "testConnectionRaw",
+        "testUserConnectionById"
+      ]
+    },
+    "fallback.js": {
+      "header": [
+        "// Fallback orchestration. `tryStreamWithFallback` is the only streaming entry",
+        "// point the rest of the app uses: it resolves the user's route (or, failing",
+        "// that, their ordered connections), walks the plan, and reports terminal",
+        "// failure as a `{ type: \"error\" }` event rather than throwing, so a partial",
+        "// answer already delivered to the user is never lost."
+      ],
+      "extraImports": [
+        "import { normalizeError, isRetryableCategory } from \"./errors.js\";",
+        "import { generateOpenAICompatible } from \"./openai.js\";",
+        "import { generateAnthropic } from \"./anthropic.js\";",
+        "import { streamProviderResponse } from \"./stream.js\";"
+      ],
+      "symbols": [
+        "generateWithConnection",
+        "tryStreamWithFallback",
+        "streamViaRoute",
+        "notifyAdminOnError"
+      ]
+    }
+  }
+}

@@ -1,0 +1,125 @@
+{
+  "src": "src/index.js",
+  "outDir": "src/handlers",
+  "dropTrailer": true,
+  "public": [
+    "handleAIMessage",
+    "processMessage",
+    "handleCallbackQuery",
+    "handleWebhook",
+    "handleStatus",
+    "handleSetup"
+  ],
+  "shared": [
+    "isFastMessage",
+    "parseCommand",
+    "parseMyconnSource"
+  ],
+  "ignore": [],
+  "modules": {
+    "ai-message.js": {
+      "header": [
+        "// The AI turn: rate limits, context assembly, the streaming reply loop with",
+        "// throttled edit-in-place, reaction handling, memory consolidation and error",
+        "// surfacing. This is the single most performance-sensitive path in the bot \u2014",
+        "// it runs inside the queue consumer, never inside the webhook request."
+      ],
+      "extraImports": [],
+      "symbols": [
+        "handleAIMessage"
+      ]
+    },
+    "callback.js": {
+      "header": [
+        "// Button taps: menu navigation and the full admin/self-service callback",
+        "// surface. Bundled as one unit because the dispatch switch and the shared",
+        "// helpers it uses are tightly coupled and split apart would only add",
+        "// indirection."
+      ],
+      "extraImports": [],
+      "symbols": [
+        "handleCallbackQuery",
+        "parseMyconnSource"
+      ]
+    },
+    "fast-path.js": {
+      "header": [
+        "// Webhook fast path: decides whether an update can skip the queue entirely."
+      ],
+      "extraImports": [],
+      "symbols": [
+        "isFastMessage"
+      ]
+    },
+    "message.js": {
+      "header": [
+        "// Incoming message pipeline: group access checks, flow-state interception",
+        "// (setup wizards own the next message), command dispatch, and the group",
+        "// trigger / reaction logic that decides whether Nyra answers at all."
+      ],
+      "extraImports": [
+        "import { handleAIMessage } from \"./ai-message.js\";",
+        "import { parseCommand } from \"./command-parse.js\";"
+      ],
+      "symbols": [
+        "processMessage"
+      ]
+    },
+    "command-parse.js": {
+      "header": [
+        "// Command parsing: `/cmd@BotName arg1 arg2` -> { command, args }, honouring",
+        "// the bot's own @username so a command addressed to a different bot in the",
+        "// same group is ignored rather than executed."
+      ],
+      "extraImports": [],
+      "symbols": [
+        "parseCommand"
+      ]
+    },
+    "webhook.js": {
+      "header": [
+        "// POST /webhook. This is the durability boundary: the update is",
+        "// deduplicated by update_id and enqueued *before* the 200, so a Telegram",
+        "// retry never double-processes and a failed enqueue releases the dedup slot."
+      ],
+      "extraImports": [
+        "import { processMessage } from \"./message.js\";",
+        "import { handleCallbackQuery } from \"./callback.js\";",
+        "import { isFastMessage } from \"./fast-path.js\";"
+      ],
+      "symbols": [
+        "handleWebhook"
+      ]
+    },
+    "status.js": {
+      "header": [
+        "// GET /status \u2014 plain-text status and bootstrap endpoint. The Mini App owns",
+        "// \"/\", so this is the URL that initialises the schema, teaches the Worker",
+        "// its public origin, and registers the Telegram webhook + menu button."
+      ],
+      "extraImports": [],
+      "symbols": [
+        "handleStatus"
+      ]
+    },
+    "setup.js": {
+      "header": [
+        "// GET /setup?url= \u2014 manual webhook (re)registration, authenticated with the",
+        "// same derived secret Telegram uses. Refuses secrets in the query string.",
+        "// Kept because it is the escape hatch when automatic discovery is wrong."
+      ],
+      "extraImports": [],
+      "symbols": [
+        "handleSetup"
+      ]
+    }
+  },
+  "barrel": "src/handlers/index.js",
+  "barrelHeader": [
+    "// Nyra \u2014 update-handling layer barrel.",
+    "//",
+    "// `src/index.js` imports from here; the Worker's `export default { fetch,",
+    "// scheduled, queue }` stays in src/index.js because that is the composition",
+    "// root binding these handlers to the runtime."
+  ]
+}

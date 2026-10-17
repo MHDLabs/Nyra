@@ -2,7 +2,10 @@
 
 export const TELEGRAM_API = "https://api.telegram.org";
 export const MAX_TELEGRAM_LENGTH = 4096;
-export const MAX_CONTEXT_MESSAGES = 12;
+// Recent turns handed to the model as conversation context. 20 user+assistant
+// messages (≈10 exchanges) gives the reply enough short-term memory without
+// crowding out the system prompt, personality and long-term memory blocks.
+export const MAX_CONTEXT_MESSAGES = 20;
 export const MEMORY_UPDATE_INTERVAL = 10;
 export const MEMORY_MAX_CHARS = 2500;
 export const CONTEXT_TTL = 7200;
@@ -32,11 +35,11 @@ export const CALLBACK_ID_MAX = 40;
 export const BOT_IDENTITY_TTL = 3600000;
 export const BOT_IDENTITY_NEGATIVE_TTL = 60000;
 // --- One-click deployment / self-healing ---------------------------------
-// Re-verify the Telegram webhook registration at most this often (GET / and
-// the */5 cron share the KV state).
+// Re-verify the Telegram webhook and the Mini App menu button at most this
+// often (GET /status and the */5 cron share the same KV gates).
 export const WEBHOOK_RECHECK_MS = 6 * 60 * 60 * 1000;
 // Hard cap on Telegram webhook-verification calls: one attempt per window,
-// regardless of how often the public status page is hit.
+// regardless of how often /status is hit.
 export const WEBHOOK_ATTEMPT_GUARD_MS = 60000;
 // Cron: run the schema/maintenance probe at most this often (KV marker gate —
 // keeps D1 statement traffic negligible on the free plan).

@@ -233,8 +233,9 @@ export async function showMyConnections(env, chatId, messageId, userId, source) 
       const globalMark = c.is_global === 1 ? " [Global]" : " [Personal]";
       const defaultMark = c.is_default === 1 ? " ★" : "";
       const fastMark = c.is_fast === 1 ? " ⚡" : "";
+      const visionMark = c.supports_vision === 1 ? " 🖼" : "";
       const healthMark = (c.consecutive_failures || 0) >= UNHEALTHY_FAILURE_THRESHOLD ? " ⚠" : "";
-      lines.push(enabledMark + " <b>" + escapeHtml(c.label) + "</b>" + globalMark + defaultMark + fastMark + healthMark);
+      lines.push(enabledMark + " <b>" + escapeHtml(c.label) + "</b>" + globalMark + defaultMark + fastMark + visionMark + healthMark);
       lines.push("   " + escapeHtml(c.provider) + " / <code>" + escapeHtml(c.model) + "</code>");
       const shortId = safeCallbackId(c.connection_id);
       rows.push([
@@ -245,8 +246,9 @@ export async function showMyConnections(env, chatId, messageId, userId, source) 
       const row2 = [];
       if (c.is_global === 1 && c.is_default !== 1) row2.push({ text: "⭐ Set Default", callback_data: "myconn:def:" + shortId + sfx });
       row2.push({ text: c.is_fast === 1 ? "⚡ Fast: On" : "⚡ Fast: Off", callback_data: "myconn:fast:" + shortId + sfx });
-      row2.push({ text: "🗑 Delete", callback_data: "myconn:del:" + shortId + sfx });
+      row2.push({ text: c.supports_vision === 1 ? "🖼 Images: On" : "🖼 Images: Off", callback_data: "myconn:vision:" + shortId + sfx });
       rows.push(row2);
+      rows.push([{ text: "🗑 Delete", callback_data: "myconn:del:" + shortId + sfx }]);
     }
     rows.push([{ text: "➕ Add Model", callback_data: "myconn:add" + sfx }]);
   }

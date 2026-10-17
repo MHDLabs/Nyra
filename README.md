@@ -34,7 +34,7 @@ openssl rand -base64 32   # → ENCRYPTION_KEY    (exactly 32 bytes when decoded
 
 No `openssl`? Any cryptographically secure generator works, as long as the output matches the format above — for example `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` for `TELEGRAM_SECRET` and the same with `toString('base64')` for `ENCRYPTION_KEY`. Never use the bot token, a password you typed by hand, or an online "random string" site as either value.
 
-Everything else is automatic: Cloudflare provisions D1, KV and the queue from `wrangler.toml`, the `workers.dev` domain is enabled, and the Worker registers the Telegram webhook itself on first contact — no curl, no manual webhook step. The flow marks all four inputs as required (with descriptions of where to find or how to generate them); the status page (`GET /`) additionally warns at runtime if `ADMIN_IDS` is missing or malformed, and every request returns HTTP 500 until all three secrets are valid.
+Everything else is automatic: Cloudflare provisions D1, KV and the queue from `wrangler.toml`, the `workers.dev` domain is enabled, and the Worker registers the Telegram webhook itself on first contact — no curl, no manual webhook step. The flow marks all four inputs as required (with descriptions of where to find or how to generate them); the status page (`GET /status`) additionally warns at runtime if `ADMIN_IDS` is missing or malformed, and every request returns HTTP 500 until all three secrets are valid.
 
 Prefer the CLI? The full manual flow is in [Setup](#-setup) → *Option B*.
 
@@ -53,22 +53,43 @@ Prefer the CLI? The full manual flow is in [Setup](#-setup) → *Option B*.
 
 ## 📁 Project structure
 
-The Worker is split into small, focused ES modules under `src/` — Wrangler bundles them automatically, so there is still no build step:
+The Worker is split into small, focused ES modules under `src/` — Wrangler bundles them automatically, so there is still no build step. Any directory with an `index.js` barrel has a thin same-named module next to it that only re-exports, so import paths never had to change when the code was decomposed:
 
 ```
 src/
-├── index.js     entry point: AI message pipeline, update routing, webhook & setup endpoints
-├── config.js    shared constants, prompt rules, default personalities
-├── utils.js     pure helpers, sanitizers, rate limiting
-├── crypto.js    AES-256-GCM credential encryption
-├── telegram.js  Telegram Bot API layer
-├── db.js        D1 schema, users/chats/threads, flow state, connections, usage
-├── ai.js        providers, streaming, model listing, connection tests, fallback
-├── memory.js    memory data, system prompts, personalities, consolidation
-├── menus.js     settings screens and inline views
-├── flows.js     add/edit connection wizard
-└── commands.js  user commands and the admin panel
+├── index.js        Worker entry point (composition root): fetch / scheduled / queue
+├── config.js       shared constants, prompt rules, default personalities
+├── utils.js        pure helpers, sanitizers, rate limiting
+├── crypto.js       AES-256-GCM credential encryption, mandatory-secret validation
+├── telegram.js     Telegram Bot API layer, webhook + menu-button registration
+├── brain.js        prompt assembly and model selection
+├── memory.js       memory data, system prompts, personalities, consolidation
+├── formatter.js    Telegram HTML rendering and message splitting
+├── menus.js        settings screens and inline views
+├── commands.js     user commands and the admin panel
+├── reactions.js    Workers AI sentiment classification
+├── broadcast.js    broadcast campaigns
+├── dlq.js          dead-letter update log and replay
+├── handlers/       update handling (webhook → queue → fast path / callback / AI)
+├── flows/          add/edit connection and route wizards
+├── miniapp/        Mini App JSON API behind /api/*
+├── db/             D1 schema, versioned migrations, and every query
+├── providers/      OpenAI-compatible + Anthropic clients, streaming, fallback
+├── ai.js           → re-exports providers/
+├── db.js           → re-exports db/
+├── flows.js        → re-exports flows/
+└── miniapp.js      → re-exports miniapp/
+
+public/             the Mini App itself (served directly by Cloudflare, no build)
+scripts/            postdeploy probe + the mechanical module splitter
+  postdeploy.mjs    post-deploy status probe
+  split-module.mjs  the refactoring tool that produced the directories above
+test/               Node's built-in test runner, zero dependencies
 ```
+
+### Static assets
+
+The Mini App in `./public` is **not** inlined into the Worker bundle. `wrangler.toml` declares a native `[assets]` binding, so Cloudflare serves `public/index.html`, `public/app.js` and `public/styles.css` straight from its asset layer. `run_worker_first = ["/webhook", "/setup", "/status", "/api/*"]` keeps the webhook, the setup endpoint, the status page and the JSON API Worker-owned; every other path is served from `public` without waking the Worker at all. The `ASSETS` binding is not read by the code — it exists so Wrangler attaches the asset layer to this Worker.
 
 ## 📋 Requirements
 
@@ -91,7 +112,7 @@ Use the **Deploy to Cloudflare** button in [Quick start](#-quick-start-one-click
    - `ENCRYPTION_KEY` — `openssl rand -base64 32`.
    - `ADMIN_IDS` — numeric Telegram user ID(s) of the admin(s), comma-separated.
 3. Click **Deploy**. Cloudflare provisions D1, KV and the queue from `wrangler.toml`, enables the `nyra.<subdomain>.workers.dev` domain, and runs the deploy script, which ends with a status-page probe.
-4. The Worker bootstraps itself: first contact initialises the schema and **registers the Telegram webhook automatically** — no curl, no manual step. Open `https://nyra.<your-subdomain>.workers.dev/` once to confirm; you should see `Webhook: registered → …` and `Admin IDs: 1 configured`.
+4. The Worker bootstraps itself: first contact initialises the schema and **registers the Telegram webhook automatically** — no curl, no manual step. Open `https://nyra.<your-subdomain>.workers.dev/status` once to confirm; you should see `Webhook: registered → …` and `Admin IDs: 1 configured`. (`/` is the Mini App, not the status page.)
 5. Open a private chat with your bot, send `/start`, then connect a model (*Option B, step 6*).
 
 Notes:
@@ -137,7 +158,7 @@ wrangler deploy
 
 #### 5. Register the webhook (automatic; `/setup` for manual overrides)
 
-No manual step: the deploy probe or the first visit to `GET /` registers the webhook using the runtime secret, and the cron re-verifies it. To register by hand, run once (the secret travels **only in a header**, never in the URL):
+No manual step: the deploy probe, any request, or the first visit to `GET /status` registers the webhook using the runtime secret, and the cron re-verifies it. To register by hand, run once (the secret travels **only in a header**, never in the URL):
 
 ```bash
 curl -H "X-Setup-Secret: <TELEGRAM_SECRET>" \
@@ -166,7 +187,7 @@ In a private chat with the bot, open `/admin` → **Connections** and add a prov
 
 D1 is bound as `DB`, KV as `KV`, and the update queue as `NYRA_QUEUE` (see `wrangler.toml`). Update flow: Telegram → webhook (acks immediately, after `update_id` dedup) → queue → consumer, which runs the full AI pipeline — so long streaming replies are not cut off by the 30-second post-response limit that applies to webhook requests.
 
-The schema is created on first use — triggered by the status page, the first webhook, or the cron probe (all KV-gated so D1 stays quiet once initialised); one-time migrations are versioned and tracked in the `schema_migrations` table. The Telegram webhook URL is learned from the first request to `GET /` and re-verified automatically by the `*/5` cron trigger (`ensureWebhook` in `src/telegram.js`).
+The schema is created on first use — triggered by the status page, the first webhook, or the cron probe (all KV-gated so D1 stays quiet once initialised); one-time migrations are versioned and tracked in the `schema_migrations` table. The Telegram webhook URL is learned from the first request that reaches the Worker — in practice `GET /status`, since `/` is served by the asset layer and never reaches the code — and re-verified automatically by the `*/5` cron trigger (`ensureWebhook` in `src/telegram.js`).
 
 ## 💬 Commands
 
@@ -199,11 +220,13 @@ The schema is created on first use — triggered by the status page, the first w
 
 ## 🧪 Tests
 
-Pure helpers (message splitting, memory serialization, crypto — including mandatory-secret validation — sanitizers, admin-ID validation, deploy-URL extraction) are covered by Node's built-in test runner — no dependencies to install:
+Behaviour is covered by Node's built-in test runner — no dependencies to install:
 
 ```bash
 npm test
 ```
+
+The suite (67 tests in `test/`) covers message splitting (`split.test.js`), memory serialization (`memory.test.js`), crypto including mandatory-secret validation (`crypto.test.js`), sanitizers and admin-ID parsing (`utils.test.js`), Mini App routes for every endpoint (`routes.test.js`), settings validation (`settings.test.js`), reaction classification (`reactions.test.js`), the prompt brain (`brain.test.js`) and the deploy-URL extraction (`deploy.test.js`).
 
 ## 📄 License
 

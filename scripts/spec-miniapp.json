@@ -1,0 +1,154 @@
+{
+  "src": "src/miniapp.js",
+  "outDir": "src/miniapp",
+  "public": [
+    "validateInitData",
+    "extractInitData",
+    "handleAuth",
+    "handleUserProfile",
+    "handleUserStats",
+    "handleChatMessage",
+    "handleUserConnections",
+    "handleSetActiveConnection",
+    "handleToggleCodingMode",
+    "handlePersonalModels",
+    "handleCreatePersonalModel",
+    "handleDeletePersonalModel",
+    "handleUserRoutes",
+    "handleAdminCreateRoute",
+    "handleAdminDeleteRoute",
+    "handleAdminRouteAction",
+    "handleAdminStats",
+    "handleAdminUsers",
+    "handleAdminChats",
+    "handleAdminSettings",
+    "handleAdminUpdateSettings",
+    "handleAdminBroadcasts",
+    "handleCreateBroadcast",
+    "handleBroadcastAction",
+    "handleGetBroadcast",
+    "handleAdminFailedUpdates",
+    "handleReplayFailedUpdate",
+    "routeMiniAppAPI"
+  ],
+  "shared": [
+    "jsonOk",
+    "jsonError",
+    "handleAdminConnectionUsage"
+  ],
+  "ignore": [],
+  "modules": {
+    "respond.js": {
+      "header": [
+        "// Shared mini-app response envelopes. Every endpoint answers JSON, so the",
+        "// two constructors live in one place instead of being repeated per handler."
+      ],
+      "extraImports": [],
+      "symbols": ["jsonOk", "jsonError"]
+    },
+    "auth.js": {
+      "header": [
+        "// Mini App authentication. initData is an HMAC-SHA256 over the raw query",
+        "// string keyed by a secret derived from the bot token (\"WebAppData\") —",
+        "// verified exactly as Telegram specifies, including the 1-hour freshness",
+        "// bound. Nothing in the Mini App is reachable without passing this."
+      ],
+      "extraImports": [],
+      "symbols": ["INIT_DATA_MAX_AGE_MS", "validateInitData", "extractInitData", "handleAuth"]
+    },
+    "user.js": {
+      "header": [
+        "// Self-service user endpoints: profile, usage counters, the Mini App chat",
+        "// box (which runs the real provider pipeline, not a stub), the model picker",
+        "// and the coding-mode switch."
+      ],
+      "extraImports": [
+        "import { jsonOk, jsonError } from \"./respond.js\";"
+      ],
+      "symbols": [
+        "handleUserProfile",
+        "handleUserStats",
+        "handleChatMessage",
+        "handleUserConnections",
+        "handleSetActiveConnection",
+        "handleToggleCodingMode"
+      ]
+    },
+    "personal.js": {
+      "header": [
+        "// Per-user personal model connections, gated by the admin-controlled",
+        "// `personal_models_allowed` setting and the per-user limit."
+      ],
+      "extraImports": [],
+      "symbols": ["handlePersonalModels", "handleCreatePersonalModel", "handleDeletePersonalModel"]
+    },
+    "routes.js": {
+      "header": [
+        "// Route (multi-model failover bundle) CRUD shared by the self-service view",
+        "// and the admin panel; both call the same handlers with the admin's user id."
+      ],
+      "extraImports": [],
+      "symbols": ["handleUserRoutes", "handleAdminCreateRoute", "handleAdminDeleteRoute", "handleAdminRouteAction"]
+    },
+    "admin.js": {
+      "header": [
+        "// Admin panel endpoints: site stats, user/chat pagination, global settings",
+        "// and per-connection usage metrics. Reachability is enforced once, in the",
+        "// router, before any of these run."
+      ],
+      "extraImports": [],
+      "symbols": [
+        "handleAdminStats",
+        "handleAdminUsers",
+        "handleAdminChats",
+        "handleAdminSettings",
+        "handleAdminUpdateSettings",
+        "handleAdminConnectionUsage"
+      ]
+    },
+    "broadcast-api.js": {
+      "header": [
+        "// Broadcast management over the admin API: create, list, pause/resume,",
+        "// cancel, and per-broadcast delivery stats."
+      ],
+      "extraImports": [],
+      "symbols": ["handleAdminBroadcasts", "handleCreateBroadcast", "handleBroadcastAction", "handleGetBroadcast"]
+    },
+    "dlq-api.js": {
+      "header": [
+        "// Failed-update (dead-letter) inspection and replay. Only useful because the",
+        "// queue consumer now actually persists failures — see `logFailedUpdate` in",
+        "// src/index.js."
+      ],
+      "extraImports": [],
+      "symbols": ["handleAdminFailedUpdates", "handleReplayFailedUpdate"]
+    },
+    "router.js": {
+      "header": [
+        "// The Mini App's HTTP surface: one flat route table over `pathname`, with a",
+        "// single authentication gate (and a separate admin gate) applied before any",
+        "// handler runs. Kept as one table so the API contract is readable in one",
+        "// place — the handlers themselves are grouped by domain in sibling files."
+      ],
+      "extraImports": [
+        "import { jsonOk, jsonError } from \"./respond.js\";",
+        "import { extractInitData, handleAuth } from \"./auth.js\";",
+        "import { handleUserProfile, handleUserStats, handleChatMessage, handleUserConnections, handleSetActiveConnection, handleToggleCodingMode } from \"./user.js\";",
+        "import { handlePersonalModels, handleCreatePersonalModel, handleDeletePersonalModel } from \"./personal.js\";",
+        "import { handleUserRoutes, handleAdminCreateRoute, handleAdminDeleteRoute, handleAdminRouteAction } from \"./routes.js\";",
+        "import { handleAdminStats, handleAdminUsers, handleAdminChats, handleAdminSettings, handleAdminUpdateSettings } from \"./admin.js\";",
+        "import { handleAdminConnectionUsage } from \"./admin.js\";",
+        "import { handleAdminBroadcasts, handleCreateBroadcast, handleBroadcastAction, handleGetBroadcast } from \"./broadcast-api.js\";",
+        "import { handleAdminFailedUpdates, handleReplayFailedUpdate } from \"./dlq-api.js\";"
+      ],
+      "symbols": ["routeMiniAppAPI"]
+    }
+  },
+  "barrel": "src/miniapp/index.js",
+  "barrelHeader": [
+    "// Nyra — Mini App API barrel.",
+    "//",
+    "// `src/miniapp.js` re-exports this so the historical import path stays valid.",
+    "// The route table lives in `./router.js`; the handlers are grouped by domain."
+  ]
+}

@@ -1,7 +1,6 @@
 // Broadcast campaign system
-import { now, escapeHtml, isAdmin, checkRateLimit } from "./utils.js";
+import { now, isAdmin, checkRateLimit } from "./utils.js";
 import { sendMessage } from "./telegram.js";
-import { getUser } from "./db.js";
 
 const BROADCAST_RATE_LIMIT_PER_SEC = 20; // Telegram limit: 30 msg/sec, use 20 for safety
 const BROADCAST_BATCH_SIZE = 50;

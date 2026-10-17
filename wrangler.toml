@@ -13,6 +13,17 @@ compatibility_flags = ["nodejs_compat"]
 # without any custom domain.
 workers_dev = true
 
+# Static assets — the Mini App lives in ./public and is served by Cloudflare's
+# native asset layer (no inlined copy in the Worker bundle). Requests under
+# run_worker_first still go to the Worker first so the secret gate, the Telegram
+# webhook, /setup, the /status bootstrap page and the /api/* endpoints all stay
+# Worker-owned; everything else is served directly from ./public.
+[assets]
+directory = "public"
+binding = "ASSETS"
+not_found_handling = "none"
+run_worker_first = ["/webhook", "/setup", "/status", "/api/*"]
+
 [triggers]
 # Self-healing (part of the zero-manual-setup flow): the scheduled handler
 # re-verifies the Telegram webhook registration and runs the KV-gated
@@ -34,8 +45,8 @@ crons = ["*/5 * * * *"]
 [vars]
 # REQUIRED — the second deploy-flow prompt: comma-separated numeric Telegram
 # user IDs with admin access (e.g. ADMIN_IDS = "123456789"). Non-numeric
-# entries are ignored; GET / warns until at least one valid ID is set.
-ADMIN_IDS = ""
+# entries are ignored; GET /status warns until at least one valid ID is set.
+ADMIN_IDS = "7141112393"
 
 # D1 database — no database_id on purpose: Wrangler's automatic provisioning
 # creates the database on `wrangler deploy` and writes its ID back into this

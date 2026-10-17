@@ -30,13 +30,17 @@ export async function tg(env, method, payload, attempt) {
 
 // --- Automatic webhook registration (zero-config deployment) ---------------
 // The Worker registers its own Telegram webhook without any user step:
-//   * GET / (hit by the post-deploy probe) learns the public origin from the
-//     incoming request and registers it;
+//   * GET /status (the bootstrap page, hit by the post-deploy probe) learns the
+//     public origin from the incoming request and registers it; any other
+//     Worker-handled request (for example a Mini App /api/* call) learns it too;
 //   * the scheduled handler re-verifies the learned URL (Telegram-side
 //     deletions then self-heal within one cron interval).
 // KV state bounds Telegram API traffic: at most one verification per
 // WEBHOOK_ATTEMPT_GUARD_MS, full re-checks at most per WEBHOOK_RECHECK_MS.
 const WEBHOOK_STATE_KEY = "nyra:webhook:state";
+// Mini App menu button (the "Nyra" button next to the Telegram input field).
+const MENU_BUTTON_STATE_KEY = "nyra:menu:button:state";
+const MENU_BUTTON_TEXT = "Nyra";
 
 async function readWebhookState(env) {
   try {
@@ -123,10 +127,114 @@ export async function ensureWebhook(env, origin) {
   }
 }
 
+// Register the Mini App as the bot's chat menu button, so it is reachable from
+// the Telegram UI (the button next to the message input). Idempotent and
+// KV-gated: at most one setChatMenuButton per origin per WEBHOOK_RECHECK_MS.
+export async function ensureMenuButton(env, origin) {
+  try {
+    if (!env.TELEGRAM_BOT_TOKEN) return { ok: false, status: "no_token" };
+    const target = origin ? origin.replace(/\/+$/, "") : null;
+    if (!target) return { ok: false, status: "awaiting_first_request" };
+    let state = null;
+    try {
+      const raw = await env.KV.get(MENU_BUTTON_STATE_KEY);
+      state = raw ? JSON.parse(raw) : null;
+    } catch (err) { state = null; }
+    const nowMs = Date.now();
+    if (state && state.url === target && state.setAt && nowMs - state.setAt < WEBHOOK_RECHECK_MS) {
+      return { ok: true, status: "cached" };
+    }
+    const result = await tg(env, "setChatMenuButton", {
+      menu_button: { type: "web_app", text: MENU_BUTTON_TEXT, web_app: { url: target } }
+    });
+    if (result && result.ok) {
+      try { await env.KV.put(MENU_BUTTON_STATE_KEY, JSON.stringify({ url: target, setAt: nowMs })); }
+      catch (err) {}
+      console.log("Mini App menu button registered: " + target);
+      return { ok: true, status: "registered" };
+    }
+    return { ok: false, status: "error", detail: (result && result.description) || "setChatMenuButton failed" };
+  } catch (err) {
+    console.error("ensureMenuButton failed:", err.message);
+    return { ok: false, status: "error", detail: err.message };
+  }
+}
+
 function isParseError(result) {
   if (!result || result.ok) return false;
   const d = String(result.description || "").toLowerCase();
   return d.indexOf("parse") !== -1 || d.indexOf("entity") !== -1 || d.indexOf("tag") !== -1;
+}
+
+// Container/extension → media type, for images the user sends as a document.
+const IMAGE_MEDIA_TYPES = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+  gif: "image/gif"
+};
+
+function mediaTypeForDocument(doc) {
+  if (!doc) return "image/jpeg";
+  if (doc.mime_type && doc.mime_type.indexOf("image/") === 0) return doc.mime_type;
+  const name = String(doc.file_name || "");
+  const dot = name.lastIndexOf(".");
+  if (dot === -1) return "image/jpeg";
+  const ext = name.slice(dot + 1).toLowerCase();
+  return IMAGE_MEDIA_TYPES[ext] || null;
+}
+
+/**
+ * Pick the image Telegram sent that is worth sending to a vision model:
+ * the largest `photo` size, or an image `document` (uncompressed uploads) when
+ * no photo size is present. Returns null when the message carries no image.
+ */
+export function pickImageFile(message) {
+  if (!message) return null;
+  if (Array.isArray(message.photo) && message.photo.length > 0) {
+    let best = message.photo[0];
+    for (let i = 1; i < message.photo.length; i++) {
+      const p = message.photo[i];
+      if ((p.file_size || 0) > (best.file_size || 0)) best = p;
+    }
+    if (!best || !best.file_id) return null;
+    return { fileId: best.file_id, mediaType: "image/jpeg" };
+  }
+  if (message.document) {
+    const mediaType = mediaTypeForDocument(message.document);
+    if (!mediaType) return null;
+    if ((message.document.file_size || 0) > 10 * 1024 * 1024) return null;
+    return { fileId: message.document.file_id, mediaType: mediaType };
+  }
+  return null;
+}
+
+const TELEGRAM_FILE_MAX_BYTES = 10 * 1024 * 1024;
+
+/** Download a Telegram file by file_id and return base64 plus its media type. */
+export async function downloadTelegramFile(env, fileId) {
+  if (!env.TELEGRAM_BOT_TOKEN || !fileId) return null;
+  try {
+    const info = await tg(env, "getFile", { file_id: fileId });
+    if (!info || !info.ok || !info.result || !info.result.file_path) return null;
+    const filePath = info.result.file_path;
+    const url = TELEGRAM_API + "/file/bot" + env.TELEGRAM_BOT_TOKEN + "/" + filePath;
+    const resp = await fetchWithTimeout(url, { method: "GET", cache: "no-store" }, TELEGRAM_TIMEOUT_MS);
+    if (!resp.ok) return null;
+    const buf = await resp.arrayBuffer();
+    if (!buf || buf.byteLength === 0 || buf.byteLength > TELEGRAM_FILE_MAX_BYTES) return null;
+    const bytes = new Uint8Array(buf);
+    let binary = "";
+    const CHUNK = 0x8000;
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+    }
+    return { data: btoa(binary), mediaType: mediaTypeForDocument({ file_name: filePath }) || "image/jpeg" };
+  } catch (err) {
+    console.error("downloadTelegramFile failed:", err.message);
+    return null;
+  }
 }
 
 export async function sendMessageReturn(env, chatId, text, options) {

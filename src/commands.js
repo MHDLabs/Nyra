@@ -6,49 +6,6 @@ import { sendMessage, editMessage, buildInlineKeyboard } from "./telegram.js";
 import { getUser, upsertUser, resolveUserActiveConnection } from "./db.js";
 import { parseMemoryData, serializeMemoryData, formatMemoryForUser } from "./memory.js";
 import { showNoConnectionMessage, showSettingsMenu, showPersonalitiesForUser, showUsage } from "./menus.js";
-import { executeWebTool } from "./tools.js";
-
-async function handleSearchCommand(env, chatId, userId, args) {
-  const query = (args || "").trim();
-  if (!query) {
-    await sendMessage(env, chatId, "Usage: /search &lt;query&gt;", { parse_mode: "HTML" });
-    return;
-  }
-  await sendMessage(env, chatId, "🔍 Searching for: <i>" + escapeHtml(query) + "</i>...", { parse_mode: "HTML" });
-  try {
-    const result = await executeWebTool(env, "search", { query }, userId);
-    let out = "<b>Search Results for:</b> <i>" + escapeHtml(query) + "</i>\n\n";
-    if (result.results && result.results.length > 0) {
-      for (const item of result.results.slice(0, 5)) {
-        out += "• <b>" + escapeHtml(item.title) + "</b>\n" + escapeHtml(item.snippet || "") + "\n<a href=\"" + escapeHtml(item.url) + "\">" + escapeHtml(item.url) + "</a>\n\n";
-      }
-    } else if (result.raw) {
-      out += escapeHtml(result.raw);
-    } else {
-      out += "No results found.";
-    }
-    await sendMessage(env, chatId, out, { parse_mode: "HTML" });
-  } catch (err) {
-    await sendMessage(env, chatId, "❌ Search failed: " + escapeHtml(err.message));
-  }
-}
-
-async function handleFetchCommand(env, chatId, userId, args) {
-  const url = (args || "").trim();
-  if (!url) {
-    await sendMessage(env, chatId, "Usage: /fetch &lt;url&gt;", { parse_mode: "HTML" });
-    return;
-  }
-  await sendMessage(env, chatId, "🌐 Fetching: <i>" + escapeHtml(url) + "</i>...", { parse_mode: "HTML" });
-  try {
-    const result = await executeWebTool(env, "fetch", { url }, userId);
-    const content = typeof result === "string" ? result : JSON.stringify(result, null, 2);
-    const snippet = content.length > 3500 ? content.slice(0, 3500) + "\n\n<i>(truncated)</i>" : content;
-    await sendMessage(env, chatId, "<b>Fetched Content:</b>\n\n" + escapeHtml(snippet), { parse_mode: "HTML" });
-  } catch (err) {
-    await sendMessage(env, chatId, "❌ Fetch failed: " + escapeHtml(err.message));
-  }
-}
 
 async function handleStartCommand(env, chatId, userId) {
   const user = await getUser(env, userId);
@@ -72,9 +29,7 @@ async function handleHelpCommand(env, chatId, userId, isGroup) {
     "/remember &lt;fact&gt; — Explicitly remember",
     "/setname &lt;name&gt; — Set your preferred name",
     "/usage — Your usage statistics (private)",
-    "/newpersonality — Create a custom personality (private)",
-    "/search &lt;query&gt; — Search the web (private)",
-    "/fetch &lt;url&gt; — Fetch a webpage (private)"
+    "/newpersonality — Create a custom personality (private)"
   ];
   if (isAdmin(env, userId)) {
     lines.push("");
@@ -321,18 +276,6 @@ export async function handleUserCommand(env, ctx, command, args, message, from, 
     await upsertUser(env, from);
     if (args && args.trim().length > 0) await handleNewPersonalitySubmit(env, chatId, userId, args);
     else await handleNewPersonalityCommand(env, chatId, userId);
-    return true;
-  }
-  if (command === "/search") {
-    if (isGroup) { await sendMessage(env, chatId, "Please use /search in private chat."); return true; }
-    await upsertUser(env, from);
-    await handleSearchCommand(env, chatId, userId, args);
-    return true;
-  }
-  if (command === "/fetch") {
-    if (isGroup) { await sendMessage(env, chatId, "Please use /fetch in private chat."); return true; }
-    await upsertUser(env, from);
-    await handleFetchCommand(env, chatId, userId, args);
     return true;
   }
   if (command === "/admin") { await handleAdminCommand(env, from, chat); return true; }

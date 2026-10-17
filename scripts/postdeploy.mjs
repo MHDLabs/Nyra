@@ -4,14 +4,17 @@
 //
 // Phase 1: `npx wrangler deploy` — output is streamed and its exit code is
 //          propagated: a failed deploy fails the whole flow.
-// Phase 2 (best-effort, never fails the flow): GET the deployed status page.
-//          That single request makes the Worker initialise its D1 schema and
-//          register the Telegram webhook *itself*, from its own origin and
-//          with its RUNTIME secrets — so build-time and runtime configuration
-//          can never disagree. Fallbacks if this probe cannot run: the */5
-//          cron re-verifies the webhook once the URL is known, and any later
-//          visit to GET / bootstraps it. In the worst case, open the printed
-//          Worker URL in a browser once to finish setup.
+// Phase 2 (best-effort, never fails the flow): GET /status on the deployed
+//          Worker. That single request makes the Worker initialise its D1
+//          schema, learn its public origin, and register the Telegram webhook
+//          and the Mini App menu button *itself*, from its own origin and with
+//          its RUNTIME secrets — so build-time and runtime configuration can
+//          never disagree. (The Mini App owns "/", so the bootstrap page lives
+//          at /status.) Fallbacks if this probe cannot run: the */5 cron
+//          re-verifies both once the URL is known, and any later Worker-handled
+//          request — including a Mini App /api/* call — teaches the origin.
+//          In the worst case, open the printed Worker URL + /status in a
+//          browser once to finish setup.
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
@@ -58,7 +61,7 @@ function runWranglerDeploy() {
 }
 
 async function probe(url) {
-  const target = url.replace(/\/+$/, "") + "/";
+  const target = url.replace(/\/+$/, "") + "/status";
   try {
     const res = await fetch(target, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(30000) });
     let body = "";
@@ -85,15 +88,15 @@ async function main() {
     console.log("[postdeploy] Worker URL(s): " + urls.join(", "));
     for (let i = 0; i < urls.length; i++) {
       if (await probe(urls[i])) {
-        console.log("[postdeploy] bootstrap OK — schema initialised and webhook registration attempted. "
-          + "Check GET / for status; open it in a browser if this was a warning-only run.");
+        console.log("[postdeploy] bootstrap OK — schema initialised, webhook and Mini App menu button registered. "
+          + "Check GET /status for details; the Mini App itself is at the root URL.");
         process.exit(0);
       }
     }
-    console.warn("[postdeploy] probe did not confirm the Worker yet. Open " + urls[0] + " once in a browser "
+    console.warn("[postdeploy] probe did not confirm the Worker yet. Open " + urls[0] + "/status once in a browser "
       + "to finish setup (schema + automatic webhook registration), or wait for the */5 cron.");
   } else {
-    console.warn("[postdeploy] no Worker URL found in deploy output. Open your Worker's URL once in a "
+    console.warn("[postdeploy] no Worker URL found in deploy output. Open your Worker's URL + /status once in a "
       + "browser to finish setup (schema + automatic webhook registration).");
   }
   // Post-deploy steps are best-effort: the deploy itself succeeded.

@@ -1,0 +1,118 @@
+{
+  "src": "src/flows.js",
+  "outDir": "src/flows",
+  "public": [
+    "startAddConnectionFlow",
+    "startEditConnectionFlow",
+    "flowPromptLabel",
+    "flowPromptDescription",
+    "flowPromptBaseUrl",
+    "flowPromptApiKey",
+    "flowPromptModel",
+    "flowPromptReview",
+    "flowPromptCapabilities",
+    "handleFlowMessage",
+    "handleFlowSkip",
+    "flowFetchModels",
+    "showModelPage",
+    "flowSelectModel",
+    "finalizeConnectionFromFlow",
+    "startAddRouteFlow",
+    "startEditRouteFlow",
+    "routePromptProvider",
+    "routePromptBaseUrl",
+    "routePromptModels",
+    "routePromptTokens",
+    "routePromptReview",
+    "finalizeRouteFromFlow"
+  ],
+  "shared": [
+    "isEditStep",
+    "handleRouteFlowStep"
+  ],
+  "ignore": [],
+  "modules": {
+    "connection-prompts.js": {
+      "header": [
+        "// Every prompt and validation rule for the connection wizard. Each function",
+        "// renders one step, re-shows the persisted flow state, and re-displays the",
+        "// same step on invalid input rather than losing the user's progress."
+      ],
+      "extraImports": [],
+      "symbols": [
+        "flowPromptLabel",
+        "flowPromptDescription",
+        "flowPromptBaseUrl",
+        "flowPromptApiKey",
+        "flowPromptModel",
+        "flowPromptReview",
+        "flowPromptCapabilities"
+      ]
+    },
+    "model-picker.js": {
+      "header": [
+        "// Live model discovery and paginated model selection. Kept apart from the",
+        "// prompts because it performs network I/O (the provider's /models endpoint)",
+        "// and has its own pagination state."
+      ],
+      "extraImports": [
+        "import { flowPromptCapabilities } from \"./connection-prompts.js\";"
+      ],
+      "symbols": [
+        "isEditStep",
+        "flowFetchModels",
+        "showModelPage",
+        "flowSelectModel"
+      ]
+    },
+    "route.js": {
+      "header": [
+        "// The route wizard: a route is an ordered model x token bundle with a",
+        "// default model, so its prompts and its step machine are separate from the",
+        "// single-connection wizard even though both are driven by the same",
+        "// getFlowState/setFlowState mechanism."
+      ],
+      "extraImports": [],
+      "symbols": [
+        "ROUTE_PROVIDER_LABEL",
+        "canManageModels",
+        "startAddRouteFlow",
+        "startEditRouteFlow",
+        "routePromptProvider",
+        "routePromptBaseUrl",
+        "routePromptModels",
+        "routePromptTokens",
+        "routePromptReview",
+        "handleRouteFlowStep",
+        "finalizeRouteFromFlow"
+      ]
+    },
+    "connection.js": {
+      "header": [
+        "// The connection wizard's entry points and its step machine. It is the only",
+        "// module that dispatches *into* the other two (route steps, the model",
+        "// picker), which is why it carries the step routing while the prompts and",
+        "// the picker stay leaf modules."
+      ],
+      "extraImports": [
+        "import { flowPromptCapabilities } from \"./connection-prompts.js\";",
+        "import { handleRouteFlowStep } from \"./route.js\";"
+      ],
+      "symbols": [
+        "startAddConnectionFlow",
+        "startEditConnectionFlow",
+        "handleFlowMessage",
+        "handleFlowSkip",
+        "finalizeConnectionFromFlow"
+      ]
+    }
+  },
+  "barrel": "src/flows/index.js",
+  "barrelHeader": [
+    "// Nyra — setup-wizard flows barrel.",
+    "//",
+    "// `src/flows.js` re-exports this so the historical import path stays valid.",
+    "// The two wizards (connection, route) are independent; the connection wizard",
+    "// drives the route wizard's step machine rather than duplicating it."
+  ]
+}
