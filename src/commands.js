@@ -6,6 +6,7 @@ import { sendMessage, editMessage, buildInlineKeyboard } from "./telegram.js";
 import { getUser, upsertUser, resolveUserActiveConnection } from "./db.js";
 import { parseMemoryData, serializeMemoryData, formatMemoryForUser } from "./memory.js";
 import { showNoConnectionMessage, showSettingsMenu, showPersonalitiesForUser, showUsage } from "./menus.js";
+import { createBroadcast, startBroadcast, cancelBroadcast, listBroadcasts, calculateBroadcastTargets } from "./broadcast.js";
 
 async function handleStartCommand(env, chatId, userId) {
   const user = await getUser(env, userId);
@@ -36,6 +37,7 @@ async function handleHelpCommand(env, chatId, userId, isGroup) {
     lines.push("<b>Admin</b>");
     lines.push("/admin — Admin panel (private chat only)");
     lines.push("/stats — Statistics (private chat only)");
+    lines.push("/broadcast — Send a message to users/groups (private chat only)");
   }
   if (isGroup) {
     lines.push("");
@@ -146,6 +148,81 @@ async function handleNewPersonalitySubmit(env, chatId, userId, args) {
       .bind(id, userId, name, description, prompt, now(), now()).run();
     await sendMessage(env, chatId, "✅ Personality '" + escapeHtml(name) + "' created. Manage it in /settings → Personalities.", { parse_mode: "HTML" });
   } catch (err) { await sendMessage(env, chatId, "Could not create personality. Try again."); }
+}
+
+/**
+ * Admin mass-messaging from Telegram itself.
+ *
+ * The Mini App admin panel could already manage broadcasts, but the bot — where
+ * an admin actually is when they decide to send something — had no command at
+ * all. Usage is deliberately explicit about the target so a bare
+ * `/broadcast hello` cannot blast every user by accident.
+ */
+async function handleBroadcastCommand(env, ctx, from, chat, args) {
+  const userId = from.id;
+  if (!isAdmin(env, userId)) { await sendMessage(env, chat.id, "Unknown command."); return; }
+  if (chat.type !== "private") { await sendMessage(env, chat.id, "Broadcast is only available in private chat."); return; }
+  const rateOk = await checkRateLimit(env, "admin:" + userId, RATE_LIMIT_ADMIN_PER_MIN, 60);
+  if (!rateOk) { await sendMessage(env, chat.id, "Rate limit reached."); return; }
+
+  const usage = "<b>Broadcast</b>\n\n" +
+    "<code>/broadcast &lt;target&gt; | &lt;message&gt;</code>\n" +
+    "target: <code>all_users</code> | <code>all_chats</code> | <code>active_users</code>\n\n" +
+    "<code>/broadcast list</code> — recent campaigns\n" +
+    "<code>/broadcast cancel &lt;id&gt;</code> — stop a campaign\n\n" +
+    "Example:\n<code>/broadcast all_users | Nyra has a new model!</code>";
+
+  const raw = (args || "").trim();
+  if (!raw) { await sendMessage(env, chat.id, usage, { parse_mode: "HTML" }); return; }
+
+  if (raw === "list") {
+    const result = await listBroadcasts(env, 0, 10);
+    const rows = result.broadcasts || [];
+    if (!rows.length) { await sendMessage(env, chat.id, "No broadcasts yet."); return; }
+    const lines = ["<b>Recent broadcasts</b>", ""];
+    for (const b of rows) {
+      lines.push("<code>" + b.broadcast_id + "</code>\n" +
+        escapeHtml(b.target_type) + " — " + b.status +
+        " (" + b.sent_count + "/" + b.total_count + " sent, " + b.failed_count + " failed)");
+    }
+    await sendMessage(env, chat.id, lines.join("\n"), { parse_mode: "HTML" });
+    return;
+  }
+
+  if (raw.indexOf("cancel ") === 0) {
+    const id = raw.slice(7).trim();
+    if (!id) { await sendMessage(env, chat.id, "Usage: /broadcast cancel <id>"); return; }
+    try {
+      await cancelBroadcast(env, id, userId);
+      await sendMessage(env, chat.id, "Cancelled " + escapeHtml(id) + ".");
+    } catch (err) { await sendMessage(env, chat.id, "Could not cancel: " + escapeHtml(err.message)); }
+    return;
+  }
+
+  const sep = raw.indexOf("|");
+  if (sep === -1) { await sendMessage(env, chat.id, usage, { parse_mode: "HTML" }); return; }
+  const targetType = raw.slice(0, sep).trim();
+  const message = raw.slice(sep + 1).trim();
+  if (["all_users", "all_chats", "active_users"].indexOf(targetType) === -1) {
+    await sendMessage(env, chat.id, "Invalid target. Use all_users, all_chats or active_users.");
+    return;
+  }
+  if (!message) { await sendMessage(env, chat.id, "Message is empty."); return; }
+  if (message.length > 4096) { await sendMessage(env, chat.id, "Message too long (max 4096 characters)."); return; }
+
+  try {
+    const targets = await calculateBroadcastTargets(env, targetType, null);
+    if (!targets.length) { await sendMessage(env, chat.id, "No recipients found for " + targetType + "."); return; }
+    const created = await createBroadcast(env, userId, message, targetType, null);
+    const started = await startBroadcast(env, ctx, created.broadcastId, userId);
+    await sendMessage(env, chat.id,
+      "🚀 Broadcast started.\n<code>" + created.broadcastId + "</code>\n" +
+      "Recipients: <b>" + (started.totalCount || targets.length) + "</b>\n" +
+      "Stop with <code>/broadcast cancel " + created.broadcastId + "</code>", { parse_mode: "HTML" });
+  } catch (err) {
+    console.error("Broadcast command failed:", err.message);
+    await sendMessage(env, chat.id, "Broadcast failed: " + escapeHtml(err.message));
+  }
 }
 
 async function handleAdminCommand(env, from, chat) {
@@ -279,6 +356,7 @@ export async function handleUserCommand(env, ctx, command, args, message, from, 
     return true;
   }
   if (command === "/admin") { await handleAdminCommand(env, from, chat); return true; }
+  if (command === "/broadcast") { await handleBroadcastCommand(env, ctx, from, chat, args); return true; }
   if (command === "/stats") {
     if (!isAdmin(env, userId)) { await sendMessage(env, chatId, "Unknown command."); return true; }
     if (isGroup) { await sendMessage(env, chatId, "Please use /stats in private chat."); return true; }

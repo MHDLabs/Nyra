@@ -1,6 +1,7 @@
 // Per-user personal model connections, gated by the admin-controlled
 // `personal_models_allowed` setting and the per-user limit.
 import { getUserConnectionById, getUserConnections, isPersonalModelsAllowed, getPersonalModelLimit, countPersonalConnections, saveGlobalConnection, deleteUserConnection } from "../db.js";
+import { jsonOk, jsonError } from "./respond.js";
 
 /** Non-admin personal models: list, gated by the global toggle. */
 export async function handlePersonalModels(env, userId) {

@@ -7,6 +7,16 @@ export async function getUser(env, userId) {
   catch (err) { console.error("getUser failed:", err.message); return null; }
 }
 
+/**
+ * Like `getUser`, but lets a real D1 failure throw instead of masquerading as
+ * "no such user". API handlers need 500 for a broken database and 404 only for
+ * a genuinely missing row — swallowing the error made every outage look like
+ * "user not found".
+ */
+export async function getUserStrict(env, userId) {
+  return await env.DB.prepare("SELECT * FROM users WHERE telegram_id = ?").bind(userId).first();
+}
+
 export async function upsertUser(env, from) {
   const ts = now();
   const existing = await getUser(env, from.id);

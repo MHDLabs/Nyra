@@ -10,7 +10,7 @@
   var state = {
     user: null, isAdmin: false, personalAllowed: false, personalLimit: 5,
     section: 'chat', chat: [], connections: [], routes: [], personal: [],
-    adminStats: null, adminPage: 0
+    adminStats: null, adminPage: 0, broadcastPage: 0, dlqPage: 0, personalities: null
   };
 
   function el(id) { return document.getElementById(id); }
@@ -29,6 +29,15 @@
     toast._t = setTimeout(function () { t.classList.remove('show'); }, 2500);
   }
 
+  // Errors carry the HTTP status so callers can branch on 401 (session
+  // expired), 403 (not an admin) and 404 (endpoint or record missing) instead
+  // of dumping a bare status code into a toast.
+  function ApiError(status, message) {
+    var e = new Error(message || ('HTTP ' + status));
+    e.status = status;
+    return e;
+  }
+
   function api(path, opts) {
     opts = opts || {};
     var headers = opts.headers || {};
@@ -41,11 +50,24 @@
         ? (typeof opts.body === 'string' ? opts.body : JSON.stringify(opts.body))
         : undefined
     }).then(function (r) {
-      return r.json().catch(function () { return {}; }).then(function (data) {
-        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+      return r.text().catch(function () { return ''; }).then(function (raw) {
+        var data = {};
+        if (raw) { try { data = JSON.parse(raw); } catch (e) { data = { error: raw.slice(0, 200) }; } }
+        if (!r.ok) throw ApiError(r.status, data.error);
         return data;
       });
     });
+  }
+
+  // Renders a failure consistently so a 404 endpoint shows something other
+  // than "HTTP 404" and an expired session offers a reload.
+  function errorHtml(err) {
+    var msg = err && err.message ? err.message : 'خطای ناشناخته';
+    var hint = '';
+    if (err && err.status === 401) hint = '<br><button class="btn-ghost" style="margin-top:12px" onclick="window.location.reload()">تلاش مجدد</button>';
+    else if (err && err.status === 403) hint = '<br><span style="font-size:12px">دسترسی لازم را ندارید</span>';
+    else if (err && err.status === 404) hint = '<br><span style="font-size:12px">این بخش در سرور موجود نیست</span>';
+    return '<div class="empty" style="color:var(--danger)">' + esc(msg) + hint + '</div>';
   }
 
   // --- INITIALIZATION ------------------------------------------------------
@@ -232,23 +254,27 @@
 
       if (!state.connections.length) html += '<div class="empty">مدلی یافت نشد</div>';
       else html += state.connections.map(function (c) {
+        var caps = [];
+        if (c.is_fast) caps.push('سریع');
+        if (c.supports_vision) caps.push('تصویر');
         return '<div class="row"><div class="grow">' +
           '<div class="name">' + esc(c.label) + '</div>' +
-          '<div class="meta mono">' + esc(c.provider) + ' • ' + esc(c.model) + (c.is_global ? ' • عمومی' : ' • شخصی') + '</div>' +
+          '<div class="meta mono">' + esc(c.provider) + ' • ' + esc(c.model) +
+            (c.is_global ? ' • عمومی' : ' • شخصی') + (caps.length ? ' • ' + caps.join('/') : '') + '</div>' +
           '</div>' +
           (c.active
             ? '<span class="badge ok">فعال</span>'
-            : '<button class="btn-ghost" onclick="window.setActiveModel(\'' + c.connection_id + '\')">انتخاب</button>') +
+            : '<button class="btn-ghost" onclick="window.setActiveModel(\'' + esc(c.connection_id) + '\')">انتخاب</button>') +
           '</div>';
       }).join('');
 
       html += '</div>';
-      if (state.personalAllowed) {
+      if (state.personalAllowed && !state.isAdmin) {
         html += '<div class="card"><div class="card-title">مدل شخصی</div>' +
           '<button class="btn" onclick="window.switchSection(\'personal\')">مدیریت مدل‌های شخصی</button></div>';
       }
       box.innerHTML = html;
-    }).catch(function (e) { box.innerHTML = '<div class="empty" style="color:var(--danger)">' + esc(e.message) + '</div>'; });
+    }).catch(function (e) { box.innerHTML = errorHtml(e); });
   }
 
   window.setActiveModel = function (id) {
@@ -275,12 +301,12 @@
         return '<div class="card">' +
           '<div class="card-title">' + esc(m.label) + (m.enabled ? '' : ' <span class="badge">غیرفعال</span>') + '</div>' +
           '<div class="card-sub mono">' + esc(m.provider) + ' • ' + esc(m.model) + '</div>' +
-          '<button class="btn-danger" onclick="window.deletePersonal(\'' + m.connection_id + '\')">حذف</button></div>';
+          '<button class="btn-danger" onclick="window.deletePersonal(\'' + esc(m.connection_id) + '\')">حذف</button></div>';
       }).join('');
 
       box.innerHTML = html;
     }).catch(function (e) {
-      box.innerHTML = '<div class="empty">' + (e.message === 'Forbidden' ? 'دسترسی مدل شخصی فعال نیست' : esc(e.message)) + '</div>';
+      box.innerHTML = errorHtml(e.status === 403 ? new Error('دسترسی مدل شخصی فعال نیست') : e);
     });
   }
 
@@ -348,13 +374,13 @@
             models.map(function (mm) { return '<span class="chip">' + esc(mm.model) + (mm.is_default ? ' ⭐' : '') + '</span>'; }).join('') +
           '</div>' +
           '<div class="btn-row">' +
-            '<button class="btn-ghost" onclick="window.openRouteDetail(\'' + r.route_id + '\')">مدیریت</button>' +
-            (r.is_default ? '' : '<button class="btn-ghost" onclick="window.routeAction(\'' + r.route_id + '\', \'default\', {})">پیش‌فرض</button>') +
-            '<button class="btn-danger" onclick="window.deleteRoute(\'' + r.route_id + '\')">حذف</button>' +
+            '<button class="btn-ghost" onclick="window.openRouteDetail(\'' + esc(r.route_id) + '\')">مدیریت</button>' +
+            (r.is_default ? '' : '<button class="btn-ghost" onclick="window.routeAction(\'' + esc(r.route_id) + '\', \'default\', {})">پیش‌فرض</button>') +
+            '<button class="btn-danger" onclick="window.deleteRoute(\'' + esc(r.route_id) + '\')">حذف</button>' +
           '</div></div>';
       });
       box.innerHTML = html;
-    }).catch(function (e) { box.innerHTML = '<div class="empty" style="color:var(--danger)">' + esc(e.message) + '</div>'; });
+    }).catch(function (e) { box.innerHTML = errorHtml(e); });
   }
 
   window.openRouteModal = function () {
@@ -393,16 +419,16 @@
       '<div class="card"><div class="card-title">مدل‌ها</div>' +
       (models.length ? models.map(function (mm) {
         return '<div class="row"><div class="grow"><div class="name">' + esc(mm.model) + (mm.is_default ? ' ⭐' : '') + '</div></div>' +
-          (mm.is_default ? '' : '<button class="btn-ghost" onclick="window.routeAction(\'' + routeId + '\', \'model-default\', {model_id:\'' + mm.model_id + '\'})">پیش‌فرض</button>') +
-          '<button class="btn-danger" onclick="window.routeAction(\'' + routeId + '\', \'model-remove\', {model_id:\'' + mm.model_id + '\'})">حذف</button></div>';
+          (mm.is_default ? '' : '<button class="btn-ghost" onclick="window.routeAction(\'' + esc(routeId) + '\', \'model-default\', {model_id:\'' + esc(mm.model_id) + '\'})">پیش‌فرض</button>') +
+          '<button class="btn-danger" onclick="window.routeAction(\'' + esc(routeId) + '\', \'model-remove\', {model_id:\'' + esc(mm.model_id) + '\'})">حذف</button></div>';
       }).join('') : '<div class="empty">مدلی نیست</div>') +
       '</div>' +
       '<div class="card"><div class="card-title">افزودن مدل</div><input id="add-model-input" placeholder="نام مدل">' +
-      '<button class="btn" onclick="window.routeAction(\'' + routeId + '\', \'model-add\', {model: el(\'add-model-input\').value.trim()})">افزودن</button></div>' +
+      '<button class="btn" onclick="window.routeAction(\'' + esc(routeId) + '\', \'model-add\', {model: el(\'add-model-input\').value.trim()})">افزودن</button></div>' +
       '<div class="card"><div class="card-title">توکن‌ها</div>' +
       '<div class="card-sub">' + route.enabled_token_count + ' از ' + route.token_count + ' فعال</div>' +
       '<label>افزودن توکن</label><input id="add-token-input" type="password" placeholder="کلید API">' +
-      '<button class="btn" onclick="window.routeAction(\'' + routeId + '\', \'token-add\', {api_key: el(\'add-token-input\').value.trim()})">افزودن توکن</button></div>' +
+      '<button class="btn" onclick="window.routeAction(\'' + esc(routeId) + '\', \'token-add\', {api_key: el(\'add-token-input\').value.trim()})">افزودن توکن</button></div>' +
       '<button class="btn-ghost" style="width:100%;padding:12px" onclick="window.closeModal()">بستن</button></div>';
     m.addEventListener('click', function (e) { if (e.target === m) window.closeModal(); });
     document.body.appendChild(m);
@@ -425,19 +451,21 @@
       .catch(function (e) { toast('خطا: ' + e.message); });
   };
 
-  // --- SETTINGS & ADMIN ----------------------------------------------------
+  // --- SETTINGS ------------------------------------------------------------
   function renderSettings() {
     var box = el('sec-settings');
     var u = state.user || {};
     if (!box) return;
     box.innerHTML = '<div class="card"><div class="card-title">پروفایل کاربری</div>' +
       '<div class="row"><span class="grow">نام</span><span>' + esc(u.first_name) + '</span></div>' +
-      '<div class="row"><span class="grow">ID تلگرام</span><span class="mono">' + esc(u.telegram_id) + '</span></div>' +
-      '<div class="row"><span class="grow">حالت حافظه</span><span>' + esc(u.memory_mode) + '</span></div></div>' +
+      '<div class="row"><span class="grow">ID تلگرام</span><span class="mono">' + esc(u.telegram_id) + '</span></div></div>' +
       '<div class="card"><div class="card-title">حالت توسعه‌دهنده</div>' +
       '<div class="row"><span class="grow">فعال‌سازی Coding Mode</span>' +
       '<label class="switch"><input type="checkbox" id="coding-toggle"' + (u.coding_mode ? ' checked' : '') +
       '><span class="slider"></span></label></div></div>' +
+      '<div class="card"><div class="card-title">حافظه</div><div id="memory-host"><div class="empty">در حال بارگذاری...</div></div></div>' +
+      '<div class="card"><div class="card-title">شخصیت</div><div id="personality-host"><div class="empty">در حال بارگذاری...</div></div></div>' +
+      '<div class="card"><div class="card-title">دستورات سفارشی</div><div id="instructions-host"><div class="empty">در حال بارگذاری...</div></div></div>' +
       '<div class="card"><div class="card-title">آمار</div><div id="user-stats"><div class="empty">در حال بارگذاری...</div></div></div>';
 
     var toggle = el('coding-toggle');
@@ -453,9 +481,101 @@
       host.innerHTML = '<div class="row"><span class="grow">کل پیام‌ها</span><span>' + (s.total || 0) + '</span></div>' +
         '<div class="row"><span class="grow">موفق</span><span>' + (s.success || 0) + '</span></div>' +
         '<div class="row"><span class="grow">ناموفق</span><span>' + (s.fail || 0) + '</span></div>';
-    }).catch(function () {});
+    }).catch(function (e) {
+      var host = el('user-stats');
+      if (host) host.innerHTML = errorHtml(e);
+    });
+
+    loadMemory();
+    loadPersonalities();
+    loadInstructions();
   }
 
+  function loadMemory() {
+    var host = el('memory-host');
+    if (!host) return;
+    api('/api/user/memory').then(function (data) {
+      var modes = [['normal', 'کامل'], ['minimal', 'حداقلی'], ['none', 'خاموش']];
+      host.innerHTML =
+        '<div class="row"><span class="grow">حالت</span><span class="mono">' + esc(data.mode) + '</span></div>' +
+        '<div class="btn-row">' + modes.map(function (m) {
+          return '<button class="' + (data.mode === m[0] ? 'btn' : 'btn-ghost') + '" onclick="window.setMemoryMode(\'' + m[0] + '\')">' + m[1] + '</button>';
+        }).join('') + '</div>' +
+        '<div class="card-sub" style="margin:12px 0 4px">آنچه به خاطر دارم</div>' +
+        '<div class="mono" style="white-space:pre-wrap;font-size:12px">' + esc(data.formatted || '') + '</div>' +
+        (data.msg_counter ? '<div class="card-sub" style="margin-top:8px">پیام‌ها تا به‌روزرسانی بعدی: ' + data.msg_counter + '</div>' : '') +
+        '<button class="btn-danger" style="width:100%;margin-top:12px" onclick="window.clearMemory()">پاک کردن حافظه</button>';
+    }).catch(function (e) { host.innerHTML = errorHtml(e); });
+  }
+
+  window.setMemoryMode = function (mode) {
+    api('/api/user/memory', { method: 'POST', body: { mode: mode } })
+      .then(function () { toast('حالت حافظه ذخیره شد'); loadMemory(); })
+      .catch(function (e) { toast('خطا: ' + e.message); });
+  };
+
+  window.clearMemory = function () {
+    if (!window.confirm('تمام حافظه پاک شود؟')) return;
+    api('/api/user/memory/clear', { method: 'POST' })
+      .then(function () { toast('حافظه پاک شد'); loadMemory(); })
+      .catch(function (e) { toast('خطا: ' + e.message); });
+  };
+
+  function loadPersonalities() {
+    var host = el('personality-host');
+    if (!host) return;
+    api('/api/user/personality').then(function (data) {
+      state.personalities = data;
+      var all = (data.builtins || []).concat(data.customs || []);
+      if (!all.length) { host.innerHTML = '<div class="empty">شخصیتی موجود نیست</div>'; return; }
+      host.innerHTML = '<div class="row"><span class="grow">فعال</span><span>' +
+        esc((all.filter(function (p) { return p.id === data.personality_id; })[0] || { name: data.personality_id }).name) + '</span></div>' +
+        all.map(function (p) {
+          var active = p.id === data.personality_id;
+          return '<div class="row"><div class="grow"><div class="name">' + esc(p.name) + '</div>' +
+            '<div class="meta">' + (p.builtin ? 'پیش‌فرض سیستم' : 'شخصی') + '</div></div>' +
+            (active ? '<span class="badge ok">فعال</span>'
+              : '<button class="btn-ghost" onclick="window.setPersonality(\'' + esc(p.id) + '\')">انتخاب</button>') +
+            '</div>';
+        }).join('');
+    }).catch(function (e) { host.innerHTML = errorHtml(e); });
+  }
+
+  window.setPersonality = function (id) {
+    api('/api/user/personality', { method: 'POST', body: { personality_id: id } })
+      .then(function () { toast('شخصیت تغییر کرد'); loadPersonalities(); })
+      .catch(function (e) { toast('خطا: ' + e.message); });
+  };
+
+  function loadInstructions() {
+    var host = el('instructions-host');
+    if (!host) return;
+    api('/api/user/custom-instructions').then(function (data) {
+      host.innerHTML =
+        '<div class="card-sub">این متن به هر درخواست اضافه می‌شود (حداکثر ' + (data.max || 1000) + ' کاراکتر).</div>' +
+        '<textarea id="ci-input" rows="4" placeholder="مثلا: کوتاه جواب بده">' + esc(data.text || '') + '</textarea>' +
+        '<div class="btn-row">' +
+          '<button class="btn" onclick="window.saveInstructions()">ذخیره</button>' +
+          '<button class="btn-ghost" onclick="window.clearInstructions()">پاک کردن</button>' +
+        '</div>';
+    }).catch(function (e) { host.innerHTML = errorHtml(e); });
+  }
+
+  window.saveInstructions = function () {
+    var input = el('ci-input');
+    if (!input) return;
+    api('/api/user/custom-instructions', { method: 'POST', body: { text: input.value } })
+      .then(function () { toast('ذخیره شد'); loadInstructions(); })
+      .catch(function (e) { toast('خطا: ' + e.message); });
+  };
+
+  window.clearInstructions = function () {
+    api('/api/user/custom-instructions', { method: 'POST', body: { clear: true } })
+      .then(function () { toast('پاک شد'); loadInstructions(); })
+      .catch(function (e) { toast('خطا: ' + e.message); });
+  };
+
+  // --- ADMIN ---------------------------------------------------------------
   function loadAdmin() {
     var box = el('sec-admin');
     if (!box) return;
@@ -485,10 +605,18 @@
             '<span id="admin-page-label">1</span>' +
             '<button class="btn-ghost" onclick="window.adminUsersPage(1)">بعدی ›</button>' +
           '</div></div>' +
+        '<div class="card"><div class="card-title">اتصال‌ها</div><div id="admin-conns"><div class="empty">در حال بارگذاری...</div></div></div>' +
+        '<div class="card"><div class="card-title">مصرف اتصال‌ها</div><div id="admin-usage"><div class="empty">در حال بارگذاری...</div></div></div>' +
+        '<div class="card"><div class="card-title">پیام همگانی</div><div id="admin-broadcast"><div class="empty">در حال بارگذاری...</div></div></div>' +
+        '<div class="card"><div class="card-title">خطاهای صف</div><div id="admin-dlq"><div class="empty">در حال بارگذاری...</div></div></div>' +
         '<div class="card"><div class="card-title">مسیرها</div>' +
           '<button class="btn" onclick="window.switchSection(\'routes\')">مدیریت مسیرها</button></div>';
       loadAdminUsers();
-    }).catch(function (e) { box.innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; });
+      loadAdminConnections();
+      loadAdminUsage();
+      loadBroadcasts();
+      loadDLQ();
+    }).catch(function (e) { box.innerHTML = errorHtml(e); });
   }
 
   window.saveAdminSettings = function () {
@@ -518,12 +646,180 @@
         }).join('');
       var label = el('admin-page-label');
       if (label) label.textContent = String(state.adminPage + 1);
-    }).catch(function () {});
+    }).catch(function (e) {
+      var box = el('admin-users');
+      if (box) box.innerHTML = errorHtml(e);
+    });
   }
 
   window.adminUsersPage = function (delta) {
     state.adminPage = Math.max(0, state.adminPage + delta);
     loadAdminUsers();
+  };
+
+  // Fast / vision capability switches for the admin's global connections.
+  function loadAdminConnections() {
+    var host = el('admin-conns');
+    if (!host) return;
+    api('/api/user/connections').then(function (data) {
+      var globals = (data.connections || []).filter(function (c) { return c.is_global; });
+      if (!globals.length) { host.innerHTML = '<div class="empty">اتصال عمومی وجود ندارد</div>'; return; }
+      host.innerHTML = globals.map(function (c) {
+        return '<div class="card"><div class="card-title">' + esc(c.label) + '</div>' +
+          '<div class="card-sub mono">' + esc(c.provider) + ' • ' + esc(c.model) + '</div>' +
+          '<div class="row"><span class="grow">سریع (fast)</span>' +
+          '<label class="switch"><input type="checkbox" onchange="window.toggleConnectionCapability(\'' + esc(c.connection_id) + '\', \'fast\', this.checked)"' +
+          (c.is_fast ? ' checked' : '') + '><span class="slider"></span></label></div>' +
+          '<div class="row"><span class="grow">پشتیبانی تصویر</span>' +
+          '<label class="switch"><input type="checkbox" onchange="window.toggleConnectionCapability(\'' + esc(c.connection_id) + '\', \'vision\', this.checked)"' +
+          (c.supports_vision ? ' checked' : '') + '><span class="slider"></span></label></div>' +
+          '</div>';
+      }).join('');
+    }).catch(function (e) { host.innerHTML = errorHtml(e); });
+  }
+
+  window.toggleConnectionCapability = function (connectionId, field, checked) {
+    api('/api/admin/connection-toggle', { method: 'POST', body: { connection_id: connectionId, field: field } })
+      .then(function () { toast('ذخیره شد'); loadAdminConnections(); })
+      .catch(function (e) { toast('خطا: ' + e.message); loadAdminConnections(); });
+  };
+
+  function loadAdminUsage() {
+    var host = el('admin-usage');
+    if (!host) return;
+    api('/api/admin/connection-usage?days=7').then(function (data) {
+      var stats = data.stats || [];
+      if (!stats.length) { host.innerHTML = '<div class="empty">مصرفی در ۷ روز گذشته ثبت نشده</div>'; return; }
+      host.innerHTML = '<div class="card-sub">۷ روز گذشته</div>' + stats.map(function (s) {
+        return '<div class="row"><div class="grow"><div class="name">' + esc(s.label || s.connection_id) + '</div>' +
+          '<div class="meta">' + (s.total_requests || 0) + ' درخواست • ' + (s.unique_users || 0) + ' کاربر</div></div>' +
+          '<span class="mono">' + (s.total_tokens || 0) + ' توکن</span></div>';
+      }).join('');
+    }).catch(function (e) { host.innerHTML = errorHtml(e); });
+  }
+
+  function loadBroadcasts() {
+    var host = el('admin-broadcast');
+    if (!host) return;
+    api('/api/admin/broadcasts?page=' + state.broadcastPage).then(function (data) {
+      var list = data.broadcasts || [];
+      var html = '<div class="btn-row" style="margin-bottom:12px">' +
+        '<button class="btn" onclick="window.openBroadcastModal()">+ پیام جدید</button>' +
+        '<button class="btn-ghost" onclick="window.broadcastPage(-1)">‹</button>' +
+        '<button class="btn-ghost" onclick="window.broadcastPage(1)">›</button></div>';
+      if (!list.length) html += '<div class="empty">پیامی ارسال نشده</div>';
+      else html += list.map(function (b) {
+        var actions = '';
+        if (b.status === 'draft') actions = '<button class="btn-ghost" onclick="window.broadcastAction(\'' + esc(b.broadcast_id) + '\', \'start\')">شروع</button>';
+        else if (b.status === 'running') actions = '<button class="btn-ghost" onclick="window.broadcastAction(\'' + esc(b.broadcast_id) + '\', \'pause\')">توقف موقت</button>';
+        else if (b.status === 'paused') actions = '<button class="btn-ghost" onclick="window.broadcastAction(\'' + esc(b.broadcast_id) + '\', \'resume\')">ادامه</button>';
+        if (b.status === 'draft' || b.status === 'running' || b.status === 'paused') {
+          actions += '<button class="btn-danger" onclick="window.broadcastAction(\'' + esc(b.broadcast_id) + '\', \'cancel\')">لغو</button>';
+        }
+        return '<div class="card"><div class="card-title">' + esc(b.target_type) +
+          '<span class="badge' + (b.status === 'completed' ? ' ok' : '') + '">' + esc(b.status) + '</span></div>' +
+          '<div class="card-sub">' + esc(String(b.message || '').slice(0, 120)) + '</div>' +
+          '<div class="row"><span class="grow">' + (b.sent_count || 0) + ' از ' + (b.total_count || 0) +
+            ' • ناموفق ' + (b.failed_count || 0) + '</span></div>' +
+          (actions ? '<div class="btn-row">' + actions + '</div>' : '') +
+          '</div>';
+      }).join('');
+      host.innerHTML = html;
+    }).catch(function (e) { host.innerHTML = errorHtml(e); });
+  }
+
+  window.broadcastPage = function (delta) {
+    state.broadcastPage = Math.max(0, state.broadcastPage + delta);
+    loadBroadcasts();
+  };
+
+  window.openBroadcastModal = function () {
+    var m = document.createElement('div');
+    m.className = 'modal-backdrop';
+    m.innerHTML = '<div class="modal"><h2>پیام همگانی</h2>' +
+      '<label>مخاطبان</label><select id="bc-target">' +
+        '<option value="all_users">همه کاربران</option>' +
+        '<option value="active_users">کاربران فعال (۳۰ روز)</option>' +
+        '<option value="all_chats">همه گروه‌ها</option>' +
+      '</select>' +
+      '<div class="card-sub" id="bc-count" style="margin-top:8px"></div>' +
+      '<label>متن</label><textarea id="bc-message" rows="5" placeholder="متن پیام..."></textarea>' +
+      '<div class="btn-row"><button class="btn-ghost" onclick="window.closeModal()">انصراف</button>' +
+      '<button class="btn" onclick="window.createBroadcast()">ایجاد پیش‌نویس</button></div>' +
+      '<div class="card-sub" style="margin-top:12px">پس از ایجاد، دکمه شروع را بزنید. تلگرام ۴۰۹۶ کاراکتر برای هر پیام می‌پذیرد.</div></div>';
+    m.addEventListener('click', function (e) { if (e.target === m) window.closeModal(); });
+    document.body.appendChild(m);
+    var sel = el('bc-target');
+    if (sel) {
+      sel.addEventListener('change', previewBroadcastTargets);
+      previewBroadcastTargets();
+    }
+  };
+
+  function previewBroadcastTargets() {
+    var sel = el('bc-target');
+    var host = el('bc-count');
+    if (!sel || !host) return;
+    host.textContent = 'در حال شمارش مخاطبان...';
+    api('/api/admin/broadcast/preview', { method: 'POST', body: { targetType: sel.value } })
+      .then(function (d) { host.textContent = 'تعداد مخاطبان: ' + (d.count || 0); })
+      .catch(function (e) { host.textContent = 'شمارش ناموفق: ' + e.message; });
+  }
+
+  window.createBroadcast = function () {
+    var target = el('bc-target');
+    var message = el('bc-message');
+    if (!target || !message) return;
+    var text = message.value.trim();
+    if (!text) { toast('متن پیام خالی است'); return; }
+    api('/api/admin/broadcast/create', { method: 'POST', body: { message: text, targetType: target.value } })
+      .then(function () { window.closeModal(); toast('پیش‌نویس ساخته شد'); loadBroadcasts(); })
+      .catch(function (e) { toast('خطا: ' + e.message); });
+  };
+
+  window.broadcastAction = function (id, action) {
+    if (action === 'cancel' && !window.confirm('این پیام لغو شود؟')) return;
+    api('/api/admin/broadcast/' + id + '/' + action, { method: 'POST' })
+      .then(function (r) {
+        toast(action === 'start' && r.totalCount ? 'شروع شد — ' + r.totalCount + ' مخاطب' : 'انجام شد');
+        loadBroadcasts();
+      })
+      .catch(function (e) { toast('خطا: ' + e.message); });
+  };
+
+  function loadDLQ() {
+    var host = el('admin-dlq');
+    if (!host) return;
+    api('/api/admin/failed-updates?page=' + state.dlqPage + '&limit=20').then(function (data) {
+      var items = data.items || [];
+      var html = '<div class="card-sub">مجموع: ' + (data.total || 0) + ' رکورد</div>';
+      if (!items.length) html += '<div class="empty">خطایی ثبت نشده</div>';
+      else html += items.map(function (it) {
+        return '<div class="card"><div class="card-title">#' + esc(it.id) + ' <span class="badge">' + esc(it.update_id) + '</span></div>' +
+          '<div class="card-sub mono">' + esc(it.message_text || '(بدون متن)') + '</div>' +
+          '<div class="mono" style="white-space:pre-wrap;font-size:11px;opacity:0.7">' + esc(String(it.error_info || '').slice(0, 300)) + '</div>' +
+          (it.replayed_at
+            ? '<div class="card-sub" style="margin-top:8px">قبلا بازپخش شده</div>'
+            : '<button class="btn-ghost" style="margin-top:8px" onclick="window.replayUpdate(' + it.id + ')">بازپخش</button>') +
+          '</div>';
+      }).join('');
+      html += '<div class="pager">' +
+        '<button class="btn-ghost" onclick="window.dlqPage(-1)">‹ قبلی</button>' +
+        '<span>' + (state.dlqPage + 1) + '</span>' +
+        '<button class="btn-ghost" onclick="window.dlqPage(1)">بعدی ›</button></div>';
+      host.innerHTML = html;
+    }).catch(function (e) { host.innerHTML = errorHtml(e); });
+  }
+
+  window.dlqPage = function (delta) {
+    state.dlqPage = Math.max(0, state.dlqPage + delta);
+    loadDLQ();
+  };
+
+  window.replayUpdate = function (id) {
+    api('/api/admin/failed-updates/replay', { method: 'POST', body: { id: id } })
+      .then(function () { toast('بازپخش شد'); loadDLQ(); })
+      .catch(function (e) { toast('خطا: ' + e.message); });
   };
 
   // Inline `onclick` attributes run in the global scope, so the DOM helper the

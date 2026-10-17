@@ -195,11 +195,12 @@ html, body {
 .badge.ok { color: var(--ok); background: rgba(50, 215, 75, 0.1); }
 
 /* Forms */
-input, select {
+input, select, textarea {
   width: 100%; padding: 12px; background: var(--bg-tertiary); border: 1px solid var(--border);
   border-radius: var(--radius-sm); color: var(--text-primary); font-family: inherit; margin-top: 8px; font-size: 14px;
 }
-input:focus, select:focus { border-color: var(--accent); }
+textarea { resize: vertical; min-height: 80px; }
+input:focus, select:focus, textarea:focus { border-color: var(--accent); outline: none; }
 label { font-size: 12px; color: var(--text-muted); margin-top: 12px; display: block; }
 
 /* Modal */

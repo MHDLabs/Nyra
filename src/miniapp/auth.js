@@ -2,8 +2,8 @@
 // string keyed by a secret derived from the bot token ("WebAppData") —
 // verified exactly as Telegram specifies, including the 1-hour freshness
 // bound. Nothing in the Mini App is reachable without passing this.
-import { createHmac } from "node:crypto";
-import { getUser, isPersonalModelsAllowed, getPersonalModelLimit } from "../db.js";
+import { createHmac, timingSafeEqual } from "node:crypto";
+import { getUserStrict, upsertUser, isPersonalModelsAllowed, getPersonalModelLimit } from "../db.js";
 import { now, isAdmin } from "../utils.js";
 
 const INIT_DATA_MAX_AGE_MS = 3600000; // 1 hour
@@ -29,7 +29,11 @@ export function validateInitData(initData, botToken) {
     const secretKey = createHmac("sha256", "WebAppData").update(botToken).digest();
     const computedHash = createHmac("sha256", secretKey).update(dataCheckString).digest("hex");
 
-    if (computedHash !== hash) return null;
+    // Constant-time compare so the signature cannot be recovered byte-by-byte
+    // from response timing.
+    const a = Buffer.from(computedHash, "utf8");
+    const b = Buffer.from(String(hash), "utf8");
+    if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
 
     const authDate = params.get("auth_date");
     if (!authDate) return null;
@@ -75,7 +79,27 @@ export async function handleAuth(env, initData) {
     });
   }
 
-  const user = await getUser(env, validated.userId);
+  // A first-time Mini App user has no `users` row yet. Without this upsert every
+  // /api/chat and /api/user/profile call answered 404 until the user happened to
+  // send a normal Telegram message first.
+  let user = null;
+  try {
+    await upsertUser(env, {
+      id: validated.userId,
+      first_name: validated.firstName,
+      last_name: validated.lastName,
+      username: validated.username,
+      language_code: validated.languageCode
+    });
+    user = await getUserStrict(env, validated.userId);
+  } catch (err) {
+    console.error("handleAuth upsertUser failed:", err.message);
+    return new Response(JSON.stringify({ error: "Database unavailable" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+
   const adminStatus = isAdmin(env, validated.userId);
   const personalAllowed = adminStatus || await isPersonalModelsAllowed(env);
   const personalLimit = await getPersonalModelLimit(env);

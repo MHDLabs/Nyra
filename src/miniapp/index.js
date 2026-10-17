@@ -22,7 +22,7 @@ export {
 
 export {
   handleAdminStats, handleAdminUsers, handleAdminChats, handleAdminSettings,
-  handleAdminUpdateSettings
+  handleAdminUpdateSettings, handleAdminConnectionUsage
 } from "./admin.js";
 
 export {
@@ -33,6 +33,12 @@ export {
 export {
   handleAdminFailedUpdates, handleReplayFailedUpdate
 } from "./dlq-api.js";
+
+export {
+  handleUserMemory, handleSetMemoryMode, handleClearMemory,
+  handlePersonalities, handleSetPersonality, handleCustomInstructions,
+  handleAdminConnectionToggle
+} from "./preferences.js";
 
 export {
   routeMiniAppAPI

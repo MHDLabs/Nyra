@@ -3,7 +3,7 @@
  * Failed updates are stored in D1 for admin review and optional manual replay.
  */
 
-import { now } from "./utils.js";
+import { now, truncate } from "./utils.js";
 
 /**
  * Log a failed queue message to the database.
@@ -43,12 +43,19 @@ export async function listFailedUpdates(env, limit = 50, offset = 0) {
   const countResult = await env.DB.prepare("SELECT COUNT(*) as total FROM failed_updates").first();
   const total = countResult?.total || 0;
 
+  // `error_info` is returned too: without it the admin UI showed a bare list
+  // with no way to tell what actually failed. It is truncated per row so a
+  // single huge payload cannot blow up the response.
   const results = await env.DB.prepare(
-    "SELECT id, update_id, user_id, chat_id, message_text, created_at, replayed_at FROM failed_updates ORDER BY created_at DESC LIMIT ? OFFSET ?"
+    "SELECT id, update_id, user_id, chat_id, message_text, error_info, created_at, replayed_at FROM failed_updates ORDER BY created_at DESC LIMIT ? OFFSET ?"
   ).bind(limit, offset).all();
 
+  const items = (results.results || []).map(function (row) {
+    return Object.assign({}, row, { error_info: truncate(row.error_info || "", 1000) });
+  });
+
   return {
-    items: results.results || [],
+    items,
     total,
     limit,
     offset

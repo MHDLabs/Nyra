@@ -1,47 +1,56 @@
 // Broadcast management over the admin API: create, list, pause/resume,
-// cancel, and per-broadcast delivery stats.
-import { createBroadcast, startBroadcast, pauseBroadcast, resumeBroadcast, cancelBroadcast, listBroadcasts, getBroadcast, getBroadcastStats } from "../broadcast.js";
+// cancel, per-broadcast delivery stats, and a recipient-count preview so an
+// admin can see the blast radius before starting a campaign.
+import { createBroadcast, startBroadcast, pauseBroadcast, resumeBroadcast, cancelBroadcast, listBroadcasts, getBroadcast, getBroadcastStats, calculateBroadcastTargets } from "../broadcast.js";
+import { jsonOk, jsonError } from "./respond.js";
 
-/**
- * Handle broadcast list
- */
+const TARGET_TYPES = ["all_users", "all_chats", "active_users"];
+
+/** Handle broadcast list. */
 export async function handleAdminBroadcasts(env, page = 0) {
-  const result = await listBroadcasts(env, page, 20);
-  return new Response(JSON.stringify(result), {
-    status: 200,
-    headers: { "Content-Type": "application/json" }
-  });
-}
-
-/**
- * Handle create broadcast
- */
-export async function handleCreateBroadcast(env, userId, body) {
   try {
-    const { message, targetType, targetFilter } = body;
-    if (!message || !targetType) {
-      return new Response(JSON.stringify({ error: "Missing required fields" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" }
-      });
-    }
-
-    const result = await createBroadcast(env, userId, message, targetType, targetFilter);
-    return new Response(JSON.stringify(result), {
-      status: 200,
-      headers: { "Content-Type": "application/json" }
-    });
+    const result = await listBroadcasts(env, page, 20);
+    return jsonOk(result);
   } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" }
-    });
+    console.error("handleAdminBroadcasts failed:", err.message);
+    return jsonError(500, "Failed to load broadcasts");
   }
 }
 
-/**
- * Handle broadcast action (start/pause/resume/cancel)
- */
+/** Handle create broadcast. */
+export async function handleCreateBroadcast(env, userId, body) {
+  try {
+    const message = body ? body.message : "";
+    const targetType = body ? body.targetType : "";
+    const targetFilter = body ? body.targetFilter : null;
+    if (!message || !targetType) return jsonError(400, "Missing required fields");
+    if (TARGET_TYPES.indexOf(targetType) === -1) return jsonError(400, "Invalid target type");
+    if (String(message).length > 4096) return jsonError(400, "Message too long (max 4096 characters)");
+
+    const result = await createBroadcast(env, userId, message, targetType, targetFilter);
+    return jsonOk(result);
+  } catch (err) {
+    console.error("handleCreateBroadcast failed:", err.message);
+    // `createBroadcast` throws "Unauthorized" for non-admins.
+    const status = err.message === "Unauthorized" ? 403 : 500;
+    return jsonError(status, err.message || "Failed to create broadcast");
+  }
+}
+
+/** How many recipients a target selection would reach. */
+export async function handleBroadcastPreview(env, body) {
+  try {
+    const targetType = body ? body.targetType : "";
+    if (TARGET_TYPES.indexOf(targetType) === -1) return jsonError(400, "Invalid target type");
+    const targets = await calculateBroadcastTargets(env, targetType, body ? body.targetFilter : null);
+    return jsonOk({ count: targets.length });
+  } catch (err) {
+    console.error("handleBroadcastPreview failed:", err.message);
+    return jsonError(500, "Failed to count recipients");
+  }
+}
+
+/** Handle broadcast action (start/pause/resume/cancel). */
 export async function handleBroadcastAction(env, ctx, broadcastId, action, userId) {
   try {
     let result;
@@ -54,46 +63,27 @@ export async function handleBroadcastAction(env, ctx, broadcastId, action, userI
     } else if (action === "cancel") {
       result = await cancelBroadcast(env, broadcastId, userId);
     } else {
-      return new Response(JSON.stringify({ error: "Invalid action" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" }
-      });
+      return jsonError(400, "Invalid action");
     }
-
-    return new Response(JSON.stringify(result), {
-      status: 200,
-      headers: { "Content-Type": "application/json" }
-    });
+    return jsonOk(result);
   } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" }
-    });
+    console.error("handleBroadcastAction failed:", err.message);
+    const status = err.message === "Unauthorized" ? 403
+      : err.message === "Broadcast not found" ? 404
+      : 400;
+    return jsonError(status, err.message || "Broadcast action failed");
   }
 }
 
-/**
- * Handle get broadcast details
- */
+/** Handle get broadcast details. */
 export async function handleGetBroadcast(env, broadcastId) {
   try {
     const broadcast = await getBroadcast(env, broadcastId);
-    if (!broadcast) {
-      return new Response(JSON.stringify({ error: "Broadcast not found" }), {
-        status: 404,
-        headers: { "Content-Type": "application/json" }
-      });
-    }
-
+    if (!broadcast) return jsonError(404, "Broadcast not found");
     const stats = await getBroadcastStats(env, broadcastId);
-    return new Response(JSON.stringify({ broadcast, stats }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" }
-    });
+    return jsonOk({ broadcast, stats });
   } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" }
-    });
+    console.error("handleGetBroadcast failed:", err.message);
+    return jsonError(500, "Failed to load broadcast");
   }
 }

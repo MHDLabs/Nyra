@@ -50,14 +50,18 @@ export async function calculateBroadcastTargets(env, targetType, targetFilter) {
   let query;
   let params = [];
 
+  // `users` has no `enabled` column (only `chats` does) — the old
+  // `WHERE enabled = 1` made every broadcast throw. Blocked users are excluded
+  // instead, and `now()` returns SECONDS, so the cutoff must be in seconds too
+  // (it used to subtract milliseconds and match everyone).
   if (targetType === "all_users") {
-    query = "SELECT telegram_id FROM users WHERE enabled = 1";
+    query = "SELECT telegram_id FROM users WHERE telegram_id NOT IN (SELECT telegram_id FROM blocked_users)";
   } else if (targetType === "all_chats") {
     query = "SELECT chat_id FROM chats WHERE enabled = 1 AND (chat_type = 'group' OR chat_type = 'supergroup')";
   } else if (targetType === "active_users") {
-    // Users who sent a message in last 30 days
-    const cutoff = now() - (30 * 24 * 60 * 60 * 1000);
-    query = "SELECT DISTINCT telegram_id FROM users WHERE enabled = 1 AND updated_at > ?";
+    // Users who were seen in the last 30 days.
+    const cutoff = now() - (30 * 24 * 60 * 60);
+    query = "SELECT DISTINCT telegram_id FROM users WHERE last_seen_at > ? AND telegram_id NOT IN (SELECT telegram_id FROM blocked_users)";
     params = [cutoff];
   } else {
     throw new Error("Invalid target type");
@@ -175,10 +179,12 @@ async function processBroadcast(env, broadcastId) {
             break;
           }
 
-          // Send message
-          const result = await sendMessage(env, recipientId, broadcast.message, { parse_mode: "HTML" });
+          // Send message. `sendMessage` resolves to a BOOLEAN, so the old
+          // `result.ok` check was always falsy and every recipient was
+          // recorded as failed.
+          const sent = await sendMessage(env, recipientId, broadcast.message, { parse_mode: "HTML" });
           
-          if (result && result.ok) {
+          if (sent) {
             // Mark as sent
             await env.DB.prepare(`
               UPDATE broadcast_recipients 

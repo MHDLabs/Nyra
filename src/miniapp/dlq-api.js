@@ -2,6 +2,7 @@
 // queue consumer now actually persists failures — see `logFailedUpdate` in
 // src/index.js.
 import { listFailedUpdates, replayFailedUpdate } from "../dlq.js";
+import { jsonOk, jsonError } from "./respond.js";
 
 /**
  * Handle admin failed updates list
@@ -10,15 +11,9 @@ export async function handleAdminFailedUpdates(env, page = 0, limit = 50) {
   try {
     const offset = page * limit;
     const result = await listFailedUpdates(env, limit, offset);
-    return new Response(JSON.stringify(result), {
-      status: 200,
-      headers: { "Content-Type": "application/json" }
-    });
+    return jsonOk(result);
   } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" }
-    });
+    return jsonError(500, err.message || "Failed to load failed updates");
   }
 }
 
@@ -27,29 +22,13 @@ export async function handleAdminFailedUpdates(env, page = 0, limit = 50) {
  */
 export async function handleReplayFailedUpdate(env, id) {
   try {
-    if (!id) {
-      return new Response(JSON.stringify({ error: "Missing id" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" }
-      });
-    }
+    if (!id) return jsonError(400, "Missing id");
 
     const success = await replayFailedUpdate(env, id);
-    if (!success) {
-      return new Response(JSON.stringify({ error: "Failed to replay update" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" }
-      });
-    }
+    if (!success) return jsonError(400, "Failed to replay update");
 
-    return new Response(JSON.stringify({ success: true }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" }
-    });
+    return jsonOk({ success: true });
   } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" }
-    });
+    return jsonError(500, err.message || "Failed to replay update");
   }
 }

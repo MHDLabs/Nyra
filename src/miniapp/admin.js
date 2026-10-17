@@ -2,6 +2,7 @@
 // and per-connection usage metrics. Reachability is enforced once, in the
 // router, before any of these run.
 import { getAllConnectionUsageStats, setSetting, isPersonalModelsAllowed, getPersonalModelLimit } from "../db.js";
+import { jsonOk, jsonError } from "./respond.js";
 
 /**
  * Get admin statistics
@@ -14,14 +15,11 @@ export async function handleAdminStats(env) {
     env.DB.prepare("SELECT SUM(request_count) as total_reqs FROM connection_usage").first().catch(() => ({ total_reqs: 0 }))
   ]);
 
-  return new Response(JSON.stringify({
+  return jsonOk({
     users: users?.count || 0,
     chats: chats?.count || 0,
     requests: usageRow?.total_reqs || 0,
     connections: connections?.count || 0
-  }), {
-    status: 200,
-    headers: { "Content-Type": "application/json" }
   });
 }
 
@@ -44,14 +42,11 @@ export async function handleAdminUsers(env, page = 0, limit = 50) {
 
   const total = await env.DB.prepare("SELECT COUNT(*) as count FROM users").first();
 
-  return new Response(JSON.stringify({
+  return jsonOk({
     users: users.results || [],
     total: total?.count || 0,
     page: page,
     hasMore: (offset + limit) < (total?.count || 0)
-  }), {
-    status: 200,
-    headers: { "Content-Type": "application/json" }
   });
 }
 
@@ -75,14 +70,11 @@ export async function handleAdminChats(env, page = 0, limit = 50) {
 
   const total = await env.DB.prepare("SELECT COUNT(*) as count FROM chats").first();
 
-  return new Response(JSON.stringify({
+  return jsonOk({
     chats: chats.results || [],
     total: total?.count || 0,
     page: page,
     hasMore: (offset + limit) < (total?.count || 0)
-  }), {
-    status: 200,
-    headers: { "Content-Type": "application/json" }
   });
 }
 
@@ -115,14 +107,8 @@ export async function handleAdminUpdateSettings(env, userId, body) {
 export async function handleAdminConnectionUsage(env, days = 7) {
   try {
     const stats = await getAllConnectionUsageStats(env, days);
-    return new Response(JSON.stringify({ stats, days }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" }
-    });
+    return jsonOk({ stats, days });
   } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" }
-    });
+    return jsonError(500, err.message || "Failed to load connection usage");
   }
 }
