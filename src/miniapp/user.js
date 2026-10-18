@@ -134,13 +134,16 @@ export async function handleChatMessage(env, ctx, userId, message) {
     let usedConn = null;
     let usage = null;
     let category = null;
+    let failedConn = null;
+    let failedError = null;
     for await (const event of tryStreamWithFallback(env, user, messages, streamOptions)) {
       if (event.type === "text") reply += event.text;
       else if (event.type === "done") { usedConn = event.connection; usage = event.usage || null; }
-      else if (event.type === "error") category = event.category;
+      else if (event.type === "error") { category = event.category; failedConn = event.connection || null; failedError = event.error || null; }
     }
 
     if (!reply) {
+      console.error("Mini App AI request failed:", JSON.stringify({ connectionId: failedConn && failedConn.connection_id, provider: failedConn && failedConn.provider, model: failedConn && failedConn.model, category: category || "unknown", status: failedError && failedError.status || null, providerType: failedError && failedError.providerType || null, providerCode: failedError && failedError.providerCode || null, providerMessage: failedError && failedError.providerMessage ? String(failedError.providerMessage).slice(0, 160) : null }));
       updateUsageStatsAsync(env, ctx, userId, false, category || "unknown", null);
       return jsonError(502, humanizeError(category || "unknown"));
     }
