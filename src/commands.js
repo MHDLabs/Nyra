@@ -7,6 +7,7 @@ import { getUser, upsertUser, resolveUserActiveConnection } from "./db.js";
 import { parseMemoryData, serializeMemoryData, formatMemoryForUser } from "./memory.js";
 import { showNoConnectionMessage, showSettingsMenu, showPersonalitiesForUser, showUsage } from "./menus.js";
 import { createBroadcast, startBroadcast, cancelBroadcast, listBroadcasts, calculateBroadcastTargets } from "./broadcast.js";
+import { getAllowedReactions, getConfiguredReactions, setConfiguredReactions, clearConfiguredReactions } from "./reactions.js";
 
 async function handleStartCommand(env, chatId, userId) {
   const user = await getUser(env, userId);
@@ -240,6 +241,7 @@ export async function showAdminMenu(env, chatId, messageId) {
     [{ text: "👥 Users", callback_data: "adm:users" }, { text: "💬 Groups", callback_data: "adm:groups" }],
     [{ text: "🚫 Blocked", callback_data: "adm:blocked" }, { text: "📊 Stats", callback_data: "adm:stats" }],
     [{ text: "🤖 Models", callback_data: "adm:conns" }, { text: "💚 Status", callback_data: "adm:status" }],
+    [{ text: "😀 Reactions", callback_data: "adm:react" }],
     [{ text: "Close", callback_data: "adm:close" }]
   ];
   await editMessage(env, chatId, messageId, text, buildInlineKeyboard(rows), "HTML");
@@ -324,6 +326,31 @@ export async function showAdminStatus(env, chatId, messageId) {
   const encOk = !!getMasterKey(env);
   const text = "<b>System Status</b>\n\nD1: " + (dbOk ? "OK" : "FAIL") + "\nKV: " + (kvOk ? "OK" : "FAIL") + "\nEncryption key: " + (encOk ? "OK" : "MISSING") + "\nTimestamp: " + new Date().toISOString();
   await editMessage(env, chatId, messageId, text, buildInlineKeyboard([[{ text: "Back", callback_data: "adm:main" }]]), "HTML");
+}
+
+/**
+ * Reactions section of the admin panel: shows the emoji the bot is currently
+ * allowed to react with, and which ones Telegram has refused in recent chats.
+ * Responds to an emoji message from the admin by filtering the allowlist.
+ */
+export async function showAdminReactions(env, chatId, messageId) {
+  const configured = await getConfiguredReactions(env);
+  const allowed = await getAllowedReactions(env, null);
+  const lines = [
+    "<b>Reactions</b>", "",
+    "Source: <b>" + (configured ? "custom" : "defaults") + "</b>",
+    "Allowed: " + (allowed.join(" ") || "(none)"),
+    "",
+    "<i>Nyra only reacts in groups when she is named, and stays silent when no reaction clearly fits.</i>",
+    "",
+    "Send the emoji Nyra may use — e.g. <code>👍 ❤ 🤔</code> — one message, space or comma separated.",
+    "Send <code>default</code> to restore the built-in set."
+  ];
+  const buttons = [
+    [{ text: "Restore defaults", callback_data: "adm:react:default" }],
+    [{ text: "Back", callback_data: "adm:main" }]
+  ];
+  await editMessage(env, chatId, messageId, lines.join("\n"), buildInlineKeyboard(buttons), "HTML");
 }
 
 export async function handleUserCommand(env, ctx, command, args, message, from, chat) {

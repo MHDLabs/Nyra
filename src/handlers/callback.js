@@ -9,7 +9,8 @@ import { getUser, getFlowState, setFlowState, clearFlowState, getUserConnectionB
 import { humanizeError, testUserConnectionById } from "../ai.js";
 import { showSettingsMenu, showModelList, showPersonalitiesForUser, showMyPersonalities, showPersonalityDetail, showMemorySubmenu, showCustomInstructionsMenu, showUsage, showPrivacy, sourceSuffix, sourceBackButton, showMyConnections, resolveUserConnectionShortId, showRoutesList, showRouteDetail, resolveRouteShortId, resolveRouteItemShortId, showPersonalModelsMenu } from "../menus.js";
 import { startAddConnectionFlow, startEditConnectionFlow, flowPromptLabel, flowPromptApiKey, handleFlowSkip, flowFetchModels, showModelPage, flowSelectModel, finalizeConnectionFromFlow, startAddRouteFlow, startEditRouteFlow, routePromptBaseUrl, routePromptModels, routePromptReview, finalizeRouteFromFlow } from "../flows.js";
-import { showAdminMenu, showAdminUsers, showAdminGroups, showAdminBlocked, showAdminStats, showAdminStatus } from "../commands.js";
+import { showAdminMenu, showAdminUsers, showAdminGroups, showAdminBlocked, showAdminStats, showAdminStatus, showAdminReactions } from "../commands.js";
+import { setConfiguredReactions, clearConfiguredReactions } from "../reactions.js";
 
 export async function handleCallbackQuery(env, ctx, query) {
   const data = query.data || "";
@@ -362,14 +363,21 @@ export async function handleCallbackQuery(env, ctx, query) {
     const action = parts[2];
     const target = parts[3];
     try {
-      if (section === "main") { await showAdminMenu(env, chatId, messageId); }
+      if (section === "main") { await clearFlowState(env, userId); await showAdminMenu(env, chatId, messageId); }
       else if (section === "users") { await showAdminUsers(env, chatId, messageId); }
       else if (section === "groups") { await showAdminGroups(env, chatId, messageId); }
       else if (section === "blocked") { await showAdminBlocked(env, chatId, messageId); }
       else if (section === "stats") { await showAdminStats(env, chatId, messageId); }
       else if (section === "conns") { await showMyConnections(env, chatId, messageId, userId, "adm"); }
       else if (section === "status") { await showAdminStatus(env, chatId, messageId); }
-      else if (section === "close") { await editMessage(env, chatId, messageId, "Closed."); }
+      else if (section === "react") {
+        // Opening the section arms a flow so the admin's next plain message is
+        // parsed as the allowlist; restoring defaults disarms it again.
+        if (action === "default") { await clearConfiguredReactions(env); await clearFlowState(env, userId); }
+        else await setFlowState(env, userId, { flowType: "reaction_config" });
+        await showAdminReactions(env, chatId, messageId);
+      }
+      else if (section === "close") { await clearFlowState(env, userId); await editMessage(env, chatId, messageId, "Closed."); }
       else if (section === "group") {
         if (action === "add") {
           await setFlowState(env, userId, { step: "admin_group_add", flowType: "admin" });

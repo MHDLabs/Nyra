@@ -7,7 +7,7 @@ import { tg, sendMessage, deleteMessage, buildInlineKeyboard } from "../telegram
 import { getBotIdentity, getChat, recordGroupChatAndCheckAccess, isUserBlocked, isGroupTrigger, determineThreadId, getFlowState, clearFlowState, addRouteModel, addRouteToken } from "../db.js";
 import { handleFlowMessage } from "../flows.js";
 import { handleUserCommand } from "../commands.js";
-import { shouldReact, trySetReaction } from "../reactions.js";
+import { shouldReact, trySetReaction, extractMessageText, setConfiguredReactions, clearConfiguredReactions } from "../reactions.js";
 import { handleAIMessage } from "./ai-message.js";
 import { parseCommand } from "./command-parse.js";
 
@@ -30,6 +30,23 @@ export async function processMessage(env, ctx, message) {
     if (flowState) {
       if (/^\/cancel(@\w+)?$/i.test(text)) { await clearFlowState(env, from.id); await sendMessage(env, chat.id, "Cancelled."); return; }
       if (text.startsWith("/")) { await clearFlowState(env, from.id); }
+      // Reaction allowlist: the admin panel arms this flow, then the next plain
+      // message holds the emoji Nyra may react with. "default" clears the
+      // override so the built-in set applies again.
+      else if (flowState.flowType === "reaction_config") {
+        if (!isAdmin(env, from.id)) { await clearFlowState(env, from.id); return; }
+        if (/^(default|reset|پیش\u200c?فرض)$/i.test(text.trim())) {
+          await clearConfiguredReactions(env);
+          await clearFlowState(env, from.id);
+          await sendMessage(env, chat.id, "✅ Reaction allowlist reset to the built-in emoji.", { reply_markup: buildInlineKeyboard([[{ text: "Reactions", callback_data: "adm:react" }]]) });
+          return;
+        }
+        const parsed = await setConfiguredReactions(env, text);
+        if (!parsed.allowed.length) { await sendMessage(env, chat.id, "None of those are valid Telegram reactions. Example: 👍 ❤ 🤔"); return; }
+        await clearFlowState(env, from.id);
+        await sendMessage(env, chat.id, "✅ Nyra may now react with: " + parsed.allowed.join(" ") + (parsed.ignored ? "\n\nIgnored " + parsed.ignored + " emoji Telegram does not accept." : ""), { reply_markup: buildInlineKeyboard([[{ text: "Reactions", callback_data: "adm:react" }]]) });
+        return;
+      }
       else if (flowState.step === "admin_group_add") {
         if (!isAdmin(env, from.id)) { await clearFlowState(env, from.id); return; }
         if (!/^-?\d+$/.test(text)) { await sendMessage(env, chat.id, "That's not a valid numeric chat ID."); return; }
@@ -93,10 +110,10 @@ export async function processMessage(env, ctx, message) {
   if (!hasContent) return;
 
   if (isGroup) {
-    // Try to set reaction (independent, fire-and-forget)
-    if (shouldReact(message, true)) {
-      const reactionText = message.text || message.caption || "";
-      trySetReaction(env, ctx, chat.id, message.message_id, reactionText);
+    // Try to set reaction (independent, fire-and-forget). The Chat object is
+    // passed so the classifier can honour per-chat allowed reactions.
+    if (shouldReact(message, chat)) {
+      trySetReaction(env, ctx, chat, message.message_id, extractMessageText(message));
     }
     
     const identity = await getBotIdentity(env);
