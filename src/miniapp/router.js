@@ -78,7 +78,7 @@ export async function routeMiniAppAPI(env, ctx, request, pathname) {
 
     if (path === "/api/chat" && request.method === "POST") {
       const body = await readBody(request);
-      return await handleChatMessage(env, ctx, userId, body.message);
+      return await handleChatMessage(env, ctx, userId, body.message, request);
     }
 
     // User model + route endpoints

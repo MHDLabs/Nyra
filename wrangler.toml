@@ -13,6 +13,15 @@ compatibility_flags = ["nodejs_compat"]
 # without any custom domain.
 workers_dev = true
 
+# Smart Placement moves execution to the data center closest to the backend the
+# Worker talks to. Every real request here ends in an outbound call to the AI
+# provider, and some providers (Groq among them) reject requests originating from
+# certain networks. Running next to the provider instead of next to the visitor
+# keeps the provider hop on a provider-friendly egress path, which matters most
+# for visitors connecting from regions where the provider is filtered.
+[placement]
+mode = "smart"
+
 # Static assets — the Mini App lives in ./public and is served by Cloudflare's
 # native asset layer (no inlined copy in the Worker bundle). Requests under
 # run_worker_first still go to the Worker first so the secret gate, the Telegram

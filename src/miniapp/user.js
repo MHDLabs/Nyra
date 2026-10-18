@@ -114,7 +114,7 @@ export async function handleUserStats(env, userId) {
  * and long-term memory consolidation run here. Skipping them meant Mini App
  * turns were invisible in /usage and never reached memory.
  */
-export async function handleChatMessage(env, ctx, userId, message) {
+export async function handleChatMessage(env, ctx, userId, message, request) {
   const text = (message || "").toString().trim();
   if (!text) return jsonError(400, "Empty message");
 
@@ -151,7 +151,11 @@ export async function handleChatMessage(env, ctx, userId, message) {
     }
 
     if (!reply) {
-      console.error("Mini App AI request failed:", JSON.stringify({ connectionId: failedConn && failedConn.connection_id, provider: failedConn && failedConn.provider, model: failedConn && failedConn.model, category: category || "unknown", status: failedError && failedError.status || null, providerType: failedError && failedError.providerType || null, providerCode: failedError && failedError.providerCode || null, providerMessage: failedError && failedError.providerMessage ? String(failedError.providerMessage).slice(0, 160) : null }));
+      // `colo` is the data center that ran this request: the outbound provider
+      // call egresses from there, so a bare 403 from the provider with no code is
+      // usually the network path rather than the key. Recording it here makes
+      // that distinguishable from a real authorization failure.
+      console.error("Mini App AI request failed:", JSON.stringify({ connectionId: failedConn && failedConn.connection_id, provider: failedConn && failedConn.provider, model: failedConn && failedConn.model, category: category || "unknown", status: failedError && failedError.status || null, providerType: failedError && failedError.providerType || null, providerCode: failedError && failedError.providerCode || null, providerMessage: failedError && failedError.providerMessage ? String(failedError.providerMessage).slice(0, 160) : null, colo: request && request.cf ? request.cf.colo : null }));
       updateUsageStatsAsync(env, ctx, userId, false, category || "unknown", null);
       return jsonError(502, humanizeError(category || "unknown"));
     }
