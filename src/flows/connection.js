@@ -9,7 +9,11 @@ import { sendMessage, deleteMessage, buildInlineKeyboard } from "../telegram.js"
 import { setFlowState, clearFlowState, getUserConnectionById, saveGlobalConnection, updateUserConnection, setDefaultConnection, isPersonalModelsAllowed, getPersonalModelLimit, countPersonalConnections } from "../db.js";
 import { humanizeError, testConnectionRaw } from "../ai.js";
 import { sourceSuffix } from "../menus.js";
-import { flowPromptCapabilities } from "./connection-prompts.js";
+import {
+  flowPromptDescription, flowPromptBaseUrl, flowPromptApiKey,
+  flowPromptModel, flowPromptReview, flowPromptCapabilities
+} from "./connection-prompts.js";
+import { isEditStep } from "./model-picker.js";
 import { handleRouteFlowStep } from "./route.js";
 
 export async function startAddConnectionFlow(env, chatId, userId, source) {

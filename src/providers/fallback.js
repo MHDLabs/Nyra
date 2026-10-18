@@ -9,7 +9,7 @@ import { decryptCredential } from "../crypto.js";
 import { sendMessage } from "../telegram.js";
 import { getEnabledUserConnections, recordConnectionFailure, recordConnectionSuccess, resolveUserActiveRoute, buildRoutePlan, recordRouteTokenFailure, recordRouteTokenSuccess } from "../db.js";
 import { decideNextAction, brainInputFromError } from "../brain.js";
-import { normalizeError, isRetryableCategory } from "./errors.js";
+import { normalizeError, humanizeError, isRetryableCategory } from "./errors.js";
 import { generateOpenAICompatible } from "./openai.js";
 import { generateAnthropic } from "./anthropic.js";
 import { streamProviderResponse } from "./stream.js";

@@ -6,6 +6,7 @@ import { AI_TEST_TIMEOUT_MS, ANTHROPIC_DEFAULT_URL } from "../config.js";
 import { fetchWithTimeout } from "../utils.js";
 import { parseProviderError, normalizeError } from "./errors.js";
 import { toAnthropicContent } from "./content.js";
+import { buildProviderHeaders } from "./openai.js";
 
 export async function generateAnthropic(connection, apiKey, messages, options, timeoutMs) {
   const baseUrl = (connection.base_url || ANTHROPIC_DEFAULT_URL).replace(/\/+$/, "");

@@ -4,7 +4,7 @@
 // dialect.
 import { AI_TEST_TIMEOUT_MS, OPENAI_DEFAULT_URL, ANTHROPIC_VERSION, APP_TITLE } from "../config.js";
 import { isOpenRouterUrl, fetchWithTimeout } from "../utils.js";
-import { parseProviderError } from "./errors.js";
+import { parseProviderError, normalizeError } from "./errors.js";
 import { toOpenAIContent } from "./content.js";
 
 export function buildProviderHeaders(provider, apiKey, baseUrl) {
