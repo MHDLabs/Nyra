@@ -1,8 +1,8 @@
 // Self-service user endpoints: profile, usage counters, the Mini App chat
 // box (which runs the real provider pipeline, not a stub), the model picker
 // and the coding-mode switch.
-import { getUserStrict, getUserConnectionById, getEnabledUserConnections, saveThreadMessage, getThreadContext, updateUsageStatsAsync, trackConnectionUsage } from "../db.js";
-import { MEMORY_UPDATE_INTERVAL } from "../config.js";
+import { getUserStrict, getUserConnectionById, getEnabledUserConnections, resolveUserActiveConnection, saveThreadMessage, getThreadContext, updateUsageStatsAsync, trackConnectionUsage } from "../db.js";
+import { MEMORY_UPDATE_INTERVAL, FAST_STREAM_BUDGET_MS, FAST_STALL_TIMEOUT_MS } from "../config.js";
 import { now } from "../utils.js";
 import { tryStreamWithFallback, humanizeError } from "../ai.js";
 import { buildContextMessages, getUserPersonality, incrementMessageCount, consolidateMemory } from "../memory.js";
@@ -26,6 +26,15 @@ function syntheticMessageIds() {
   syntheticTurnSeq = (syntheticTurnSeq + 1) % 1000;
   const base = Date.now() * 1000 + syntheticTurnSeq;
   return { user: -(base * 2), assistant: -(base * 2) + 1 };
+}
+
+export function buildMiniAppStreamOptions(connection) {
+  const options = { max_tokens: 2048, temperature: 0.7 };
+  if (connection && connection.is_fast === 1) {
+    options.totalBudgetMs = FAST_STREAM_BUDGET_MS;
+    options.stallTimeoutMs = FAST_STALL_TIMEOUT_MS;
+  }
+  return options;
 }
 
 /**
@@ -111,16 +120,21 @@ export async function handleChatMessage(env, ctx, userId, message) {
   if (!user) return jsonError(404, "User not found");
 
   try {
+    const resolved = await resolveUserActiveConnection(env, user);
+    const connection = resolved.connection;
+    if (!connection) return jsonError(503, humanizeError("no_connection"));
+
     const personality = await getUserPersonality(env, user);
     const recent = await getThreadContext(env, userId, userId);
     const history = Array.isArray(recent) ? recent : [];
     const messages = buildContextMessages(personality, user, null, history, text, user.memory_mode || "normal");
+    const streamOptions = buildMiniAppStreamOptions(connection);
 
     let reply = "";
     let usedConn = null;
     let usage = null;
     let category = null;
-    for await (const event of tryStreamWithFallback(env, user, messages, { totalBudgetMs: 25000, stallTimeoutMs: 15000 })) {
+    for await (const event of tryStreamWithFallback(env, user, messages, streamOptions)) {
       if (event.type === "text") reply += event.text;
       else if (event.type === "done") { usedConn = event.connection; usage = event.usage || null; }
       else if (event.type === "error") category = event.category;
