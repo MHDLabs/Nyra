@@ -93,6 +93,38 @@ export const ROUTE_TOKEN_COOLDOWN_TTL = 300;
 export const SETTING_ALLOW_PERSONAL_MODELS = "allow_personal_models";
 export const SETTING_PERSONAL_MODEL_LIMIT = "personal_model_limit";
 export const DEFAULT_PERSONAL_MODEL_LIMIT = 5;
+
+// --- Tasks & Reminders -----------------------------------------------------
+// Scheduling reuses the existing `*/5 * * * *` cron trigger, so a reminder can
+// be delivered up to one cron interval late. That is the documented precision
+// floor: no sub-5-minute guarantee is made anywhere.
+export const CRON_INTERVAL_MINUTES = 5;
+export const MAX_REMINDER_TITLE = 200;
+export const MAX_REMINDER_DESCRIPTION = 1000;
+export const MAX_REMINDERS_PER_USER = 100;
+export const REMINDER_LIST_PAGE = 8;
+// Delivery batch bounds. One cron tick processes at most this many reminders,
+// and each delivery attempt is a single indexed row update plus one Telegram
+// call — never a long transaction, never an LLM request.
+export const REMINDER_BATCH_SIZE = 15;
+export const REMINDER_MAX_ATTEMPTS = 3;
+// A claim older than this is assumed to belong to a crashed invocation and is
+// returned to the pending pool. Must exceed the worst-case send timeout.
+export const REMINDER_CLAIM_LEASE_S = 300;
+// Delivery retry backoff in seconds, indexed by attempt number (0-based).
+export const REMINDER_RETRY_BACKOFF_S = [60, 300, 900];
+// How long a pending "which time did you mean?" clarification stays armed.
+export const REMINDER_CLARIFY_TTL = 1800;
+export const REMINDER_TIME_BUCKETS = ["minute", "hour", "day", "week", "month", "year"];
+export const REMINDER_STATUSES = ["pending", "processing", "sent", "completed", "cancelled", "failed"];
+// Offered as one-tap timezone buttons. Never applied automatically: a user with
+// no stored timezone is always asked before their first reminder is scheduled.
+export const REMINDER_TZ_SUGGESTIONS = [
+  "Asia/Tehran", "Asia/Kabul", "Asia/Baghdad", "Asia/Dubai",
+  "Europe/Istanbul", "Europe/London", "Europe/Berlin", "America/New_York", "UTC"
+];
+export const REMINDER_TZ_HINT_FOR_LANGUAGE = { fa: "Asia/Tehran", ps: "Asia/Kabul", ar: "Asia/Riyadh", tr: "Europe/Istanbul" };
+
 // --- Workers AI error brain ------------------------------------------------
 // The brain reads a provider error and picks the recovery action (retry the
 // same endpoint, fail over to the next token/model, or give up). Its verdicts

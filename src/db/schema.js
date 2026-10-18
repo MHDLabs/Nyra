@@ -52,7 +52,12 @@ export async function ensureSchema(env) {
     // Whether the model accepts image input. When enabled, photos the user
     // sends (and the current message's images) are attached to the request as
     // OpenAI-style image_url data URLs; otherwise images are described as text.
-    ["ai_connections", "supports_vision", "INTEGER DEFAULT 0"]
+    ["ai_connections", "supports_vision", "INTEGER DEFAULT 0"],
+    // IANA timezone of the user (e.g. "Asia/Tehran"). Reminder instants are
+    // always stored as UTC seconds; this column only preserves the user's
+    // wall-clock context so recurrences and confirmations can be rendered and
+    // recomputed in their own zone instead of the worker's.
+    ["users", "timezone", "TEXT"]
   ];
   for (let i = 0; i < alters.length; i++) {
     const table = alters[i][0];
@@ -128,6 +133,28 @@ const MIGRATIONS = [
     statements: [
       "CREATE TABLE IF NOT EXISTS failed_updates (id INTEGER PRIMARY KEY AUTOINCREMENT, update_id INTEGER NOT NULL, user_id INTEGER, chat_id INTEGER, message_text TEXT, error_info TEXT, created_at INTEGER NOT NULL, replayed_at INTEGER)",
       "CREATE INDEX IF NOT EXISTS idx_failed_updates_created ON failed_updates(created_at DESC)"
+    ]
+  },
+  {
+    id: 5,
+    label: "add reminders and reminder delivery attempts",
+    statements: [
+      // `start_at` is the user-visible first occurrence (UTC seconds).
+      // `next_run_at` is the due instant the scheduler polls — it equals
+      // `start_at` until the reminder fires, then advances to the next
+      // recurrence. Storing both means a recurring reminder never loses its
+      // anchor (so "every month on the 31st" cannot silently drift) and a
+      // completed one keeps the time it was created for.
+      "CREATE TABLE IF NOT EXISTS reminders (id INTEGER PRIMARY KEY AUTOINCREMENT, telegram_id INTEGER NOT NULL, chat_id INTEGER, title TEXT NOT NULL, description TEXT, start_at INTEGER NOT NULL, next_run_at INTEGER NOT NULL, timezone TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', recurrence TEXT, occurrence INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0, claim_token TEXT, claimed_at INTEGER, last_attempt_at INTEGER, last_error TEXT, sent_at INTEGER, completed_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
+      // The due query is `status = 'pending' AND next_run_at <= ?`, so this
+      // index must lead with status; `id` is appended to make the row order
+      // deterministic when two reminders share a due second.
+      "CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(status, next_run_at, id)",
+      // Owner-scoped listing (`/reminders`, Mini App). Ordered by due time so
+      // paging can use a stable keyset instead of OFFSET.
+      "CREATE INDEX IF NOT EXISTS idx_reminders_user ON reminders(telegram_id, status, next_run_at, id)",
+      "CREATE TABLE IF NOT EXISTS reminder_delivery_attempts (id INTEGER PRIMARY KEY AUTOINCREMENT, reminder_id INTEGER NOT NULL, attempt INTEGER NOT NULL, status TEXT NOT NULL, error TEXT, created_at INTEGER NOT NULL)",
+      "CREATE INDEX IF NOT EXISTS idx_reminder_attempts_reminder ON reminder_delivery_attempts(reminder_id, created_at DESC)"
     ]
   }
 ];

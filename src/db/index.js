@@ -8,6 +8,7 @@
 //   connections.js  AI connection CRUD, health, active-connection resolution
 //   routes.js       route (multi-model x multi-token) CRUD, streaming plan
 //   settings.js     global app_settings toggles
+//   reminders.js    owner-scoped scheduled reminders, atomic claim/lease
 
 export {
   ensureSchema, maybeInitSchema
@@ -48,3 +49,11 @@ export {
 export {
   getSetting, setSetting, isPersonalModelsAllowed, getPersonalModelLimit
 } from "./settings.js";
+
+export {
+  hydrateReminder, createReminder, getReminderById, listReminders, countReminders,
+  countActiveReminders, updateReminder, cancelReminder, completeReminder,
+  claimDueReminders, recoverStaleClaims, recordDeliveryAttempt, listDeliveryAttempts,
+  releaseReminderForRetry, failReminderPermanently, settleReminderDelivery,
+  setUserTimezone, getUserTimezone
+} from "./reminders.js";
