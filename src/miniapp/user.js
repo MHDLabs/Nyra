@@ -2,7 +2,7 @@
 // box (which runs the real provider pipeline, not a stub), the model picker
 // and the coding-mode switch.
 import { getUserStrict, getUserConnectionById, getEnabledUserConnections, resolveUserActiveConnection, saveThreadMessage, getThreadContext, updateUsageStatsAsync, trackConnectionUsage } from "../db.js";
-import { MEMORY_UPDATE_INTERVAL, FAST_STREAM_BUDGET_MS, FAST_STALL_TIMEOUT_MS } from "../config.js";
+import { MEMORY_UPDATE_INTERVAL, FAST_STREAM_BUDGET_MS, FAST_STALL_TIMEOUT_MS, AI_STREAM_TOTAL_BUDGET_MS, AI_STREAM_STALL_TIMEOUT_MS } from "../config.js";
 import { now } from "../utils.js";
 import { tryStreamWithFallback, humanizeError } from "../ai.js";
 import { buildContextMessages, getUserPersonality, incrementMessageCount, consolidateMemory } from "../memory.js";
@@ -29,7 +29,15 @@ function syntheticMessageIds() {
 }
 
 export function buildMiniAppStreamOptions(connection) {
-  const options = { max_tokens: 2048, temperature: 0.7 };
+  // The Mini App request remains open while its response is generated, unlike
+  // the webhook fast path whose ctx.waitUntil work is capped at 30 seconds.
+  // Therefore non-fast models should get the normal provider budget.
+  const options = {
+    max_tokens: 2048,
+    temperature: 0.7,
+    totalBudgetMs: AI_STREAM_TOTAL_BUDGET_MS,
+    stallTimeoutMs: AI_STREAM_STALL_TIMEOUT_MS
+  };
   if (connection && connection.is_fast === 1) {
     options.totalBudgetMs = FAST_STREAM_BUDGET_MS;
     options.stallTimeoutMs = FAST_STALL_TIMEOUT_MS;

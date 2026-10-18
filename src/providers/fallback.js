@@ -111,7 +111,9 @@ export async function* tryStreamWithFallback(env, user, messages, options) {
         yield { type: "error", category: lastCategory, error: lastError, connection: lastConn, attempts: totalAttempts, fallbackUsed: !isPrimary, partial: true };
         return;
       }
-      if (!isRetryableCategory(lastCategory)) break;
+      // Non-retryable means do not repeat this same connection. It does not
+      // mean stop the entire chain: the error brain below may rotate to a
+      // different token/model/connection (for example, forbidden → next_token).
     }
 
     if (!isRetryableCategory(lastCategory) && !fallbackEnabled) break;
