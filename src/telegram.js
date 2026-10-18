@@ -2,11 +2,13 @@
 import { TELEGRAM_API, MAX_TELEGRAM_LENGTH, TELEGRAM_TIMEOUT_MS, TELEGRAM_RETRY_MAX, TELEGRAM_RETRY_WAIT_CAP_MS, TYPING_HEARTBEAT_MS, WEBHOOK_RECHECK_MS, WEBHOOK_ATTEMPT_GUARD_MS } from "./config.js";
 import { truncate, sleep, splitForTelegram, fetchWithTimeout } from "./utils.js";
 import { getWebhookSecret } from "./crypto.js";
+import { mdv2ToPlain } from "./markdown.js";
 
 export async function tg(env, method, payload, attempt) {
   const currentAttempt = attempt || 0;
   const url = TELEGRAM_API + "/bot" + env.TELEGRAM_BOT_TOKEN + "/" + method;
   try {
+    enforceTextLimit(method, payload);
     const resp = await fetchWithTimeout(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -25,6 +27,30 @@ export async function tg(env, method, payload, attempt) {
   } catch (err) {
     console.error("Telegram fetch failed [" + method + "]:", err.message);
     return { ok: false, description: err.message };
+  }
+}
+
+/**
+ * Hard, unconditional cap on the outbound text of every Telegram call.
+ *
+ * Telegram rejects any message whose text exceeds MAX_TELEGRAM_LENGTH with
+ * HTTP 400 and the whole message is lost. Callers are expected to split before
+ * they get here, but "expected" is not a guarantee — this is the last gate
+ * before the wire, so no code path, present or future, can send an over-long
+ * payload. `caption` is capped at 1024, the separate (smaller) limit Telegram
+ * applies to media captions. Truncation is applied rather than an error so a
+ * long message degrades to a shorter one instead of vanishing.
+ */
+const TELEGRAM_CAPTION_LIMIT = 1024;
+function enforceTextLimit(method, payload) {
+  if (!payload || typeof payload !== "object") return;
+  if (typeof payload.text === "string" && payload.text.length > MAX_TELEGRAM_LENGTH) {
+    console.error("Telegram payload text truncated [" + method + "]: " + payload.text.length + " -> " + MAX_TELEGRAM_LENGTH);
+    payload.text = truncate(payload.text, MAX_TELEGRAM_LENGTH);
+  }
+  if (typeof payload.caption === "string" && payload.caption.length > TELEGRAM_CAPTION_LIMIT) {
+    console.error("Telegram payload caption truncated [" + method + "]: " + payload.caption.length + " -> " + TELEGRAM_CAPTION_LIMIT);
+    payload.caption = truncate(payload.caption, TELEGRAM_CAPTION_LIMIT);
   }
 }
 
@@ -166,6 +192,10 @@ function isParseError(result) {
   return d.indexOf("parse") !== -1 || d.indexOf("entity") !== -1 || d.indexOf("tag") !== -1;
 }
 
+function isMarkdownV2(parseMode) {
+  return String(parseMode || "").toLowerCase() === "markdownv2";
+}
+
 // Container/extension → media type, for images the user sends as a document.
 const IMAGE_MEDIA_TYPES = {
   png: "image/png",
@@ -249,6 +279,11 @@ export async function sendMessageReturn(env, chatId, text, options) {
     if (opts.reply_to_message_id && i === 0) payload.reply_to_message_id = opts.reply_to_message_id;
     let result = await tg(env, "sendMessage", payload);
     if (isParseError(result) && payload.parse_mode) {
+      // A refused entity must not cost the user the message. Drop the markup and
+      // strip the escape backslashes so the text arrives readable rather than
+      // with visible "\." sequences.
+      payload.text = isMarkdownV2(payload.parse_mode) ? mdv2ToPlain(payload.text) : payload.text;
+      if (payload.text.length > MAX_TELEGRAM_LENGTH) payload.text = payload.text.slice(0, MAX_TELEGRAM_LENGTH);
       delete payload.parse_mode;
       result = await tg(env, "sendMessage", payload);
     }
@@ -294,6 +329,8 @@ export async function editMessage(env, chatId, messageId, text, replyMarkup, par
   if (parseMode) payload.parse_mode = parseMode;
   let result = await tg(env, "editMessageText", payload);
   if (isParseError(result) && payload.parse_mode) {
+    payload.text = isMarkdownV2(payload.parse_mode) ? mdv2ToPlain(payload.text) : payload.text;
+    if (payload.text.length > MAX_TELEGRAM_LENGTH) payload.text = payload.text.slice(0, MAX_TELEGRAM_LENGTH);
     delete payload.parse_mode;
     result = await tg(env, "editMessageText", payload);
   }

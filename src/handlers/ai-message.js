@@ -3,13 +3,13 @@
 // surfacing. This is the single most performance-sensitive path in the bot —
 // it runs inside the queue consumer, never inside the webhook request.
 import { MAX_TELEGRAM_LENGTH, MEMORY_UPDATE_INTERVAL, RATE_LIMIT_USER_PER_MIN, RATE_LIMIT_USER_PER_HOUR, RATE_LIMIT_CHAT_PER_HOUR, UNHEALTHY_FAILURE_THRESHOLD, UNHEALTHY_WARN_TTL, STREAM_EDIT_THROTTLE_MS, STREAM_PLACEHOLDER, FAST_STREAM_BUDGET_MS, FAST_STALL_TIMEOUT_MS } from "../config.js";
-import { now, escapeHtml, stripTelegramHtml, buildUserContent, checkRateLimit } from "../utils.js";
+import { now, escapeHtml, buildUserContent, checkRateLimit } from "../utils.js";
 import { sendMessageReturn, sendMessage, sendMessageSafeResult, editMessage, deleteMessage, startTypingHeartbeat, pickImageFile, downloadTelegramFile } from "../telegram.js";
 import { getUser, upsertUser, getChat, saveThreadMessage, getThreadContext, updateUsageStatsAsync, resolveUserActiveConnection, trackConnectionUsage } from "../db.js";
 import { normalizeError, humanizeError, shouldNotifyAdmin, tryStreamWithFallback, notifyAdminOnError } from "../ai.js";
 import { buildContextMessages, getUserPersonality, consolidateMemory, consolidateChatSummary, incrementMessageCount } from "../memory.js";
 import { showNoConnectionMessage } from "../menus.js";
-import { safeFormat } from "../formatter.js";
+import { safeFormatChunks, plainText, plainTextChunks } from "../formatter.js";
 
 export async function handleAIMessage(env, ctx, message, from, chat, isGroup, threadId) {
   const userId = from.id;
@@ -127,7 +127,9 @@ export async function handleAIMessage(env, ctx, message, from, chat, isGroup, th
         const nowMs = Date.now();
         if (nowMs - lastEditAt >= STREAM_EDIT_THROTTLE_MS) {
           lastEditAt = nowMs;
-          let preview = stripTelegramHtml(accumulated);
+          // The preview is sent as plain text with no parse_mode, so it must be
+          // Markdown-stripped or the raw `**`/backticks show up while streaming.
+          let preview = plainText(accumulated);
           if (preview.length > MAX_TELEGRAM_LENGTH - 20) {
             preview = preview.slice(0, MAX_TELEGRAM_LENGTH - 30) + "\n...";
           }
@@ -163,13 +165,13 @@ export async function handleAIMessage(env, ctx, message, from, chat, isGroup, th
     const category = streamErrorCategory || "unknown";
     updateUsageStatsAsync(env, ctx, userId, false, category, null);
     if (accumulated.length > 0) {
-      const note = "\n\n<i>⚠ Response interrupted.</i>";
-      let preview = stripTelegramHtml(accumulated);
+      const note = "\n\n⚠ Response interrupted.";
+      let preview = plainText(accumulated);
       if (preview.length + note.length > MAX_TELEGRAM_LENGTH) {
         preview = preview.slice(0, MAX_TELEGRAM_LENGTH - note.length - 10) + "…";
       }
       const finalText = preview + note;
-      await editMessage(env, chatId, placeholderMsgId, finalText, undefined, "HTML");
+      await editMessage(env, chatId, placeholderMsgId, finalText, undefined, undefined);
       await saveThreadMessage(env, chatId, threadId, placeholderMsgId, null, "assistant", accumulated);
     } else {
       await deleteMessage(env, chatId, placeholderMsgId);
@@ -202,27 +204,51 @@ export async function handleAIMessage(env, ctx, message, from, chat, isGroup, th
   }
   
   const replyText = accumulated || "(empty response)";
-  const formatted = safeFormat(replyText, "HTML");
-  const sendText = formatted.text;
-  const parseMode = formatted.parseMode;
+  const chunks = safeFormatChunks(replyText, "MarkdownV2");
 
   let finalMsgId = placeholderMsgId;
-  if (sendText.length > MAX_TELEGRAM_LENGTH) {
-    await deleteMessage(env, chatId, placeholderMsgId);
-    const sentResult = await sendMessageReturn(env, chatId, sendText, { parse_mode: parseMode, reply_to_message_id: replyToId });
-    if (sentResult && sentResult.ok && sentResult.result && typeof sentResult.result.message_id === "number") {
-      finalMsgId = sentResult.result.message_id;
+  if (chunks.length > 1) {
+    // A long answer becomes several messages. The first one replaces the
+    // placeholder so the reply appears in place; the rest follow. Nothing is
+    // truncated and no part exceeds the Telegram limit — safeFormatChunks
+    // guarantees the length, and sendMessageReturn is the transport backstop.
+    const first = chunks[0];
+    const firstEdit = await editMessage(env, chatId, placeholderMsgId, first.text, undefined, first.parseMode);
+    if (!firstEdit || !firstEdit.ok) {
+      // The placeholder could not become the first part, so delete it and send
+      // that part separately — otherwise the opening of the answer is lost.
+      await deleteMessage(env, chatId, placeholderMsgId);
+      const opts = {};
+      if (first.parseMode) opts.parse_mode = first.parseMode;
+      if (replyToId) opts.reply_to_message_id = replyToId;
+      const sentFirst = await sendMessageReturn(env, chatId, first.text, opts);
+      if (sentFirst && sentFirst.ok && sentFirst.result && typeof sentFirst.result.message_id === "number") {
+        finalMsgId = sentFirst.result.message_id;
+      }
+    }
+    for (let i = 1; i < chunks.length; i++) {
+      const opts = {};
+      if (chunks[i].parseMode) opts.parse_mode = chunks[i].parseMode;
+      await sendMessageReturn(env, chatId, chunks[i].text, opts);
     }
     await saveThreadMessage(env, chatId, threadId, finalMsgId, null, "assistant", replyText);
   } else {
-    const finalEdit = await editMessage(env, chatId, placeholderMsgId, sendText, undefined, parseMode);
+    const part = chunks[0];
+    const finalEdit = await editMessage(env, chatId, placeholderMsgId, part.text, undefined, part.parseMode);
     if (!finalEdit || !finalEdit.ok) {
       const desc = String(finalEdit ? finalEdit.description : "").toLowerCase();
       if (desc.indexOf("not modified") === -1) {
         await deleteMessage(env, chatId, placeholderMsgId);
-        const sentNew = await sendMessageReturn(env, chatId, sendText, { parse_mode: parseMode, reply_to_message_id: replyToId });
-        if (sentNew && sentNew.ok && sentNew.result && typeof sentNew.result.message_id === "number") {
-          finalMsgId = sentNew.result.message_id;
+        // Fall back to plain, unformatted text: a refused entity must not cost
+        // the user the reply.
+        const plain = plainTextChunks(replyText);
+        for (let i = 0; i < plain.length; i++) {
+          const opts = {};
+          if (i === 0 && replyToId) opts.reply_to_message_id = replyToId;
+          const sentNew = await sendMessageReturn(env, chatId, plain[i].text, opts);
+          if (i === 0 && sentNew && sentNew.ok && sentNew.result && typeof sentNew.result.message_id === "number") {
+            finalMsgId = sentNew.result.message_id;
+          }
         }
       }
     }
