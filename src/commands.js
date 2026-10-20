@@ -68,7 +68,11 @@ async function handleRememberCommand(env, chatId, userId, args) {
   if (data.explicit_facts.length > 20) data.explicit_facts = data.explicit_facts.slice(-20);
   data.last_updated = now();
   try {
-    await env.DB.prepare("UPDATE users SET memory_data = ?, updated_at = ? WHERE telegram_id = ?").bind(serializeMemoryData(data), now(), userId).run();
+    const result = await env.DB.prepare("UPDATE users SET memory_data = ?, updated_at = ? WHERE telegram_id = ? AND memory_data = ?").bind(serializeMemoryData(data), now(), userId, user.memory_data || "{}").run();
+    if (!result || !result.meta || result.meta.changes !== 1) throw new Error("Memory update was not applied");
+    const saved = await env.DB.prepare("SELECT memory_data FROM users WHERE telegram_id = ?").bind(userId).first();
+    const verified = parseMemoryData(saved && saved.memory_data);
+    if (!Array.isArray(verified.explicit_facts) || !verified.explicit_facts.includes(fact)) throw new Error("Memory write could not be verified");
     await sendMessage(env, chatId, "Got it. I'll remember: " + escapeHtml(fact));
   } catch (err) { await sendMessage(env, chatId, "Could not save that. Try again."); }
 }
@@ -76,11 +80,13 @@ async function handleRememberCommand(env, chatId, userId, args) {
 async function handleForgetCommand(env, chatId, userId, args) {
   const user = await getUser(env, userId);
   if (!user) return;
-  if (user.memory_mode === "none") { await sendMessage(env, chatId, "Memory is already disabled."); return; }
   const topic = (args || "").trim();
   if (!topic) {
-    try { await env.DB.prepare("UPDATE users SET memory_data = ?, updated_at = ? WHERE telegram_id = ?").bind(JSON.stringify({ last_updated: now() }), now(), userId).run(); } catch (err) {}
-    await sendMessage(env, chatId, "Memory cleared.");
+    try {
+      const result = await env.DB.prepare("UPDATE users SET memory_data = ?, updated_at = ? WHERE telegram_id = ?").bind(JSON.stringify({ last_updated: now() }), now(), userId).run();
+      if (!result || !result.meta || result.meta.changes !== 1) throw new Error("Memory update was not applied");
+      await sendMessage(env, chatId, "Memory cleared.");
+    } catch (err) { await sendMessage(env, chatId, "Could not clear memory. Try again."); }
     return;
   }
   const data = parseMemoryData(user.memory_data);
@@ -100,7 +106,10 @@ async function handleForgetCommand(env, chatId, userId, args) {
   if (!changed) { await sendMessage(env, chatId, "Nothing matching that found in memory."); return; }
   data.last_updated = now();
   try {
-    await env.DB.prepare("UPDATE users SET memory_data = ?, updated_at = ? WHERE telegram_id = ?").bind(serializeMemoryData(data), now(), userId).run();
+    const result = await env.DB.prepare("UPDATE users SET memory_data = ?, updated_at = ? WHERE telegram_id = ? AND memory_data = ?").bind(serializeMemoryData(data), now(), userId, user.memory_data || "{}").run();
+    if (!result || !result.meta || result.meta.changes !== 1) throw new Error("Memory update was not applied");
+    const saved = await env.DB.prepare("SELECT memory_data FROM users WHERE telegram_id = ?").bind(userId).first();
+    if (parseMemoryData(saved && saved.memory_data).explicit_facts?.some(item => containsPhrase(String(item), topic))) throw new Error("Memory deletion could not be verified");
     await sendMessage(env, chatId, "Removed from memory: " + escapeHtml(topic));
   } catch (err) { await sendMessage(env, chatId, "Could not update memory."); }
 }

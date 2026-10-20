@@ -17,11 +17,12 @@ export async function generateAnthropic(connection, apiKey, messages, options, t
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i];
     if (m.role === "system") systemText += (systemText ? "\n\n" : "") + (typeof m.content === "string" ? m.content : "");
-    else convo.push({ role: m.role === "assistant" ? "assistant" : "user", content: toAnthropicContent(m.content, allowImages) });
+    else convo.push({ role: m.role === "assistant" ? "assistant" : "user", content: Array.isArray(m.content) && m.content.some(b => b && (b.type === "tool_use" || b.type === "tool_result")) ? m.content : toAnthropicContent(m.content, allowImages) });
   }
   const body = { model: model, max_tokens: (options && options.max_tokens) || 2048, messages: convo };
   if (systemText) body.system = systemText;
   if (options && options.temperature !== undefined) body.temperature = Math.max(0, Math.min(1, options.temperature));
+  if (options && Array.isArray(options.tools) && options.tools.length) body.tools = options.tools;
   const resp = await fetchWithTimeout(baseUrl + "/messages", {
     method: "POST",
     headers: buildProviderHeaders("anthropic", apiKey, baseUrl),
@@ -42,9 +43,17 @@ export async function generateAnthropic(connection, apiKey, messages, options, t
     throw err;
   }
   let text = "";
+  const toolCalls = [];
   for (let i = 0; i < data.content.length; i++) {
     const block = data.content[i];
     if (block.type === "text" && block.text) text += block.text;
+    else if (block.type === "tool_use") toolCalls.push(block);
+  }
+  if (toolCalls.length) {
+    const usage = (data.usage && (data.usage.input_tokens !== undefined || data.usage.output_tokens !== undefined))
+      ? { in: data.usage.input_tokens || 0, out: data.usage.output_tokens || 0, source: "provider_reported" }
+      : { in: 0, out: 0, source: "unavailable" };
+    return { text, toolCalls, assistantMessage: data.content, stopReason: data.stop_reason, usage };
   }
   if (!text || text.trim().length === 0) {
     const err = new Error("Empty response from provider");
@@ -66,11 +75,12 @@ export async function* streamAnthropic(connection, apiKey, messages, options, si
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i];
     if (m.role === "system") systemText += (systemText ? "\n\n" : "") + (typeof m.content === "string" ? m.content : "");
-    else convo.push({ role: m.role === "assistant" ? "assistant" : "user", content: toAnthropicContent(m.content, allowImages) });
+    else convo.push({ role: m.role === "assistant" ? "assistant" : "user", content: Array.isArray(m.content) && m.content.some(b => b && (b.type === "tool_use" || b.type === "tool_result")) ? m.content : toAnthropicContent(m.content, allowImages) });
   }
   const body = { model: model, max_tokens: (options && options.max_tokens) || 2048, messages: convo, stream: true };
   if (systemText) body.system = systemText;
   if (options && options.temperature !== undefined) body.temperature = Math.max(0, Math.min(1, options.temperature));
+  if (options && Array.isArray(options.tools) && options.tools.length) body.tools = options.tools;
   const resp = await fetch(baseUrl + "/messages", {
     method: "POST",
     headers: buildProviderHeaders("anthropic", apiKey, baseUrl),

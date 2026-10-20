@@ -163,6 +163,28 @@ test("admins pass the admin gate", async () => {
   assert.equal(res.status, 200);
 });
 
+test("admin can persist Workers AI policy and model via the real settings endpoint", async () => {
+  const values = new Map();
+  const env = fakeEnv();
+  env.DB = {
+    prepare(sql) {
+      return {
+        args: [], bind(...args) { this.args = args; return this; },
+        async first() { return sql.includes("FROM app_settings") ? (values.has(this.args[0]) ? { value: values.get(this.args[0]) } : null) : null; },
+        async run() { if (sql.includes("INSERT INTO app_settings")) values.set(this.args[0], this.args[1]); return { success: true }; }
+      };
+    }
+  };
+  const res = await routeMiniAppAPI(env, ctx,
+    req("/api/admin/settings", { initData: initDataFor(ADMIN_ID), method: "POST", body: { workers_ai_policy: "admins", workers_ai_model: "@cf/meta/llama-3.1-8b-instruct" } }),
+    "/api/admin/settings");
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.workers_ai_policy, "admins");
+  assert.equal(body.workers_ai_model, "@cf/meta/llama-3.1-8b-instruct");
+  assert.equal(values.get("workers_ai_policy"), "admins");
+});
+
 test("returns 404 for an unknown API path", async () => {
   const res = await routeMiniAppAPI(fakeEnv(), ctx,
     req("/api/does-not-exist", { initData: initDataFor(USER_ID) }), "/api/does-not-exist");

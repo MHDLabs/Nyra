@@ -201,8 +201,12 @@ function fakeAi(label) {
   return { run: async () => ({ response: label }) };
 }
 
+function aiEnabledEnv(ai) {
+  return { AI: ai, KV: fakeKv(), ADMIN_IDS: "1", DB: { prepare() { return { bind() { return this; }, async first() { return { value: "all" }; } }; } } };
+}
+
 test("classifyReaction returns the labelled emoji when it is allowed", async () => {
-  const env = { AI: fakeAi("funny"), KV: fakeKv() };
+  const env = aiEnabledEnv(fakeAi("funny"));
   assert.equal(await classifyReaction(env, "Nyra told a great joke", await getAllowedReactions(env, 1)), "🤣");
 });
 
@@ -213,13 +217,13 @@ test("classifyReaction returns null when the label's emoji is not allowed", asyn
 });
 
 test("classifyReaction returns null when no reaction fits", async () => {
-  const env = { AI: { run: async () => ({ response: "unclear" }) }, KV: fakeKv() };
+  const env = aiEnabledEnv({ run: async () => ({ response: "unclear" }) });
   assert.equal(await classifyReaction(env, "Nyra just a plain sentence", await getAllowedReactions(env, 1)), null);
 });
 
 test("classifyReaction never uses a sentiment model", async () => {
   const seen = [];
-  const env = { AI: { run: async (model) => { seen.push(model); return { response: "neutral" }; } }, KV: fakeKv() };
+  const env = aiEnabledEnv({ run: async (model) => { seen.push(model); return { response: "neutral" }; } });
   const emoji = await classifyReaction(env, "Nyra سلام خوبی؟", await getAllowedReactions(env, 1));
   assert.equal(emoji, "😎");
   assert.deepEqual(seen, ["@cf/meta/llama-3.1-8b-instruct"]);

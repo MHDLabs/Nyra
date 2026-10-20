@@ -29,7 +29,10 @@ export async function generateOpenAICompatible(connection, apiKey, messages, opt
   const allowImages = connection.supports_vision === 1;
   const finalMessages = messages.map(function (m) {
     const role = isReasoning && m.role === "system" ? "developer" : m.role;
-    return { role: role, content: toOpenAIContent(m.content, allowImages) };
+    const mapped = { role: role, content: toOpenAIContent(m.content, allowImages) };
+    if (Array.isArray(m.tool_calls)) mapped.tool_calls = m.tool_calls;
+    if (m.tool_call_id) mapped.tool_call_id = m.tool_call_id;
+    return mapped;
   });
   const body = { model: model, messages: finalMessages };
   if (options && options.max_tokens) {
@@ -37,6 +40,10 @@ export async function generateOpenAICompatible(connection, apiKey, messages, opt
     else body.max_tokens = options.max_tokens;
   }
   if (options && options.temperature !== undefined && !isReasoning) body.temperature = options.temperature;
+  if (options && Array.isArray(options.tools) && options.tools.length && !isReasoning) {
+    body.tools = options.tools;
+    body.tool_choice = "auto";
+  }
   const resp = await fetchWithTimeout(baseUrl + "/chat/completions", {
     method: "POST",
     headers: buildProviderHeaders("openai-compatible", apiKey, baseUrl),
@@ -56,7 +63,18 @@ export async function generateOpenAICompatible(connection, apiKey, messages, opt
     err.category = "unexpected_format";
     throw err;
   }
-  const text = data.choices[0].message.content;
+  const assistant = data.choices[0].message;
+  const toolCalls = Array.isArray(assistant.tool_calls) ? assistant.tool_calls : [];
+  const text = assistant.content;
+  if (toolCalls.length) {
+    const usage = { in: 0, out: 0, source: "unavailable" };
+    if (data.usage) {
+      usage.in = data.usage.prompt_tokens || 0;
+      usage.out = data.usage.completion_tokens || 0;
+      usage.source = "provider_reported";
+    }
+    return { text: typeof text === "string" ? text : "", toolCalls, assistantMessage: assistant, usage };
+  }
   if (!text || (typeof text === "string" && text.trim().length === 0)) {
     const err = new Error("Empty response from provider");
     err.category = "empty_response";
@@ -82,7 +100,10 @@ export async function* streamOpenAICompatible(connection, apiKey, messages, opti
   const allowImages = connection.supports_vision === 1;
   const finalMessages = messages.map(function (m) {
     const role = isReasoning && m.role === "system" ? "developer" : m.role;
-    return { role: role, content: toOpenAIContent(m.content, allowImages) };
+    const mapped = { role: role, content: toOpenAIContent(m.content, allowImages) };
+    if (Array.isArray(m.tool_calls)) mapped.tool_calls = m.tool_calls;
+    if (m.tool_call_id) mapped.tool_call_id = m.tool_call_id;
+    return mapped;
   });
   const body = { model: model, messages: finalMessages, stream: true };
   if (options && options.max_tokens) {
@@ -90,6 +111,10 @@ export async function* streamOpenAICompatible(connection, apiKey, messages, opti
     else body.max_tokens = options.max_tokens;
   }
   if (options && options.temperature !== undefined && !isReasoning) body.temperature = options.temperature;
+  if (options && Array.isArray(options.tools) && options.tools.length && !isReasoning) {
+    body.tools = options.tools;
+    body.tool_choice = "auto";
+  }
   const resp = await fetch(baseUrl + "/chat/completions", {
     method: "POST",
     headers: buildProviderHeaders("openai-compatible", apiKey, baseUrl),

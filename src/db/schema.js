@@ -156,6 +156,14 @@ const MIGRATIONS = [
       "CREATE TABLE IF NOT EXISTS reminder_delivery_attempts (id INTEGER PRIMARY KEY AUTOINCREMENT, reminder_id INTEGER NOT NULL, attempt INTEGER NOT NULL, status TEXT NOT NULL, error TEXT, created_at INTEGER NOT NULL)",
       "CREATE INDEX IF NOT EXISTS idx_reminder_attempts_reminder ON reminder_delivery_attempts(reminder_id, created_at DESC)"
     ]
+  },
+  {
+    id: 6,
+    label: "initialize Workers AI policy disabled",
+    statements: [
+      "INSERT OR IGNORE INTO app_settings (key, value, updated_at, updated_by) VALUES ('workers_ai_policy', 'disabled', CAST(strftime('%s','now') AS INTEGER), NULL)",
+      "INSERT OR IGNORE INTO app_settings (key, value, updated_at, updated_by) VALUES ('workers_ai_model', '@cf/meta/llama-3.1-8b-instruct', CAST(strftime('%s','now') AS INTEGER), NULL)"
+    ]
   }
 ];
 

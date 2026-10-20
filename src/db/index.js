@@ -47,7 +47,8 @@ export {
 } from "./routes.js";
 
 export {
-  getSetting, setSetting, isPersonalModelsAllowed, getPersonalModelLimit
+  getSetting, setSetting, isPersonalModelsAllowed, getPersonalModelLimit,
+  getWorkersAIPolicy, setWorkersAIPolicy, getWorkersAIModel, setWorkersAIModel, canUseWorkersAI
 } from "./settings.js";
 
 export {

@@ -16,5 +16,5 @@ export {
 } from "./models.js";
 
 export {
-  generateWithConnection, tryStreamWithFallback, notifyAdminOnError
+  generateWithConnection, generateAgentWithConnection, tryAgentWithFallback, tryStreamWithFallback, notifyAdminOnError
 } from "./fallback.js";

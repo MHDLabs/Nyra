@@ -113,7 +113,7 @@ export async function processMessage(env, ctx, message) {
     // Try to set reaction (independent, fire-and-forget). The Chat object is
     // passed so the classifier can honour per-chat allowed reactions.
     if (shouldReact(message, chat)) {
-      trySetReaction(env, ctx, chat, message.message_id, extractMessageText(message));
+      trySetReaction(env, ctx, chat, message.message_id, extractMessageText(message), from.id);
     }
     
     const identity = await getBotIdentity(env);

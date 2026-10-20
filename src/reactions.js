@@ -23,6 +23,7 @@
 // skipped for that chat.
 import { checkRateLimit, containsNyraWord } from "./utils.js";
 import { tg } from "./telegram.js";
+import { canUseWorkersAI } from "./db.js";
 const REACTION_TIMEOUT_MS = 4000; // 4s deadline per AI call
 const REACTION_RATE_LIMIT_PER_MIN = 20;
 const REJECT_CACHE_TTL_S = 3600; // remember a chat's rejected emoji for an hour
@@ -333,8 +334,8 @@ async function avoidRepeatedReaction(env, chatId, label, emoji, allowed) {
  * what made the bot react 👎 to everything. If the label model yields nothing
  * usable, only the narrow heuristic is tried, and failing that: no reaction.
  */
-export async function classifyReaction(env, text, allowed) {
-  if (!env.AI) {
+export async function classifyReaction(env, text, allowed, userId) {
+  if (!env.AI || !(await canUseWorkersAI(env, userId))) {
     console.warn("Workers AI binding not available");
     return null;
   }
@@ -461,7 +462,7 @@ function withTimeout(promise, ms) {
  * `chat` is the Chat object; its id drives rate limiting and the per-chat
  * allowed/rejected reaction bookkeeping.
  */
-export async function trySetReaction(env, ctx, chat, messageId, text) {
+export async function trySetReaction(env, ctx, chat, messageId, text, userId) {
   const chatId = (chat && typeof chat === "object") ? chat.id : chat;
   if (chatId === undefined || chatId === null) return;
 
@@ -480,7 +481,7 @@ export async function trySetReaction(env, ctx, chat, messageId, text) {
       // The Chat object is preferred over the bare id: its available_reactions
       // avoids a getChat round trip on the hot path.
       const allowed = await getAllowedReactions(env, chat);
-      let emoji = await classifyReaction(env, text, allowed);
+      let emoji = await classifyReaction(env, text, allowed, userId);
       if (!emoji) return;
 
       emoji = await avoidRepeatedReaction(env, chatId, labelForEmoji(emoji), emoji, allowed);

@@ -4,6 +4,7 @@
 // free Workers AI model is consulted only for ambiguous/unclassified errors and
 // its verdict is cached by error signature so the free tier is barely touched.
 import { AI_BRAIN_TIMEOUT_MS, AI_BRAIN_CACHE_TTL, AI_BRAIN_MODEL } from "./config.js";
+import { canUseWorkersAI } from "./db.js";
 
 // Actions the brain may return.
 //   retry_same  — the same endpoint may succeed if we try again (transient)
@@ -84,7 +85,7 @@ async function askBrainAI(env, input) {
     "- stop: nothing else will help\n" +
     "Reply with ONLY compact JSON: {\"action\":\"...\",\"reason\":\"...\"}";
   const ai = env && env.AI;
-  if (!ai) return null;
+  if (!ai || !(await canUseWorkersAI(env, input && input.userId))) return null;
   const result = await Promise.race([
     ai.run(AI_BRAIN_MODEL, { messages: [{ role: "user", content: prompt }], max_tokens: 80 }),
     new Promise(function (resolve) { setTimeout(function () { resolve(null); }, AI_BRAIN_TIMEOUT_MS); })
@@ -121,7 +122,7 @@ export async function decideNextAction(env, input) {
   // Only consult the AI for categories the heuristic cannot confidently resolve.
   const category = (input && input.category) || "unknown";
   const confident = HEURISTIC[category] && category !== "unknown";
-  if (!confident && env && env.AI) {
+  if (!confident && env && env.AI && await canUseWorkersAI(env, input && input.userId)) {
     try { verdict = await askBrainAI(env, input || {}); } catch (e) { verdict = null; }
   }
   if (!verdict) verdict = heuristicVerdict(input || {});

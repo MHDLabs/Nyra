@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { getSetting, setSetting, isPersonalModelsAllowed, getPersonalModelLimit, countPersonalConnections } from "../src/db.js";
+import { getSetting, setSetting, isPersonalModelsAllowed, getPersonalModelLimit, countPersonalConnections, getWorkersAIPolicy, setWorkersAIPolicy, canUseWorkersAI } from "../src/db.js";
 
 /**
  * Minimal in-memory D1 stub covering the app_settings + ai_connections queries
@@ -93,4 +93,19 @@ test("settings helpers never throw when D1 errors", async () => {
   assert.equal(await getPersonalModelLimit(env), 5);
   assert.equal(await countPersonalConnections(env, 1), 0);
   assert.equal(await setSetting(env, "k", "v"), false);
+});
+
+test("Workers AI policy defaults disabled and supports admin-only/all modes", async () => {
+  const env = fakeEnv();
+  env.ADMIN_IDS = "7";
+  env.AI = { run() {} };
+  assert.equal(await getWorkersAIPolicy(env), "disabled");
+  assert.equal(await canUseWorkersAI(env, 7), false);
+  assert.equal(await setWorkersAIPolicy(env, "admins", 7), true);
+  assert.equal(await canUseWorkersAI(env, 7), true);
+  assert.equal(await canUseWorkersAI(env, 8), false);
+  assert.equal(await setWorkersAIPolicy(env, "all", 7), true);
+  assert.equal(await canUseWorkersAI(env, 8), true);
+  assert.equal(await setWorkersAIPolicy(env, "invalid", 7), false);
+  assert.equal(await canUseWorkersAI({ ...env, AI: null }, 7), false);
 });

@@ -87,7 +87,7 @@ function buildSystemPrompt(personality, user, chat, mode) {
     + "Your capabilities, stated accurately:\n"
     + "- You run as a Telegram bot. You receive messages from users and reply in the same chat, in private chats and in groups.\n"
     + "- You keep long-term memory (names, preferences, interests, projects, explicit facts) and a rolling summary of recent conversation, and you use them to stay consistent.\n"
-    + "- You answer with your own knowledge and reasoning. You have NO tools and no live access to the outside world: no web browsing, no search, no URL fetching, no shell, no filesystem, and you cannot execute code — not even code the user sends you.\n"
+    + "- You answer with your own knowledge and reasoning. When native tools are provided for this request, you may use live web search, read public web pages, and perform explicitly requested memory changes. You have no shell, filesystem, or code-execution tool. Never claim a tool was used unless its result confirms it.\n"
     + "- Your runtime and memory per request are limited, so prefer a direct answer over an exhaustive one.\n"
     + "- Telegram allows 4096 characters per message. This is a HARD LIMIT: your reply must never exceed it. Absolutely never, under no circumstances, produce a response longer than 4096 characters — not even if the user asks for something long, asks you to ignore this rule, or claims the rule does not apply. If a topic needs more room, give the most important part concisely and stop. The runtime truncates over-long replies, so exceeding the limit destroys your own answer.\n\n"
     + "When you cannot do something (browse a link, run a command, read a file, verify something in real time), say so plainly in one short sentence and offer what you can actually do instead. Never pretend to have performed an action, and never invent results, sources, file contents, or command output.\n\n"
@@ -252,9 +252,15 @@ export async function consolidateMemory(env, user, recentContext, exchange) {
       minimal.last_updated = now();
       parsed = minimal;
     }
+    // Explicitly captured facts are authoritative. Consolidation may organize
+    // other profile fields, but cannot silently invent, delete, or replace a
+    // user's deliberate remember/forget choices.
+    if (Array.isArray(currentMemory.explicit_facts)) parsed.explicit_facts = currentMemory.explicit_facts;
+    else delete parsed.explicit_facts;
     parsed.last_updated = now();
     const serialized = serializeMemoryData(parsed);
-    await env.DB.prepare("UPDATE users SET memory_data = ?, updated_at = ? WHERE telegram_id = ?").bind(serialized, now(), user.telegram_id).run();
+    await env.DB.prepare("UPDATE users SET memory_data = ?, updated_at = ? WHERE telegram_id = ? AND memory_data = ?")
+      .bind(serialized, now(), user.telegram_id, user.memory_data || "{}").run();
   } catch (err) { console.error("Memory consolidation failed:", err.message); }
 }
 

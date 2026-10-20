@@ -24,6 +24,7 @@ The button above is the **only** place the one-click flow starts. Press it, sign
 2. **`TELEGRAM_SECRET`** — random webhook secret token; also the `X-Setup-Secret` header for `/setup`.
 3. **`ENCRYPTION_KEY`** — base64-encoded 32-byte master key that encrypts every stored API key.
 4. **`ADMIN_IDS`** — numeric Telegram user ID(s) of the administrator(s), comma-separated (send any message to [@userinfobot](https://t.me/userinfobot) to learn yours).
+5. **`TAVILY_API_KEY` (optional)** — enables live web search. Without it, public-page reading remains available but live search is not advertised. Obtain a key from Tavily and set it with `npx wrangler secret put TAVILY_API_KEY`.
 
 Generate the two random secrets on your own machine (macOS/Linux; on Windows use WSL or Git Bash) and paste them into the form:
 
@@ -35,6 +36,8 @@ openssl rand -base64 32   # → ENCRYPTION_KEY    (exactly 32 bytes when decoded
 No `openssl`? Any cryptographically secure generator works, as long as the output matches the format above — for example `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` for `TELEGRAM_SECRET` and the same with `toString('base64')` for `ENCRYPTION_KEY`. Never use the bot token, a password you typed by hand, or an online "random string" site as either value.
 
 Everything else is automatic: Cloudflare provisions D1, KV and the queue from `wrangler.toml`, the `workers.dev` domain is enabled, and the Worker registers the Telegram webhook itself on first contact — no curl, no manual webhook step. The flow marks all four inputs as required (with descriptions of where to find or how to generate them); the status page (`GET /status`) additionally warns at runtime if `ADMIN_IDS` is missing or malformed, and every request returns HTTP 500 until all three secrets are valid.
+
+Live web search uses Tavily and requires the optional `TAVILY_API_KEY` secret. The admin panel's Workers AI setting controls whether Workers AI is disabled, available only to administrators, or available to all permitted users; it defaults to disabled. When enabled, Workers AI is a last-resort chat provider if configured user/provider connections fail. The selected `@cf/...` model is editable in the admin panel.
 
 Prefer the CLI? The full manual flow is in [Setup](#-setup) → *Option B*.
 

@@ -597,6 +597,15 @@
           '><span class="slider"></span></label></div>' +
           '<label>سقف مدل شخصی</label>' +
           '<input type="number" id="adm-limit" min="1" value="' + (settings.personal_model_limit || 5) + '">' +
+          '<label>دسترسی Workers AI</label>' +
+          '<select id="adm-workers-ai">' +
+            '<option value="disabled"' + (settings.workers_ai_policy === 'disabled' ? ' selected' : '') + '>خاموش</option>' +
+            '<option value="admins"' + (settings.workers_ai_policy === 'admins' ? ' selected' : '') + '>فقط مدیران</option>' +
+            '<option value="all"' + (settings.workers_ai_policy === 'all' ? ' selected' : '') + '>همهٔ کاربران مجاز</option>' +
+          '</select>' +
+          '<label>مدل Workers AI (شناسهٔ @cf/...)</label>' +
+          '<input id="adm-workers-model" value="' + esc(settings.workers_ai_model || '@cf/meta/llama-3.1-8b-instruct') + '" placeholder="@cf/meta/llama-3.1-8b-instruct">' +
+          (settings.workers_ai_available ? '' : '<div class="meta">اتصال Workers AI در این محیط در دسترس نیست.</div>') +
           '<button class="btn" onclick="window.saveAdminSettings()">ذخیره تنظیمات</button>' +
         '</div>' +
         '<div class="card"><div class="card-title">کاربران</div><div id="admin-users"><div class="empty">در حال بارگذاری...</div></div>' +
@@ -624,7 +633,9 @@
       method: 'POST',
       body: {
         allow_personal_models: el('adm-pers').checked,
-        personal_model_limit: parseInt(el('adm-limit').value, 10) || 5
+        personal_model_limit: parseInt(el('adm-limit').value, 10) || 5,
+        workers_ai_policy: el('adm-workers-ai').value,
+        workers_ai_model: el('adm-workers-model').value.trim()
       }
     }).then(function (s) {
       toast('تنظیمات ذخیره شد');
