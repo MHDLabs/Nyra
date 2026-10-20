@@ -316,10 +316,11 @@
     m.innerHTML = '<div class="modal">' +
       '<h2 style="margin-bottom:16px">افزودن مدل شخصی</h2>' +
       '<label>عنوان</label><input id="p-label" placeholder="مثلا GPT-4 من">' +
-      '<label>Provider</label><select id="p-provider"><option value="openai">OpenAI Compatible</option><option value="anthropic">Anthropic</option></select>' +
+      '<label>Provider</label><select id="p-provider"><option value="openai-compatible">OpenAI Compatible</option><option value="anthropic">Anthropic</option></select>' +
       '<label>Base URL</label><input id="p-url" placeholder="https://api.openai.com/v1">' +
       '<label>Model Name</label><input id="p-model" placeholder="gpt-4o">' +
       '<label>API Key</label><input id="p-key" type="password" placeholder="sk-...">' +
+      '<div class="card-sub" style="margin-top:8px">پیش از ذخیره، مدل یک درخواست آزمایشی واقعی می‌فرستد؛ اگر کلید یا نام مدل غلط باشد ذخیره نمی‌شود.</div>' +
       '<div style="display:flex;gap:10px;margin-top:20px">' +
       '<button class="btn" onclick="window.createPersonal()">ذخیره</button>' +
       '<button class="btn-ghost" style="flex:1" onclick="window.closeModal()">انصراف</button>' +

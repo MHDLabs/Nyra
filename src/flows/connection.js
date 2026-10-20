@@ -3,7 +3,7 @@
 // picker), which is why it carries the step routing while the prompts and
 // the picker stay leaf modules.
 import { RATE_LIMIT_CONN_TEST_PER_MIN, MAX_PERSONALITY_PROMPT, MAX_PERSONALITY_DESC, MAX_CUSTOM_INSTRUCTIONS, MAX_LABEL_LENGTH, MAX_DESCRIPTION_LENGTH, MAX_MODEL_LENGTH, MAX_URL_LENGTH, MAX_API_KEY_LENGTH, OPENAI_DEFAULT_URL, ANTHROPIC_DEFAULT_URL } from "../config.js";
-import { now, truncate, escapeHtml, isAdmin, checkRateLimit } from "../utils.js";
+import { now, truncate, escapeHtml, isAdmin, checkRateLimit, normalizeBaseUrl } from "../utils.js";
 import { encryptCredential, decryptCredential } from "../crypto.js";
 import { sendMessage, deleteMessage, buildInlineKeyboard } from "../telegram.js";
 import { setFlowState, clearFlowState, getUserConnectionById, saveGlobalConnection, updateUserConnection, setDefaultConnection, isPersonalModelsAllowed, getPersonalModelLimit, countPersonalConnections } from "../db.js";
@@ -151,12 +151,11 @@ export async function handleFlowMessage(env, ctx, message, from, chat, flowState
 
   if (step === "base_url" || step === "edit_base_url") {
     if (text.length === 0 || text.length > MAX_URL_LENGTH) { await sendMessage(env, chatId, "URL must be 1–" + MAX_URL_LENGTH + " characters."); return true; }
-    let url;
-    try {
-      url = new URL(text);
-      if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("bad protocol");
-    } catch (err) { await sendMessage(env, chatId, "That doesn't look like a valid URL. Try again or press Default."); return true; }
-    flowState.base_url = url.toString().replace(/\/+$/, "");
+    // Accepts a full endpoint pasted from provider docs and trims it back to
+    // the API root, so the adapters never append a second "/chat/completions".
+    const normalized = normalizeBaseUrl(flowState.provider, text);
+    if (!normalized) { await sendMessage(env, chatId, "That doesn't look like a valid URL. Try again or press Default."); return true; }
+    flowState.base_url = normalized;
     if (isEdit) { flowState.step = "edit_api_key"; await setFlowState(env, userId, flowState); await flowPromptApiKey(env, chatId, true); }
     else { flowState.step = "api_key"; await setFlowState(env, userId, flowState); await flowPromptApiKey(env, chatId, false); }
     return true;

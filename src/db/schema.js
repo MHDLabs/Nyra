@@ -1,9 +1,14 @@
 // D1 schema bootstrap, versioned migrations and periodic housekeeping.
 // Owns the one-shot guarded init path (`ensureSchema` / `maybeInitSchema`).
-import { CONTEXT_TTL, DEFAULT_PERSONALITIES, SCHEMA_PROBE_INTERVAL_MS } from "../config.js";
+import { CONTEXT_TTL, DEFAULT_PERSONALITIES, RETIRED_PERSONALITY_IDS, SCHEMA_PROBE_INTERVAL_MS } from "../config.js";
 import { now } from "../utils.js";
 
 let schemaReady = false;
+
+// Inlined as a SQL literal list rather than bound parameters because migrations
+// run through `DB.batch` with pre-built statements. The ids are code constants,
+// never user input.
+const RETIRED_PERSONALITY_SQL = RETIRED_PERSONALITY_IDS.map(function (id) { return "'" + id + "'"; }).join(",");
 
 export async function ensureSchema(env) {
   if (schemaReady) return;
@@ -163,6 +168,14 @@ const MIGRATIONS = [
     statements: [
       "INSERT OR IGNORE INTO app_settings (key, value, updated_at, updated_by) VALUES ('workers_ai_policy', 'disabled', CAST(strftime('%s','now') AS INTEGER), NULL)",
       "INSERT OR IGNORE INTO app_settings (key, value, updated_at, updated_by) VALUES ('workers_ai_model', '@cf/meta/llama-3.1-8b-instruct', CAST(strftime('%s','now') AS INTEGER), NULL)"
+    ]
+  },
+  {
+    id: 7,
+    label: "retire builtin personalities: " + RETIRED_PERSONALITY_IDS.join(", "),
+    statements: [
+      "DELETE FROM personalities WHERE is_builtin = 1 AND personality_id IN (" + RETIRED_PERSONALITY_SQL + ")",
+      "UPDATE users SET personality_id = 'default', updated_at = CAST(strftime('%s','now') AS INTEGER) WHERE personality_id IN (" + RETIRED_PERSONALITY_SQL + ")"
     ]
   }
 ];

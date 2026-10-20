@@ -2,7 +2,7 @@
 // surface. Bundled as one unit because the dispatch switch and the shared
 // helpers it uses are tightly coupled and split apart would only add
 // indirection.
-import { RATE_LIMIT_ADMIN_PER_MIN, RATE_LIMIT_CALLBACK_PER_MIN, RATE_LIMIT_CONN_TEST_PER_MIN, MAX_PERSONALITY_PROMPT, MAX_PERSONALITY_DESC, MAX_CUSTOM_INSTRUCTIONS, OPENAI_DEFAULT_URL, ANTHROPIC_DEFAULT_URL } from "../config.js";
+import { RATE_LIMIT_ADMIN_PER_MIN, RATE_LIMIT_CALLBACK_PER_MIN, RATE_LIMIT_CONN_TEST_PER_MIN, MAX_PERSONALITY_PROMPT, MAX_PERSONALITY_DESC, MAX_CUSTOM_INSTRUCTIONS, OPENAI_DEFAULT_URL, ANTHROPIC_DEFAULT_URL, RETIRED_PERSONALITY_IDS } from "../config.js";
 import { now, truncate, escapeHtml, isAdmin, checkRateLimit } from "../utils.js";
 import { sendMessage, answerCallback, editMessage, buildInlineKeyboard } from "../telegram.js";
 import { getUser, getFlowState, setFlowState, clearFlowState, getUserConnectionById, deleteUserConnection, toggleUserConnection, setDefaultConnection, setConnectionFast, setConnectionVision, updateUserConnectionTest, setDefaultRoute, deleteRoute, setRouteDefaultModel, removeRouteModel, removeRouteToken, toggleRouteToken } from "../db.js";
@@ -345,7 +345,7 @@ export async function handleCallbackQuery(env, ctx, query) {
         if (!c) { await editMessage(env, chatId, messageId, "Personality not found."); return; }
       } else {
         const p = await env.DB.prepare("SELECT personality_id FROM personalities WHERE personality_id = ? AND enabled = 1").bind(target).first();
-        if (!p) { await editMessage(env, chatId, messageId, "Personality not found."); return; }
+        if (!p || RETIRED_PERSONALITY_IDS.indexOf(target) !== -1) { await editMessage(env, chatId, messageId, "Personality not found."); return; }
       }
       await env.DB.prepare("UPDATE users SET personality_id = ?, updated_at = ? WHERE telegram_id = ?").bind(target, now(), userId).run();
       await editMessage(env, chatId, messageId, "Personality updated.", buildInlineKeyboard([[{ text: "Back", callback_data: "set:pers" }]]), "HTML");

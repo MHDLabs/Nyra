@@ -4,7 +4,7 @@
 // switches. All of them reuse the same storage helpers as the bot menus, so the
 // two surfaces cannot drift apart.
 import { getUserStrict, setConnectionFast, setConnectionVision } from "../db.js";
-import { MAX_CUSTOM_INSTRUCTIONS } from "../config.js";
+import { MAX_CUSTOM_INSTRUCTIONS, RETIRED_PERSONALITY_IDS } from "../config.js";
 import { now, truncate } from "../utils.js";
 import { listAvailablePersonalities, formatMemoryForUser, parseMemoryData } from "../memory.js";
 import { jsonOk, jsonError } from "./respond.js";
@@ -112,7 +112,7 @@ export async function handleSetPersonality(env, userId, body) {
     } else {
       const row = await env.DB.prepare("SELECT personality_id FROM personalities WHERE personality_id = ? AND enabled = 1")
         .bind(requested).first();
-      if (row) resolved = row.personality_id;
+      if (row && RETIRED_PERSONALITY_IDS.indexOf(row.personality_id) === -1) resolved = row.personality_id;
     }
 
     if (!resolved) return jsonError(404, "Personality not found");

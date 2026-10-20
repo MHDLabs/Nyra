@@ -1,7 +1,7 @@
 // AI connections: CRUD, the cached connection list, health bookkeeping and
 // active-connection resolution. Owns the single `userConnectionsCache`.
 import { CONNECTION_CACHE_TTL_MS } from "../config.js";
-import { generateShortId, isAdmin, now } from "../utils.js";
+import { generateShortId, isAdmin, now, normalizeBaseUrl } from "../utils.js";
 import { encryptCredential } from "../crypto.js";
 
 let userConnectionsCache = new Map();
@@ -42,6 +42,9 @@ export async function saveGlobalConnection(env, adminId, params) {
   const encrypted = await encryptCredential(env, adminId, params.api_key);
   const connectionId = generateShortId();
   const isGlobal = params.is_global === 0 || params.is_global === false || params.personal ? 0 : 1;
+  // Last line of defence against a double "/chat/completions": every write path
+  // (wizard, Mini App, personal models) funnels through here.
+  const baseUrl = normalizeBaseUrl(params.provider, params.base_url);
   let maxOrder = 100;
   try {
     const row = await env.DB.prepare("SELECT MAX(display_order) AS m FROM ai_connections WHERE is_global = 1").first();
@@ -49,7 +52,7 @@ export async function saveGlobalConnection(env, adminId, params) {
   } catch (err) {}
   await env.DB.prepare(
     "INSERT INTO ai_connections (connection_id, telegram_id, label, provider, base_url, model, encrypted_key, key_iv, encryption_version, enabled, is_global, is_default, description, display_order, supports_vision, consecutive_failures, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 2, 1, ?, 0, ?, ?, ?, 0, ?, ?)"
-  ).bind(connectionId, adminId, params.label, params.provider, params.base_url, params.model, encrypted.ct, encrypted.iv, isGlobal, params.description || "", maxOrder, params.supports_vision === 1 || params.supports_vision === true ? 1 : 0, ts, ts).run();
+  ).bind(connectionId, adminId, params.label, params.provider, baseUrl, params.model, encrypted.ct, encrypted.iv, isGlobal, params.description || "", maxOrder, params.supports_vision === 1 || params.supports_vision === true ? 1 : 0, ts, ts).run();
   invalidateUserConnectionsCache(null);
   return connectionId;
 }
@@ -64,7 +67,7 @@ export async function updateUserConnection(env, userId, connectionId, updates) {
   const values = [];
   if (updates.label !== undefined) { fields.push("label = ?"); values.push(updates.label); }
   if (updates.description !== undefined) { fields.push("description = ?"); values.push(updates.description); }
-  if (updates.base_url !== undefined) { fields.push("base_url = ?"); values.push(updates.base_url); }
+  if (updates.base_url !== undefined) { fields.push("base_url = ?"); values.push(normalizeBaseUrl(updates.provider || conn.provider, updates.base_url)); }
   if (updates.model !== undefined) { fields.push("model = ?"); values.push(updates.model); }
   if (updates.provider !== undefined) { fields.push("provider = ?"); values.push(updates.provider); }
   if (updates.is_fast !== undefined) { fields.push("is_fast = ?"); values.push(updates.is_fast ? 1 : 0); }

@@ -49,7 +49,7 @@ Prefer the CLI? The full manual flow is in [Setup](#-setup) → *Option B*.
 - **🔐 Encrypted keys** — provider API keys are sealed with AES-256-GCM (HKDF-derived per owner) and never leave the database in plaintext.
 - **🛟 Automatic fallback** — if a connection fails or times out, Nyra retries and falls back to other enabled connections within a time budget.
 - **🧠 Memory** — persistent per-user memory with three modes (normal, minimal, none), explicit `/remember` and `/forget`, and periodic consolidation.
-- **🎭 Personalities** — built-in Default, Friendly, and Funny personas, plus up to 10 custom personalities per user.
+- **🎭 Personalities** — seven built-ins (Default, Friend, Funny, Romantic Nyra, Professional, Coder, Creative), plus up to 10 custom personalities per user.
 - **👥 Group support** — in groups, Nyra replies only when mentioned by name (`Nyra` / `نیرا` / `نيرا`) or when you reply to one of her messages; context is tracked per thread.
 - **🛡️ Rate limiting & blocking** — per-user, per-chat, and per-admin limits, plus an admin block list.
 - **🛠️ Admin panel** — manage users, chats, group modes, connections, and block list, and view stats and system status — all inline in Telegram.

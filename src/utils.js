@@ -110,6 +110,47 @@ export function isOpenRouterUrl(baseUrl) {
   return String(baseUrl).toLowerCase().indexOf("openrouter.ai") !== -1;
 }
 
+// Reduces a pasted URL to the API root the adapters append to. Users paste the
+// full endpoint they found in a provider's docs ("…/v1/chat/completions"), and
+// appending "/chat/completions" to that produced "…/chat/completions/chat/
+// completions". Returns "" when the input is not a usable http(s) URL.
+const ENDPOINT_SUFFIXES = ["/chat/completions", "/completions", "/messages", "/models"];
+
+export function normalizeBaseUrl(provider, raw) {
+  const text = String(raw === undefined || raw === null ? "" : raw).trim();
+  if (!text) return "";
+  let url;
+  try {
+    url = new URL(text);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return "";
+  } catch (err) { return ""; }
+  let path = url.pathname.replace(/\/+$/, "");
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const lower = path.toLowerCase();
+    for (let i = 0; i < ENDPOINT_SUFFIXES.length; i++) {
+      const suffix = ENDPOINT_SUFFIXES[i];
+      if (lower.endsWith(suffix)) {
+        path = path.slice(0, path.length - suffix.length).replace(/\/+$/, "");
+        changed = true;
+        break;
+      }
+    }
+  }
+  // Anthropic's API always lives under /v1; an OpenAI-compatible gateway is
+  // normally rooted at /v1 too, but some (OpenRouter, local servers, gateways
+  // that already include a version segment) are not — only fill in the gap when
+  // the path is completely empty, and only for Anthropic where it is known.
+  if (!path && provider === "anthropic") path = "/v1";
+  url.pathname = path || "/";
+  url.search = "";
+  url.hash = "";
+  let out = url.toString();
+  if (out.endsWith("/")) out = out.slice(0, -1);
+  return out;
+}
+
 function isOnlyEmojiOrSymbols(text) {
   if (!text) return false;
   const cleaned = String(text).replace(/\s/g, "");

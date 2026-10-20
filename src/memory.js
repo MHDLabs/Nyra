@@ -1,5 +1,5 @@
 // Nyra — memory: memory data handling, system prompts, personalities, consolidation.
-import { MEMORY_UPDATE_INTERVAL, MEMORY_MAX_CHARS, AI_PRIMARY_ATTEMPT_TIMEOUT_MS, CONSOLIDATE_USER_TRUNCATE, CONSOLIDATE_ASSISTANT_TRUNCATE, LANGUAGE_RULE_PROMPT, PERSIAN_STYLE_RULES_PROMPT, DEFAULT_PERSONALITIES } from "./config.js";
+import { MEMORY_UPDATE_INTERVAL, MEMORY_MAX_CHARS, AI_PRIMARY_ATTEMPT_TIMEOUT_MS, CONSOLIDATE_USER_TRUNCATE, CONSOLIDATE_ASSISTANT_TRUNCATE, LANGUAGE_RULE_PROMPT, PERSIAN_STYLE_RULES_PROMPT, DEFAULT_PERSONALITIES, RETIRED_PERSONALITY_IDS } from "./config.js";
 import { now, truncate, escapeHtml, sanitizeMemoryString, sanitizeMemoryFact, dedupeArray, filterSubstrings } from "./utils.js";
 import { getUser, getEnabledUserConnections } from "./db.js";
 import { generateWithConnection } from "./ai.js";
@@ -191,7 +191,12 @@ export async function listAvailablePersonalities(env, userId) {
   try {
     const result = await env.DB.prepare("SELECT personality_id, name FROM personalities WHERE enabled = 1 ORDER BY name ASC").all();
     const rows = result.results || [];
-    for (let i = 0; i < rows.length; i++) builtins.push({ id: rows[i].personality_id, name: rows[i].name, builtin: true });
+    for (let i = 0; i < rows.length; i++) {
+      // Defence in depth: migration 7 deletes these, but a row written by an
+      // older deploy (or a stale replica) must never reach a menu.
+      if (RETIRED_PERSONALITY_IDS.indexOf(rows[i].personality_id) !== -1) continue;
+      builtins.push({ id: rows[i].personality_id, name: rows[i].name, builtin: true });
+    }
   } catch (err) {}
   const customs = [];
   try {

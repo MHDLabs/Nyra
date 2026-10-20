@@ -12,6 +12,61 @@ import { routeMiniAppAPI } from "./miniapp.js";
 import { logFailedUpdate } from "./dlq.js";
 import { handleWebhook, handleSetup, handleStatus, processMessage, handleCallbackQuery } from "./handlers/index.js";
 
+// A queue message's ordering group. Two updates only need to stay serialized
+// when they belong to the same conversation, so the chat id is the key and the
+// user id is the fallback for callback queries that carry no chat.
+function conversationKey(update) {
+  if (!update) return "none";
+  const msg = update.message || update.edited_message;
+  if (msg && msg.chat && msg.chat.id !== undefined) return "c:" + msg.chat.id;
+  const q = update.callback_query;
+  if (q && q.message && q.message.chat && q.message.chat.id !== undefined) return "c:" + q.message.chat.id;
+  if (q && q.from && q.from.id !== undefined) return "u:" + q.from.id;
+  return "none";
+}
+
+// Marker written after a message is fully handled. Telegram redelivers a batch
+// when an ack never lands, and re-running a handled update duplicates its
+// outbound messages; the marker makes that redelivery a cheap no-op. KV is
+// eventually consistent, so this is best-effort — the real dedup for new
+// updates is the processed_updates row in the webhook.
+const QUEUE_DONE_TTL = 3600;
+
+async function alreadyHandled(env, updateId) {
+  if (updateId === undefined || updateId === null) return false;
+  if (!env.KV || typeof env.KV.get !== "function") return false;
+  try { return !!(await env.KV.get("qdone:" + updateId)); } catch (e) { return false; }
+}
+
+async function markHandled(env, updateId) {
+  if (updateId === undefined || updateId === null) return;
+  if (!env.KV || typeof env.KV.put !== "function") return;
+  try { await env.KV.put("qdone:" + updateId, "1", { expirationTtl: QUEUE_DONE_TTL }); } catch (e) {}
+}
+
+// One conversation's messages, in order. Failures never stop the chain: a
+// retried update must not stall the messages queued behind it in the same chat.
+async function processChain(env, ctx, messages) {
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    const update = msg.body && msg.body.update;
+    if (!update) { safeAck(msg); continue; }
+    if (msg.attempts > 1 && (await alreadyHandled(env, update.update_id))) { safeAck(msg); continue; }
+    try {
+      if (update.message) await processMessage(env, ctx, update.message);
+      else if (update.callback_query) await handleCallbackQuery(env, ctx, update.callback_query);
+      await markHandled(env, update.update_id);
+      safeAck(msg);
+    } catch (err) {
+      console.error("Queued update processing failed:", err.message);
+      safeRetry(msg);
+    }
+  }
+}
+
+function safeAck(msg) { try { msg.ack(); } catch (e) { console.error("queue ack failed:", e.message); } }
+function safeRetry(msg) { try { msg.retry(); } catch (e) { console.error("queue retry failed:", e.message); } }
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -108,18 +163,21 @@ export default {
       }
       return;
     }
-    // Main queue consumer
+    // Main queue consumer. Messages are grouped by conversation (chat, falling
+    // back to user) and each group runs as its own sequential chain: two
+    // updates in the same chat keep their order, while unrelated chats in the
+    // same batch proceed in parallel. The previous strict `await` loop made one
+    // slow AI turn block every other user in the batch.
+    const groups = new Map();
     for (let i = 0; i < batch.messages.length; i++) {
       const msg = batch.messages[i];
-      const update = msg.body && msg.body.update;
-      try {
-        if (update && update.message) await processMessage(env, ctx, update.message);
-        else if (update && update.callback_query) await handleCallbackQuery(env, ctx, update.callback_query);
-        msg.ack();
-      } catch (err) {
-        console.error("Queued update processing failed:", err.message);
-        try { msg.retry(); } catch (e) { console.error("queue retry failed:", e.message); }
-      }
+      const key = conversationKey(msg.body && msg.body.update);
+      const list = groups.get(key);
+      if (list) list.push(msg);
+      else groups.set(key, [msg]);
     }
+    const chains = [];
+    groups.forEach(function (list) { chains.push(processChain(env, ctx, list)); });
+    await Promise.all(chains);
   }
 };

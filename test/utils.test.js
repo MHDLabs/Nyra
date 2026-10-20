@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { containsPhrase, constantTimeEqual, safeCallbackId, escapeHtml, truncate } from "../src/utils.js";
+import { containsPhrase, constantTimeEqual, safeCallbackId, escapeHtml, truncate, normalizeBaseUrl } from "../src/utils.js";
 
 test("containsPhrase matches at word boundaries only", () => {
   assert.equal(containsPhrase("I love art", "art"), true);
@@ -53,4 +53,17 @@ test("truncate respects the limit", () => {
   assert.equal(truncate("abc", 10), "abc");
   assert.equal(truncate("abcdef", 4), "a...");
   assert.equal(truncate(null, 5), "");
+});
+
+test("normalizeBaseUrl strips a pasted endpoint back to the API root", () => {
+  assert.equal(normalizeBaseUrl("openai-compatible", "https://api.openai.com/v1/chat/completions"), "https://api.openai.com/v1");
+  assert.equal(normalizeBaseUrl("openai-compatible", "https://api.openai.com/v1/"), "https://api.openai.com/v1");
+  assert.equal(normalizeBaseUrl("openai-compatible", "https://openrouter.ai/api/v1/models"), "https://openrouter.ai/api/v1");
+  assert.equal(normalizeBaseUrl("anthropic", "https://api.anthropic.com/v1/messages"), "https://api.anthropic.com/v1");
+  assert.equal(normalizeBaseUrl("anthropic", "https://api.anthropic.com"), "https://api.anthropic.com/v1");
+  assert.equal(normalizeBaseUrl("openai-compatible", "  https://x.test/v1?key=1  "), "https://x.test/v1");
+  // Not a usable URL: the caller must reject instead of saving a broken base.
+  assert.equal(normalizeBaseUrl("openai-compatible", "api.openai.com/v1"), "");
+  assert.equal(normalizeBaseUrl("openai-compatible", "ftp://x.test"), "");
+  assert.equal(normalizeBaseUrl("openai-compatible", ""), "");
 });
