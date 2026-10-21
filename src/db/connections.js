@@ -210,7 +210,11 @@ export async function getEnabledSharedConnections(env) {
 export async function listGlobalConnections(env) {
   try {
     const res = await env.DB.prepare(
-      "SELECT connection_id, telegram_id, label, provider, base_url, model, description, enabled, is_global, is_default, is_fast, supports_vision, display_order, last_test_status, last_test_error, last_test_diagnostic, last_test_at, consecutive_failures, created_at FROM ai_connections WHERE is_global = 1 ORDER BY is_default DESC, display_order ASC, created_at ASC"
+      // `has_key` is derived, never the ciphertext itself: the admin panel has
+      // to show whether a shared model can actually authenticate, and this list
+      // is the only place it can learn that. Selecting encrypted_key would put
+      // key material in a JSON response; a length check does not.
+      "SELECT connection_id, telegram_id, label, provider, base_url, model, description, enabled, is_global, is_default, is_fast, supports_vision, display_order, last_test_status, last_test_error, last_test_diagnostic, last_test_at, consecutive_failures, created_at, (encrypted_key IS NOT NULL AND length(encrypted_key) > 0) AS has_key FROM ai_connections WHERE is_global = 1 ORDER BY is_default DESC, display_order ASC, created_at ASC"
     ).all();
     return res.results || [];
   } catch (err) {

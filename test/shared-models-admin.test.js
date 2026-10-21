@@ -113,7 +113,27 @@ function makeDB(opts) {
               list = list.filter(r => (r.telegram_id === userArg && r.is_global === 0) || r.is_global === 1);
             }
             list.sort((x, y) => (y.is_global - x.is_global) || (y.is_default - x.is_default) || (x.display_order - y.display_order));
-            return { results: list.map(r => ({ ...r })) };
+            // Honour the derived `has_key` projection. Returning raw rows here
+            // is how the admin panel shipped `has_key: false` for a model that
+            // DID have a key: the stub answered with a field the real SELECT
+            // never produced.
+            // `listGlobalConnections` never selects the ciphertext: the real
+            // query either projects a derived `has_key` boolean or nothing at
+            // all. Mirror both shapes exactly, so a query that forgets the
+            // projection can no longer be rescued by the stub handing back an
+            // encrypted_key the endpoint never received.
+            const wantsHasKey = sql.indexOf("AS has_key") !== -1;
+            const isGlobalList = sql.indexOf("FROM ai_connections WHERE is_global = 1 ORDER BY") !== -1;
+            if (!isGlobalList) {
+              return { results: list.map(r => ({ ...r })) };
+            }
+            return { results: list.map(r => {
+              const copy = { ...r };
+              delete copy.encrypted_key;
+              delete copy.key_iv;
+              if (wantsHasKey) copy.has_key = !!(r.encrypted_key && r.encrypted_key.length > 0);
+              return copy;
+            }) };
           }
           return { results: [] };
         },
@@ -219,6 +239,27 @@ const MODEL_BODY = {
   model: "qwen/qwen3-32b",
   api_key: SHARED_KEY
 };
+
+test("the admin list reports has_key from the stored ciphertext, without it", async () => {
+  // Regression: listGlobalConnections did not project `has_key`, so the panel
+  // showed every shared model as keyless while routing still worked. The UI
+  // must be able to tell "configured" from "not configured".
+  const env = makeEnv();
+  const provider = stubProvider("ok");
+  try {
+    await handleAdminCreateSharedModel(env, ADMIN_ID, MODEL_BODY);
+    const listed = await (await handleAdminSharedModels(env, ADMIN_ID)).json();
+    assert.equal(listed.models[0].has_key, true, "a saved key must be reported");
+    assert.equal(JSON.stringify(listed).indexOf("encrypted_key"), -1, "no ciphertext in the payload");
+    assert.equal(JSON.stringify(listed).indexOf("key_iv"), -1, "no iv in the payload");
+
+    // A row with no key reports false rather than throwing or lying.
+    const id = listed.models[0].connection_id;
+    env.DB.rows.get(id).encrypted_key = "";
+    const after = await (await handleAdminSharedModels(env, ADMIN_ID)).json();
+    assert.equal(after.models[0].has_key, false);
+  } finally { provider.restore(); }
+});
 
 test("admin creates a shared model; it is stored tested, enabled and default", async () => {
   const env = makeEnv();
