@@ -8,7 +8,7 @@ import { extractInitData, handleAuth } from "./auth.js";
 import { handleUserProfile, handleUserStats, handleChatMessage, handleUserConnections, handleSetActiveConnection, handleToggleCodingMode } from "./user.js";
 import { handlePersonalModels, handleCreatePersonalModel, handleDeletePersonalModel } from "./personal.js";
 import { handleUserRoutes, handleAdminCreateRoute, handleAdminDeleteRoute, handleAdminRouteAction } from "./routes.js";
-import { handleAdminStats, handleAdminUsers, handleAdminChats, handleAdminSettings, handleAdminUpdateSettings, handleAdminConnectionUsage } from "./admin.js";
+import { handleAdminStats, handleAdminUsers, handleAdminChats, handleAdminSettings, handleAdminUpdateSettings, handleAdminConnectionUsage, handleAdminSharedUsage } from "./admin.js";
 import { handleAdminBroadcasts, handleCreateBroadcast, handleBroadcastAction, handleGetBroadcast, handleBroadcastPreview } from "./broadcast-api.js";
 import { handleAdminFailedUpdates, handleReplayFailedUpdate } from "./dlq-api.js";
 import { handleUserMemory, handleSetMemoryMode, handleClearMemory, handlePersonalities, handleSetPersonality, handleCustomInstructions, handleAdminConnectionToggle } from "./preferences.js";
@@ -213,6 +213,12 @@ export async function routeMiniAppAPI(env, ctx, request, pathname) {
       if (path === "/api/admin/connection-usage" && request.method === "GET") {
         const days = parseInt(url.searchParams.get("days") || "7", 10);
         return await handleAdminConnectionUsage(env, days);
+      }
+
+      // Shared-service quota usage (per-user daily requests and tokens)
+      if (path === "/api/admin/shared-usage" && request.method === "GET") {
+        const days = parseInt(url.searchParams.get("days") || "7", 10);
+        return await handleAdminSharedUsage(env, Number.isFinite(days) ? days : 7);
       }
 
       // Fast / vision capability switches for global connections

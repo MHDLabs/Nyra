@@ -5,8 +5,8 @@ import { buildContextMessages } from "../src/memory.js";
 
 test("built-in personality catalog keeps only the surviving modes", () => {
   const ids = new Set(DEFAULT_PERSONALITIES.map(personality => personality.id));
-  for (const id of ["default", "friendly", "romantic", "professional", "funny", "coder", "creative"]) assert.ok(ids.has(id), id);
-  assert.equal(DEFAULT_PERSONALITIES.length, 7);
+  for (const id of ["default", "friendly", "romantic", "funny", "creative"]) assert.ok(ids.has(id), id);
+  assert.equal(DEFAULT_PERSONALITIES.length, 5);
   const friend = DEFAULT_PERSONALITIES.find(personality => personality.id === "friendly");
   const romantic = DEFAULT_PERSONALITIES.find(personality => personality.id === "romantic");
   assert.match(friend.prompt, /strictly platonic/i);
@@ -17,7 +17,7 @@ test("built-in personality catalog keeps only the surviving modes", () => {
 
 test("retired personalities are gone from the catalog and listed for cleanup", () => {
   const ids = DEFAULT_PERSONALITIES.map(personality => personality.id);
-  const retired = ["sarcastic", "teacher", "researcher", "debater", "minimal", "calm"];
+  const retired = ["sarcastic", "teacher", "researcher", "debater", "minimal", "calm", "professional", "coder"];
   for (const id of retired) {
     assert.equal(ids.indexOf(id), -1, id + " must not be a builtin");
     assert.ok(RETIRED_PERSONALITY_IDS.indexOf(id) !== -1, id + " must be in the retire list");

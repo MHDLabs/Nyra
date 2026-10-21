@@ -1,5 +1,9 @@
 // Global deployment settings (`app_settings` key/value toggles).
 import { now } from "../utils.js";
+import {
+  SETTING_SHARED_SERVICE_ENABLED, SETTING_SHARED_REQUEST_LIMIT, SETTING_SHARED_TOKEN_LIMIT,
+  DEFAULT_SHARED_REQUEST_LIMIT, DEFAULT_SHARED_TOKEN_LIMIT
+} from "../config.js";
 
 export async function getSetting(env, key, fallback) {
   try {
@@ -55,4 +59,57 @@ export async function canUseWorkersAI(env, userId) {
   if (policy === "all") return true;
   const { isAdmin } = await import("../utils.js");
   return isAdmin(env, userId);
+}
+
+// --- Shared service (admin-provided global connections) -------------------
+
+export async function isSharedServiceEnabled(env) {
+  // Opt-in only: an admin must explicitly enable the shared service, so a
+  // freshly deployed bot never gives away operator-paid credit by accident.
+  const v = await getSetting(env, SETTING_SHARED_SERVICE_ENABLED, "0");
+  return v === "1" || v === "true";
+}
+
+function quotaFromSetting(v, fallback) {
+  const n = parseInt(v, 10);
+  if (!Number.isFinite(n) || n < 0) return fallback;
+  return n;
+}
+
+export async function getSharedRequestLimit(env) {
+  return quotaFromSetting(await getSetting(env, SETTING_SHARED_REQUEST_LIMIT, String(DEFAULT_SHARED_REQUEST_LIMIT)), DEFAULT_SHARED_REQUEST_LIMIT);
+}
+
+export async function getSharedTokenLimit(env) {
+  return quotaFromSetting(await getSetting(env, SETTING_SHARED_TOKEN_LIMIT, String(DEFAULT_SHARED_TOKEN_LIMIT)), DEFAULT_SHARED_TOKEN_LIMIT);
+}
+
+export async function getSharedServiceSettings(env) {
+  return {
+    enabled: await isSharedServiceEnabled(env),
+    daily_request_limit: await getSharedRequestLimit(env),
+    daily_token_limit: await getSharedTokenLimit(env)
+  };
+}
+
+export async function setSharedServiceSettings(env, updatedBy, body) {
+  const patch = {};
+  if (body && body.enabled !== undefined) patch[SETTING_SHARED_SERVICE_ENABLED] = body.enabled ? "1" : "0";
+  if (body && body.daily_request_limit !== undefined) {
+    const n = parseInt(body.daily_request_limit, 10);
+    if (!Number.isFinite(n) || n < 0) return { ok: false, error: "daily_request_limit must be 0 or a positive integer" };
+    patch[SETTING_SHARED_REQUEST_LIMIT] = String(n);
+  }
+  if (body && body.daily_token_limit !== undefined) {
+    const n = parseInt(body.daily_token_limit, 10);
+    if (!Number.isFinite(n) || n < 0) return { ok: false, error: "daily_token_limit must be 0 or a positive integer" };
+    patch[SETTING_SHARED_TOKEN_LIMIT] = String(n);
+  }
+  const keys = Object.keys(patch);
+  if (keys.length === 0) return { ok: false, error: "no settings supplied" };
+  for (let i = 0; i < keys.length; i++) {
+    const ok = await setSetting(env, keys[i], patch[keys[i]], updatedBy);
+    if (!ok) return { ok: false, error: "failed to persist " + keys[i] };
+  }
+  return { ok: true, settings: await getSharedServiceSettings(env) };
 }

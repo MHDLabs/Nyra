@@ -21,3 +21,14 @@ ENCRYPTION_KEY=
 # Optional: cached bot identity (fetched automatically if omitted)
 # TELEGRAM_BOT_ID=
 # TELEGRAM_BOT_USERNAME=
+
+# Optional: enables the agent's web_search tool. Without it the tool is hidden
+# from the model, so it is never offered a tool it cannot execute.
+# TAVILY_API_KEY=
+
+# Optional: transcribes Telegram voice messages via Groq
+# (whisper-large-v3-turbo). Without it, voice messages get a short
+# "transcription not configured" notice. GROQ_STT_API_KEY is accepted as an
+# alias for a dedicated speech key.
+# GROQ_API_KEY=
+# GROQ_STT_API_KEY=

@@ -35,6 +35,18 @@ export async function ensureSchema(env) {
     "CREATE TABLE IF NOT EXISTS route_tokens (token_id TEXT PRIMARY KEY, route_id TEXT NOT NULL, label TEXT, encrypted_key TEXT NOT NULL, key_iv TEXT NOT NULL, encryption_version INTEGER DEFAULT 2, enabled INTEGER DEFAULT 1, is_primary INTEGER DEFAULT 0, display_order INTEGER DEFAULT 100, consecutive_failures INTEGER DEFAULT 0, last_success_at INTEGER, last_used_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
     "CREATE INDEX IF NOT EXISTS idx_route_tokens_route ON route_tokens(route_id, is_primary)",
     "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL, updated_by INTEGER)",
+    // Per-user, per-UTC-day consumption of the admin-provided global ("shared
+    // service") connections. Kept separate from `connection_usage` because
+    // quotas are per user, not per connection: an admin may run several global
+    // models and the user's daily allowance must be shared across all of them.
+    "CREATE TABLE IF NOT EXISTS shared_service_usage (telegram_id INTEGER NOT NULL, date TEXT NOT NULL, requests_count INTEGER NOT NULL DEFAULT 0, tokens_used INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (telegram_id, date))",
+    "CREATE INDEX IF NOT EXISTS idx_shared_usage_date ON shared_service_usage(date)",
+    // One row per transcribed Telegram voice message. The primary key is the
+    // (chat_id, message_id) pair, so at-most-once transcription is a database
+    // guarantee: a second attempt loses the INSERT OR IGNORE race and reuses the
+    // stored transcript instead of calling the provider again.
+    "CREATE TABLE IF NOT EXISTS voice_transcripts (chat_id INTEGER NOT NULL, message_id INTEGER NOT NULL, transcript TEXT, status TEXT NOT NULL DEFAULT 'pending', error TEXT, created_at INTEGER NOT NULL, PRIMARY KEY (chat_id, message_id))",
+    "CREATE INDEX IF NOT EXISTS idx_voice_transcripts_created ON voice_transcripts(created_at)",
     "CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)"
   ];
   const schemaErrors = [];
@@ -173,6 +185,16 @@ const MIGRATIONS = [
   {
     id: 7,
     label: "retire builtin personalities: " + RETIRED_PERSONALITY_IDS.join(", "),
+    statements: [
+      "DELETE FROM personalities WHERE is_builtin = 1 AND personality_id IN (" + RETIRED_PERSONALITY_SQL + ")",
+      "UPDATE users SET personality_id = 'default', updated_at = CAST(strftime('%s','now') AS INTEGER) WHERE personality_id IN (" + RETIRED_PERSONALITY_SQL + ")"
+    ]
+  },
+  {
+    // Re-runs the purge for the ids added after migration 7 was already applied
+    // (`professional`, `coder`). Same idempotent statements, new migration id.
+    id: 8,
+    label: "retire expanded builtin personality list",
     statements: [
       "DELETE FROM personalities WHERE is_builtin = 1 AND personality_id IN (" + RETIRED_PERSONALITY_SQL + ")",
       "UPDATE users SET personality_id = 'default', updated_at = CAST(strftime('%s','now') AS INTEGER) WHERE personality_id IN (" + RETIRED_PERSONALITY_SQL + ")"

@@ -49,7 +49,7 @@ Prefer the CLI? The full manual flow is in [Setup](#-setup) → *Option B*.
 - **🔐 Encrypted keys** — provider API keys are sealed with AES-256-GCM (HKDF-derived per owner) and never leave the database in plaintext.
 - **🛟 Automatic fallback** — if a connection fails or times out, Nyra retries and falls back to other enabled connections within a time budget.
 - **🧠 Memory** — persistent per-user memory with three modes (normal, minimal, none), explicit `/remember` and `/forget`, and periodic consolidation.
-- **🎭 Personalities** — seven built-ins (Default, Friend, Funny, Romantic Nyra, Professional, Coder, Creative), plus up to 10 custom personalities per user.
+- **🎭 Personalities** — five built-ins (Default, Friend, Funny, Romantic Nyra, Creative), plus up to 10 custom personalities per user.
 - **👥 Group support** — in groups, Nyra replies only when mentioned by name (`Nyra` / `نیرا` / `نيرا`) or when you reply to one of her messages; context is tracked per thread.
 - **🛡️ Rate limiting & blocking** — per-user, per-chat, and per-admin limits, plus an admin block list.
 - **🛠️ Admin panel** — manage users, chats, group modes, connections, and block list, and view stats and system status — all inline in Telegram.
@@ -186,11 +186,31 @@ In a private chat with the bot, open `/admin` → **Connections** and add a prov
 | `TELEGRAM_SECRET` | ✅ | Webhook secret token Telegram sends with every call; also gates `/setup`. Generate with `openssl rand -hex 32`. No derivation — the Worker fails with HTTP 500 without it |
 | `ENCRYPTION_KEY` | ✅ | Base64-encoded 32-byte key for AES-256-GCM encryption of stored API keys. Generate with `openssl rand -base64 32`. Must decode to exactly 32 bytes |
 | `ADMIN_IDS` | ✅ | Numeric Telegram admin ID(s), comma-separated (prompted by the deploy button) |
+| `TAVILY_API_KEY` | optional | Enables the `web_search` tool for the agent. Without it the tool is hidden from the model entirely, so it is never offered a tool it cannot run |
+| `GROQ_API_KEY` | optional | Enables transcription of Telegram voice messages (Groq `whisper-large-v3-turbo`). Without it, voice messages get a short "transcription not configured" notice instead of silence |
 | `TELEGRAM_BOT_ID` / `TELEGRAM_BOT_USERNAME` | optional | Cached bot identity; fetched automatically when omitted |
 
 D1 is bound as `DB`, KV as `KV`, and the update queue as `NYRA_QUEUE` (see `wrangler.toml`). Update flow: Telegram → webhook (acks immediately, after `update_id` dedup) → queue → consumer, which runs the full AI pipeline — so long streaming replies are not cut off by the 30-second post-response limit that applies to webhook requests.
 
 The schema is created on first use — triggered by the status page, the first webhook, or the cron probe (all KV-gated so D1 stays quiet once initialised); one-time migrations are versioned and tracked in the `schema_migrations` table. The Telegram webhook URL is learned from the first request that reaches the Worker — in practice `GET /status`, since `/` is served by the asset layer and never reaches the code — and re-verified automatically by the `*/5` cron trigger (`ensureWebhook` in `src/telegram.js`).
+
+## 🎙️ Voice
+
+- **Incoming voice messages** are transcribed with Groq when `GROQ_API_KEY` is set. The transcript is combined with any caption and treated as the user's message. Transcription is at-most-once per message (a KV claim keyed by `message_id`) and the stored transcript is pruned along with the message itself, so audio text does not outlive the conversation window.
+- **Outgoing speech** is present as a disabled adapter and is **not working** in this deployment. It targets Microsoft Edge's read-aloud WebSocket service, which is undocumented and completes its handshake only when the request carries Edge's own `Origin` and `User-Agent` headers. A bare connection closes with code 1006, and the runtime `WebSocket` constructor accepts only a URL and protocols — it cannot set request headers. `scripts/check-tts.mjs` reproduces this (`FAIL reason=socket_unavailable`). The adapter is therefore off by default (`EDGE_TTS_ENABLED_DEFAULT = false`), always reports the failure instead of throwing, and every caller falls back to text. Do not describe speech output as a working feature until a header-capable transport or a proxy exists.
+
+## 🔁 Shared service (operator-paid credit)
+
+By default every user spends **their own** provider connection. The shared service lets the operator lend one global connection to others, and it is **opt-in**: with no `shared_service_enabled` row in `app_settings`, shared credit is refused (`shared_service_disabled`).
+
+When an admin enables it, quotas are enforced per user per UTC day in `shared_service_usage`:
+
+- The request is reserved with a single conditional `UPDATE … WHERE (? = 0 OR requests_count < ?)` and the row count is checked, so two concurrent messages cannot both take the last unit.
+- If the reserved request then breaches a token quota, the request unit is refunded.
+- If the quota table cannot be read or written, the reservation **fails closed** — operator credit is never handed out because the limiter is down.
+- A limit of `0` means unlimited for that dimension.
+
+Admins manage this from the Mini App (`/api/admin/shared-settings`, `/api/admin/shared-usage`); regular users see a plain-language refusal naming the reason and their current usage.
 
 ## 💬 Commands
 
@@ -229,7 +249,7 @@ Behaviour is covered by Node's built-in test runner — no dependencies to insta
 npm test
 ```
 
-The suite (67 tests in `test/`) covers message splitting (`split.test.js`), memory serialization (`memory.test.js`), crypto including mandatory-secret validation (`crypto.test.js`), sanitizers and admin-ID parsing (`utils.test.js`), Mini App routes for every endpoint (`routes.test.js`), settings validation (`settings.test.js`), reaction classification (`reactions.test.js`), the prompt brain (`brain.test.js`) and the deploy-URL extraction (`deploy.test.js`).
+The suite (223 tests in `test/`) covers message splitting (`split.test.js`), memory serialization (`memory.test.js`), crypto including mandatory-secret validation (`crypto.test.js`), sanitizers and admin-ID parsing (`utils.test.js`), Mini App routes for every endpoint (`routes.test.js`), settings validation (`settings.test.js`), reaction classification (`reactions.test.js`), the prompt brain (`brain.test.js`), the deploy-URL extraction (`deploy.test.js`), queue ordering and DLQ handling (`modules.test.js`), the agent tool loop, shared-service quotas (`shared-service.test.js`) and voice transcription and synthesis (`voice-stt.test.js`, `voice-tts.test.js`).
 
 ## 📄 License
 

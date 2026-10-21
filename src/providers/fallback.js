@@ -13,7 +13,7 @@ import { normalizeError, humanizeError, isRetryableCategory } from "./errors.js"
 import { generateOpenAICompatible } from "./openai.js";
 import { generateAnthropic } from "./anthropic.js";
 import { streamProviderResponse } from "./stream.js";
-import { executeAgentTool, configuredToolDefinitions } from "../tools.js";
+import { executeAgentTool, configuredToolDefinitions, isWebSearchConfigured } from "../tools.js";
 
 export async function generateWithConnection(env, connection, messages, options, timeoutMs) {
   const ownerId = connection.telegram_id !== undefined && connection.telegram_id !== null ? connection.telegram_id : 0;
@@ -33,6 +33,14 @@ export async function generateAgentWithConnection(env, user, connection, message
   }
   const definitions = configuredToolDefinitions(provider, env);
   const conversation = messages.map(message => ({ ...message }));
+  // When live search is unavailable the model must be told so explicitly. Left
+  // to itself it will happily answer "let me search…" and then produce a reply
+  // that never mentions the failure, which reads as a silent hang.
+  const searchUnavailable = !isWebSearchConfigured(env);
+  if (searchUnavailable && conversation[0]) {
+    conversation[0] = { ...conversation[0], content: String(conversation[0].content) +
+      "\n\nLive web search is NOT available in this deployment. If the user asks you to search, look something up, or find current information, say plainly that live search is not configured and answer from your own knowledge if you can. Never say you are searching, and never output a placeholder like \"one moment\"." };
+  }
   const latestUserMessage = [...messages].reverse().find(message => message.role === "user");
   const memoryIntentAllowed = !!(latestUserMessage && typeof latestUserMessage.content === "string" &&
     /\b(?:remember|forget|save\s+(?:this|that)\s+to\s+memory|delete\s+from\s+memory)\b|یادت|به\s+خاطر\s+بسپار|فراموش|از\s+حافظه\s+پاک/iu.test(latestUserMessage.content));

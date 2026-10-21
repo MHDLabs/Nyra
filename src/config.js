@@ -94,6 +94,17 @@ export const SETTING_ALLOW_PERSONAL_MODELS = "allow_personal_models";
 export const SETTING_PERSONAL_MODEL_LIMIT = "personal_model_limit";
 export const DEFAULT_PERSONAL_MODEL_LIMIT = 5;
 
+// --- Shared service (admin-provided global connections) --------------------
+// A global connection is paid for by the operator, so it is a "shared service"
+// with its own kill switch and per-user daily quotas. Enforcement is server
+// side, in the AI request path, not in the Mini App UI.
+export const SETTING_SHARED_SERVICE_ENABLED = "shared_service_enabled";
+export const SETTING_SHARED_REQUEST_LIMIT = "shared_daily_request_limit";
+export const SETTING_SHARED_TOKEN_LIMIT = "shared_daily_token_limit";
+// 0 means "no limit". Quotas are counted per user per UTC day.
+export const DEFAULT_SHARED_REQUEST_LIMIT = 0;
+export const DEFAULT_SHARED_TOKEN_LIMIT = 0;
+
 // --- Tasks & Reminders -----------------------------------------------------
 // Scheduling reuses the existing `*/5 * * * *` cron trigger, so a reminder can
 // be delivered up to one cron interval late. That is the documented precision
@@ -137,6 +148,33 @@ export const LANGUAGE_RULE_PROMPT = "Language rule: Always respond in Persian (F
 
 export const PERSIAN_STYLE_RULES_PROMPT = "Persian writing rules for every response:\n\nAvoid the machine-like patterns common in AI writing. Do not:\n- Open with clichés (در دنیای امروز، لازم به ذکر است، در این مقاله قصد داریم)\n- Use filler adverbs (در واقع، بدون شک، به طور کلی) unless they carry real meaning\n- Force artificial contrasts (فقط X نیست؛ Y است) — state the point directly\n- Fake suspense (چیزی که کمتر کسی می‌داند، نکته‌ای که اغلب نادیده گرفته می‌شود)\n- Use dramatic colons in prose — colons are for lists, labels, quotes\n- Ask rhetorical questions then answer them immediately\n- Comment on importance (که نشان‌دهنده تعهد است، که گواهی بر کیفیت است)\n- Attribute vaguely (کارشناسان معتقدند، تحقیقات نشان می‌دهد) — cite or drop\n- Use weak nominal verbs (نقش ایفا می‌کند) — use direct verbs (X را انجام می‌دهد)\n- Rotate technical terms for variety — pick one and stick to it\n- Chain staccato sentences (ساده است. سریع است. دقیق است.) unless deliberate\n- End with philosophical lines (آینده در راه نیست؛ همین حالا اینجاست)\n- Add repetitive summaries (در پایان می‌توان گفت، در مجموع)\n- Sprinkle decorative emojis or bold words\n- Build bullet lists for two short sentences\n- Chain three equal adjectives (سریع، دقیق و هوشمند) without real content\n- Chain «می‌تواند» sentences — be direct about what something does\n- Add generic CTAs (همین امروز قدم اول را بردارید)\n\nVocabulary: Prefer Persian words when the field uses them (رایانه، پایگاه داده، پرونده، بارگیری، پوشه، پیوند، گذرواژه، کارساز، سامانه، فناوری، سازوکار، فرایند، روش، واکاوی، گروه، فهرست، دیدگاه، نمایه، قالب). Keep the loanword when it IS the term of the field (الگوریتم، پروتکل، کامپایلر، API، توکن، کرنل، URL، نام محصولات و برندها). Never invent a Persian term. Readability always wins over purity. Be consistent within a single reply.\n\nThe active personality below may add its own flavor — humor, warmth, formality — but the anti-cliché rules above always apply. A funny reply can be funny without using «در دنیای امروز» or «بیایید صادق باشیم».";
 
+// --- Speech to text (Telegram voice messages only) -------------------------
+// Groq's documented OpenAI-compatible transcription endpoint. `whisper-large-v3-turbo`
+// is preferred: same accuracy band as large-v3 at a fraction of the cost/latency.
+// Transcription is at-most-once per voice message and its result is dropped once
+// the originating message leaves the context window (MAX_CONTEXT_MESSAGES).
+export const GROQ_STT_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
+export const GROQ_STT_MODEL = "whisper-large-v3-turbo";
+export const STT_TIMEOUT_MS = 20000;
+export const STT_MAX_BYTES = 8 * 1024 * 1024;
+export const STT_MAX_TRANSCRIPT = 2000;
+
+// --- Text to speech (Microsoft Edge read-aloud service) --------------------
+// Off by default: the service is undocumented, so it ships behind a flag and a
+// failed synthesis must never block or degrade the text reply.
+//
+// Known blocker (verified, not assumed): the read-aloud endpoint completes the
+// WebSocket handshake only when the request carries Edge's own `Origin` and
+// `User-Agent` headers. A bare connection to EDGE_TTS_URL closes with code 1006.
+// The runtime `WebSocket` constructor accepts a URL and protocols only — it
+// cannot set request headers — so synthesis from inside a Worker cannot succeed
+// until either that API grows header support or a proxy supplies them. The
+// adapter therefore reports `socket_unavailable` and callers fall back to text.
+export const EDGE_TTS_ENABLED_DEFAULT = false;
+export const EDGE_TTS_URL = "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1";
+export const EDGE_TTS_TIMEOUT_MS = 15000;
+export const EDGE_TTS_MAX_CHARS = 800;
+
 export const DEFAULT_PERSONALITIES = [
   {
     id: "default",
@@ -154,11 +192,11 @@ export const DEFAULT_PERSONALITIES = [
     prompt: "You are Nyra in Funny mode. Use light, clever humor and playful wordplay when appropriate, while keeping answers accurate and kind. Serious or sensitive topics take priority over jokes. Never insult or mock the user."
   },
   { id: "romantic", name: "Romantic Nyra", prompt: "You are Nyra in a fictional, affectionate girlfriend-style roleplay chosen by the user. Be warm, playful, attentive, and gently romantic when appropriate. Never claim to be a real human or imply a real-world relationship. Do not manipulate, pressure, isolate, or encourage emotional dependency; respect boundaries and keep the interaction grounded as roleplay." },
-  { id: "professional", name: "Professional", prompt: "Use a polished, respectful, businesslike tone. Prioritize clarity, accurate details, and actionable recommendations. Avoid slang, excessive warmth, and unnecessary jokes." },
-  { id: "coder", name: "Coder", prompt: "Act as a careful programming assistant. Provide correct, runnable code where useful, explain important tradeoffs briefly, validate assumptions, and emphasize secure, maintainable practices. Do not claim code was run unless it was." },
   { id: "creative", name: "Creative", prompt: "Be imaginative and expressive for brainstorming and creative work. Offer fresh options with distinct directions, while following the requested format and constraints." }
 ];
 
 // Retired builtin ids. Kept so a stale D1 row can never bring one back: the
-// schema migration deletes them, and runtime lookups filter them out.
-export const RETIRED_PERSONALITY_IDS = ["sarcastic", "teacher", "researcher", "debater", "minimal", "calm"];
+// schema migrations delete them, and runtime lookups filter them out.
+// `professional` and `coder` were retired because they duplicated `default`
+// with a different tone and no behavioural difference.
+export const RETIRED_PERSONALITY_IDS = ["sarcastic", "teacher", "researcher", "debater", "minimal", "calm", "professional", "coder"];

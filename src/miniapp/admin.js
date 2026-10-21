@@ -1,7 +1,7 @@
 // Admin panel endpoints: site stats, user/chat pagination, global settings
 // and per-connection usage metrics. Reachability is enforced once, in the
 // router, before any of these run.
-import { getAllConnectionUsageStats, setSetting, isPersonalModelsAllowed, getPersonalModelLimit, getWorkersAIPolicy, setWorkersAIPolicy, getWorkersAIModel, setWorkersAIModel } from "../db.js";
+import { getAllConnectionUsageStats, setSetting, isPersonalModelsAllowed, getPersonalModelLimit, getWorkersAIPolicy, setWorkersAIPolicy, getWorkersAIModel, setWorkersAIModel, getSharedServiceSettings, setSharedServiceSettings, getSharedUsageReport } from "../db.js";
 import { jsonOk, jsonError } from "./respond.js";
 
 /**
@@ -83,7 +83,8 @@ export async function handleAdminSettings(env) {
   try {
     const allow = await isPersonalModelsAllowed(env);
     const limit = await getPersonalModelLimit(env);
-    return jsonOk({ allow_personal_models: allow, personal_model_limit: limit, workers_ai_policy: await getWorkersAIPolicy(env), workers_ai_model: await getWorkersAIModel(env), workers_ai_available: !!env.AI });
+    const shared = await getSharedServiceSettings(env);
+    return jsonOk({ allow_personal_models: allow, personal_model_limit: limit, workers_ai_policy: await getWorkersAIPolicy(env), workers_ai_model: await getWorkersAIModel(env), workers_ai_available: !!env.AI, shared_service: shared });
   } catch (err) { return jsonError(500, "Failed to load settings"); }
 }
 
@@ -108,6 +109,13 @@ export async function handleAdminUpdateSettings(env, userId, body) {
       const ok = await setWorkersAIModel(env, body.workers_ai_model, userId);
       if (!ok) return jsonError(400, "Workers AI model must be a valid @cf/... model ID");
     }
+    // Shared service: kill switch + per-user daily quotas. Written through the
+    // same validator the enforcement path reads, so a bad value can never be
+    // persisted in a shape the quota check would misread.
+    if (body && body.shared_service !== undefined) {
+      const res = await setSharedServiceSettings(env, userId, body.shared_service);
+      if (!res.ok) return jsonError(400, res.error);
+    }
     return await handleAdminSettings(env);
   } catch (err) { return jsonError(500, "Failed to update settings"); }
 }
@@ -121,5 +129,19 @@ export async function handleAdminConnectionUsage(env, days = 7) {
     return jsonOk({ stats, days });
   } catch (err) {
     return jsonError(500, err.message || "Failed to load connection usage");
+  }
+}
+
+/**
+ * Shared-service usage: per-user consumption of the operator's global
+ * connections, split from personal-key usage so the admin can see who is
+ * actually spending the shared budget.
+ */
+export async function handleAdminSharedUsage(env, days = 7) {
+  try {
+    const [usage, settings] = await Promise.all([getSharedUsageReport(env, days), getSharedServiceSettings(env)]);
+    return jsonOk({ usage, settings, days });
+  } catch (err) {
+    return jsonError(500, err.message || "Failed to load shared service usage");
   }
 }

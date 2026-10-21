@@ -5,14 +5,29 @@
 import { MAX_TELEGRAM_LENGTH, MEMORY_UPDATE_INTERVAL, RATE_LIMIT_USER_PER_MIN, RATE_LIMIT_USER_PER_HOUR, RATE_LIMIT_CHAT_PER_HOUR, UNHEALTHY_FAILURE_THRESHOLD, UNHEALTHY_WARN_TTL, STREAM_EDIT_THROTTLE_MS, STREAM_PLACEHOLDER, FAST_STREAM_BUDGET_MS, FAST_STALL_TIMEOUT_MS } from "../config.js";
 import { now, escapeHtml, buildUserContent, checkRateLimit } from "../utils.js";
 import { sendMessageReturn, sendMessage, sendMessageSafeResult, editMessage, deleteMessage, startTypingHeartbeat, pickImageFile, downloadTelegramFile } from "../telegram.js";
-import { getUser, upsertUser, getChat, saveThreadMessage, getThreadContext, updateUsageStatsAsync, resolveUserActiveConnection, trackConnectionUsage } from "../db.js";
+import { getUser, upsertUser, getChat, saveThreadMessage, getThreadContext, updateUsageStatsAsync, resolveUserActiveConnection, trackConnectionUsage, reserveSharedRequest, recordSharedTokenUsage, sharedQuotaMessage } from "../db.js";
 import { normalizeError, humanizeError, shouldNotifyAdmin, tryAgentWithFallback, notifyAdminOnError } from "../ai.js";
 import { buildContextMessages, getUserPersonality, consolidateMemory, consolidateChatSummary, incrementMessageCount } from "../memory.js";
 import { showNoConnectionMessage } from "../menus.js";
 import { safeFormatChunks, plainText, plainTextChunks } from "../formatter.js";
 import { handleExplicitMemoryIntent } from "../tools.js";
+import { isVoiceTranscribable, transcribeVoice, withTranscript, pruneStaleTranscripts } from "../voice/stt.js";
 
 export async function handleAIMessage(env, ctx, message, from, chat, isGroup, threadId) {
+  // The typing indicator is owned by this wrapper, not by the stream loop, so
+  // it covers *every* slow phase (profile load, connection resolution, context
+  // assembly, tool calls) and is always stopped — including on early returns
+  // and thrown errors. `stop()` is idempotent, so the stream loop may stop it
+  // as soon as real text starts arriving.
+  const heartbeat = startTypingHeartbeat(env, ctx, chat.id);
+  try {
+    return await runAIMessage(env, ctx, message, from, chat, isGroup, threadId, heartbeat);
+  } finally {
+    heartbeat.stop();
+  }
+}
+
+async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, heartbeat) {
   const userId = from.id;
   const chatId = chat.id;
   const rawText = (message.text || message.caption || "").trim();
@@ -63,6 +78,16 @@ export async function handleAIMessage(env, ctx, message, from, chat, isGroup, th
   // memory consolidator know whether to attribute messages to specific speakers.
   user.is_group = isGroup;
 
+  // Shared-service gate. A global connection belongs to the operator, so the
+  // caller's daily allowance is consumed (and refused) here, server side,
+  // before any provider call is made. Private chats get the reason; in a group
+  // the request is dropped silently so the bot does not spam the room.
+  const sharedReservation = await reserveSharedRequest(env, userId, connection);
+  if (!sharedReservation.allowed) {
+    if (!isGroup) await sendMessage(env, chatId, sharedQuotaMessage(sharedReservation.reason, sharedReservation.used, sharedReservation.quota));
+    return;
+  }
+
   if ((connection.consecutive_failures || 0) >= UNHEALTHY_FAILURE_THRESHOLD) {
     const warnKey = "unhealthy:" + userId + ":" + connection.connection_id;
     try {
@@ -78,7 +103,20 @@ export async function handleAIMessage(env, ctx, message, from, chat, isGroup, th
   const recentContext = await getThreadContext(env, chatId, threadId);
   const chatRow = isGroup ? await getChat(env, chatId) : null;
   const mode = (user && user.memory_mode) || "normal";
-  const userContent = buildUserContent(message);
+  let userContent = buildUserContent(message);
+
+  // Voice notes are transcribed before the turn is built, so the model sees
+  // real words and the stored thread message keeps them. Reaching this point in
+  // a group chat already means the message triggered Nyra, so no extra trigger
+  // check is needed here. A failed transcription degrades to the existing
+  // "[user sent a voice message]" placeholder; it never fails the turn.
+  if (isVoiceTranscribable(message, isGroup, true)) {
+    const result = await transcribeVoice(env, chatId, message);
+    if (result.ok && result.transcript) userContent = withTranscript(userContent, result.transcript);
+    // A transcript must not outlive its place in the context window. Cheap to
+    // run only on voice turns, which are the only turns that add rows.
+    ctx.waitUntil(pruneStaleTranscripts(env, chatId, threadId));
+  }
 
   await saveThreadMessage(env, chatId, threadId, message.message_id, userId, "user", userContent);
 
@@ -108,7 +146,9 @@ export async function handleAIMessage(env, ctx, message, from, chat, isGroup, th
 
   const placeholderResult = await sendMessageSafeResult(env, chatId, STREAM_PLACEHOLDER, { reply_to_message_id: replyToId });
   if (!placeholderResult || !placeholderResult.ok || !placeholderResult.result || typeof placeholderResult.result.message_id !== "number") {
-    if (!isGroup) await sendMessage(env, chatId, "⚠ Could not start a response. Please try again.");
+    // No placeholder means the whole edit-in-place strategy is unavailable, but
+    // the turn must still terminate with something the user can see.
+    await sendMessage(env, chatId, "⚠ Could not start a response. Please try again.");
     return;
   }
   const placeholderMsgId = placeholderResult.result.message_id;
@@ -116,7 +156,6 @@ export async function handleAIMessage(env, ctx, message, from, chat, isGroup, th
   let accumulated = "";
   let lastEditAt = 0;
   let lastEditedText = "";
-  const heartbeat = startTypingHeartbeat(env, ctx, chatId);
   let heartbeatStopped = false;
   let finalUsage = null;
   let finalConn = null;
@@ -168,24 +207,38 @@ export async function handleAIMessage(env, ctx, message, from, chat, isGroup, th
     streamError = e;
     streamErrorCategory = normalizeError(e, e.status);
   } finally {
-    if (!heartbeatStopped) heartbeat.stop();
+    // The outer wrapper always stops the heartbeat; this only stops it slightly
+    // earlier once streaming has finished so the indicator never outlives the
+    // request by a full heartbeat interval.
+    if (!heartbeatStopped) { heartbeat.stop(); heartbeatStopped = true; }
   }
 
   if (!streamCompleted || streamError) {
     const category = streamErrorCategory || "unknown";
     updateUsageStatsAsync(env, ctx, userId, false, category, null);
+    // Terminal state is always visible: the placeholder is rewritten into either
+    // the partial answer plus a note, or the failure reason. It is never just
+    // deleted — deleting it was the "hourglass disappears, nothing arrives"
+    // silence reported by users, and it was worst in groups where the notice
+    // was suppressed entirely.
+    let finalText;
     if (accumulated.length > 0) {
       const note = "\n\n⚠ Response interrupted.";
       let preview = plainText(accumulated);
       if (preview.length + note.length > MAX_TELEGRAM_LENGTH) {
         preview = preview.slice(0, MAX_TELEGRAM_LENGTH - note.length - 10) + "…";
       }
-      const finalText = preview + note;
-      await editMessage(env, chatId, placeholderMsgId, finalText, undefined, undefined);
+      finalText = preview + note;
       await saveThreadMessage(env, chatId, threadId, placeholderMsgId, null, "assistant", accumulated);
     } else {
+      finalText = "⚠ " + humanizeError(category);
+    }
+    const replaced = await editMessage(env, chatId, placeholderMsgId, finalText, undefined, undefined);
+    if (!replaced || !replaced.ok) {
+      // The placeholder could not be edited (deleted by the user, or refused):
+      // send the text as a new message so the turn still terminates visibly.
       await deleteMessage(env, chatId, placeholderMsgId);
-      if (!isGroup) await sendMessage(env, chatId, "⚠ " + humanizeError(category), { parse_mode: "HTML" });
+      await sendMessage(env, chatId, finalText);
     }
     if (shouldNotifyAdmin(category)) {
       const connForAlert = finalConn || connection;
@@ -211,6 +264,7 @@ export async function handleAIMessage(env, ctx, message, from, chat, isGroup, th
   if (finalConn) {
     const totalTokens = finalUsage ? ((finalUsage.in || 0) + (finalUsage.out || 0)) : 0;
     ctx.waitUntil(trackConnectionUsage(env, finalConn.connection_id, userId, totalTokens));
+    if (sharedReservation.shared) ctx.waitUntil(recordSharedTokenUsage(env, userId, totalTokens));
   }
   
   const replyText = accumulated || "(empty response)";

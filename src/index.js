@@ -10,6 +10,7 @@ import { ensureSchema, maybeInitSchema } from "./db.js";
 import { ensureWebhook, ensureMenuButton } from "./telegram.js";
 import { routeMiniAppAPI } from "./miniapp.js";
 import { logFailedUpdate } from "./dlq.js";
+import { pruneOldTranscripts } from "./voice/stt.js";
 import { handleWebhook, handleSetup, handleStatus, processMessage, handleCallbackQuery } from "./handlers/index.js";
 
 // A queue message's ordering group. Two updates only need to stay serialized
@@ -131,6 +132,10 @@ export default {
     if (!menu.ok && menu.status !== "awaiting_first_request") {
       console.error("Menu button re-check failed [" + menu.status + "]:" + (menu.detail ? " " + menu.detail : ""));
     }
+    // Voice transcripts are pruned by their originating turn (see
+    // `pruneStaleTranscripts`); this is the safety net for rows whose thread was
+    // never visited again.
+    ctx.waitUntil(pruneOldTranscripts(env, 7 * 24 * 3600));
   },
   // Queue consumer: runs the full AI pipeline outside the webhook request lifecycle.
   // Consumer invocations allow long wall time (vs. the 30s post-response waitUntil cap),

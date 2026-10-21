@@ -8,6 +8,7 @@
 //   connections.js  AI connection CRUD, health, active-connection resolution
 //   routes.js       route (multi-model x multi-token) CRUD, streaming plan
 //   settings.js     global app_settings toggles
+//   shared-service.js  admin-provided global connections: kill switch + quotas
 //   reminders.js    owner-scoped scheduled reminders, atomic claim/lease
 
 export {
@@ -48,8 +49,16 @@ export {
 
 export {
   getSetting, setSetting, isPersonalModelsAllowed, getPersonalModelLimit,
-  getWorkersAIPolicy, setWorkersAIPolicy, getWorkersAIModel, setWorkersAIModel, canUseWorkersAI
+  getWorkersAIPolicy, setWorkersAIPolicy, getWorkersAIModel, setWorkersAIModel, canUseWorkersAI,
+  isSharedServiceEnabled, getSharedRequestLimit, getSharedTokenLimit,
+  getSharedServiceSettings, setSharedServiceSettings
 } from "./settings.js";
+
+export {
+  todayUTC, isSharedConnection, getSharedQuotas, getSharedUsage,
+  reserveSharedRequest, recordSharedTokenUsage, getSharedUsageReport,
+  sharedQuotaMessage
+} from "./shared-service.js";
 
 export {
   hydrateReminder, createReminder, getReminderById, listReminders, countReminders,

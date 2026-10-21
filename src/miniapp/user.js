@@ -1,7 +1,7 @@
 // Self-service user endpoints: profile, usage counters, the Mini App chat
 // box (which runs the real provider pipeline, not a stub), the model picker
 // and the coding-mode switch.
-import { getUserStrict, getUserConnectionById, getEnabledUserConnections, resolveUserActiveConnection, saveThreadMessage, getThreadContext, updateUsageStatsAsync, trackConnectionUsage } from "../db.js";
+import { getUserStrict, getUserConnectionById, getEnabledUserConnections, resolveUserActiveConnection, saveThreadMessage, getThreadContext, updateUsageStatsAsync, trackConnectionUsage, reserveSharedRequest, recordSharedTokenUsage, sharedQuotaMessage } from "../db.js";
 import { MEMORY_UPDATE_INTERVAL, FAST_STREAM_BUDGET_MS, FAST_STALL_TIMEOUT_MS, AI_STREAM_TOTAL_BUDGET_MS, AI_STREAM_STALL_TIMEOUT_MS } from "../config.js";
 import { now } from "../utils.js";
 import { tryAgentWithFallback, humanizeError } from "../ai.js";
@@ -140,6 +140,13 @@ export async function handleChatMessage(env, ctx, userId, message, request) {
     const connection = resolved.connection;
     if (!connection) return jsonError(503, humanizeError("no_connection"));
 
+    // Same server-side shared-service gate as the Telegram path: the Mini App
+    // is a client, so the quota cannot live in the UI.
+    const sharedReservation = await reserveSharedRequest(env, userId, connection);
+    if (!sharedReservation.allowed) {
+      return jsonError(429, sharedQuotaMessage(sharedReservation.reason, sharedReservation.used, sharedReservation.quota));
+    }
+
     const personality = await getUserPersonality(env, user);
     const recent = await getThreadContext(env, userId, userId);
     const history = Array.isArray(recent) ? recent : [];
@@ -178,8 +185,12 @@ export async function handleChatMessage(env, ctx, userId, message, request) {
     if (usedConn && usedConn.connection_id) {
       const totalTokens = usage ? ((usage.in || 0) + (usage.out || 0)) : 0;
       const connId = usedConn.connection_id;
-      if (ctx && ctx.waitUntil) ctx.waitUntil(trackConnectionUsage(env, connId, userId, totalTokens));
-      else await trackConnectionUsage(env, connId, userId, totalTokens);
+      const usageTask = (async function () {
+        await trackConnectionUsage(env, connId, userId, totalTokens);
+        if (sharedReservation.shared) await recordSharedTokenUsage(env, userId, totalTokens);
+      })();
+      if (ctx && ctx.waitUntil) ctx.waitUntil(usageTask);
+      else await usageTask;
     }
 
     const counter = await incrementMessageCount(env, userId);

@@ -257,8 +257,12 @@ export function toolDefinitions(provider) {
     : ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters, strict: true } }));
 }
 
+export function isWebSearchConfigured(env) {
+  return Boolean(env && String(env.TAVILY_API_KEY || "").trim());
+}
+
 export function configuredToolDefinitions(provider, env) {
-  const tools = env && String(env.TAVILY_API_KEY || "").trim()
+  const tools = isWebSearchConfigured(env)
     ? AGENT_TOOLS
     : AGENT_TOOLS.filter(tool => tool.name !== "web_search");
   return tools.map(tool => provider === "anthropic"
