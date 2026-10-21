@@ -9,6 +9,7 @@ import { handleUserProfile, handleUserStats, handleChatMessage, handleUserConnec
 import { handlePersonalModels, handleCreatePersonalModel, handleDeletePersonalModel } from "./personal.js";
 import { handleUserRoutes, handleAdminCreateRoute, handleAdminDeleteRoute, handleAdminRouteAction } from "./routes.js";
 import { handleAdminStats, handleAdminUsers, handleAdminChats, handleAdminSettings, handleAdminUpdateSettings, handleAdminConnectionUsage, handleAdminSharedUsage } from "./admin.js";
+import { handleAdminSharedModels, handleAdminCreateSharedModel, handleAdminUpdateSharedModel, handleAdminTestSharedModel, handleAdminSharedModelAction, handleAdminDeleteSharedModel, handleAdminSharedServiceSettings, handleAdminDiscoverModels } from "./shared-models.js";
 import { handleAdminBroadcasts, handleCreateBroadcast, handleBroadcastAction, handleGetBroadcast, handleBroadcastPreview } from "./broadcast-api.js";
 import { handleAdminFailedUpdates, handleReplayFailedUpdate } from "./dlq-api.js";
 import { handleUserMemory, handleSetMemoryMode, handleClearMemory, handlePersonalities, handleSetPersonality, handleCustomInstructions, handleAdminConnectionToggle } from "./preferences.js";
@@ -249,6 +250,52 @@ export async function routeMiniAppAPI(env, ctx, request, pathname) {
         if (!action) return jsonError(400, "Missing route action");
         const body = await readBody(request);
         return await handleAdminRouteAction(env, userId, routeId, action, body);
+      }
+
+      // Operator-owned ("shared") model management. Reuses ai_connections rows
+      // with is_global = 1; the admin adds one here, tests it, makes it the
+      // default, and enables the shared service — no SQL and no second system.
+      if (path === "/api/admin/shared-models" && request.method === "GET") {
+        return await handleAdminSharedModels(env, userId);
+      }
+
+      if (path === "/api/admin/shared-models" && request.method === "POST") {
+        const body = await readBody(request);
+        return await handleAdminCreateSharedModel(env, userId, body);
+      }
+
+      // Must precede the "/api/admin/shared-models/" prefix match below.
+      if (path === "/api/admin/shared-models/discover" && request.method === "POST") {
+        const body = await readBody(request);
+        return await handleAdminDiscoverModels(env, userId, body);
+      }
+
+      // Shared-service switch + quotas. PUT and POST are both accepted so the
+      // panel keeps working if a proxy normalises the method.
+      if (path === "/api/admin/shared-service" && (request.method === "POST" || request.method === "PUT")) {
+        const body = await readBody(request);
+        return await handleAdminSharedServiceSettings(env, userId, body);
+      }
+
+      if (path.indexOf("/api/admin/shared-models/") === 0) {
+        const parts = path.split("/");
+        const connectionId = parts[4] || "";
+        const action = parts[5] || "";
+        if (!connectionId) return jsonError(400, "Missing shared model id");
+        if (action === "test" && request.method === "POST") {
+          return await handleAdminTestSharedModel(env, userId, connectionId);
+        }
+        if ((action === "enable" || action === "disable" || action === "default") && request.method === "POST") {
+          return await handleAdminSharedModelAction(env, userId, connectionId, action);
+        }
+        if (action && request.method === "POST") return jsonError(400, "Unknown shared model action");
+        if (request.method === "DELETE") {
+          return await handleAdminDeleteSharedModel(env, userId, connectionId);
+        }
+        if (request.method === "POST" || request.method === "PATCH" || request.method === "PUT") {
+          const body = await readBody(request);
+          return await handleAdminUpdateSharedModel(env, userId, connectionId, body);
+        }
       }
 
       // Global settings

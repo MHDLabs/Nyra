@@ -609,6 +609,9 @@
           (settings.workers_ai_available ? '' : '<div class="meta">اتصال Workers AI در این محیط در دسترس نیست.</div>') +
           '<button class="btn" onclick="window.saveAdminSettings()">ذخیره تنظیمات</button>' +
         '</div>' +
+        '<div class="card"><div class="card-title">مدل‌های اشتراکی (سرویس عمومی)</div>' +
+          '<div class="card-sub">این مدل‌ها با کلید خود شما اجرا می‌شوند و کاربران بدون کلید از آن‌ها استفاده می‌کنند؛ سهمیهٔ روزانه در همان کارت اعمال می‌شود.</div>' +
+          '<div id="admin-shared"><div class="empty">در حال بارگذاری...</div></div></div>' +
         '<div class="card"><div class="card-title">کاربران</div><div id="admin-users"><div class="empty">در حال بارگذاری...</div></div>' +
           '<div class="pager">' +
             '<button class="btn-ghost" onclick="window.adminUsersPage(-1)">‹ قبلی</button>' +
@@ -622,6 +625,7 @@
         '<div class="card"><div class="card-title">مسیرها</div>' +
           '<button class="btn" onclick="window.switchSection(\'routes\')">مدیریت مسیرها</button></div>';
       loadAdminUsers();
+      loadSharedModels();
       loadAdminConnections();
       loadAdminUsage();
       loadBroadcasts();
@@ -643,6 +647,156 @@
       state.personalAllowed = s.allow_personal_models;
       state.personalLimit = s.personal_model_limit;
     }).catch(function (e) { toast(e.message); });
+  };
+
+  // --- SHARED MODELS (ADMIN) ----------------------------------------------
+  // One request returns the models, the switch and a server-computed `ready`
+  // flag, so the panel can never show "on" for a service that cannot answer.
+  function loadSharedModels() {
+    var host = el('admin-shared');
+    if (!host) return;
+    api('/api/admin/shared-models').then(function (data) {
+      state.sharedModels = data;
+      var models = data.models || [];
+      var s = data.settings || {};
+      var status = data.ready
+        ? '<span class="badge" style="color:var(--ok)">آماده</span>'
+        : '<span class="badge" style="color:var(--danger)">' +
+            (data.reason === 'no_shared_model' ? 'مدلی ثبت نشده' : 'خاموش') + '</span>';
+
+      var html =
+        '<div class="row"><span class="grow">سرویس اشتراکی ' + status + '</span>' +
+          '<label class="switch"><input type="checkbox" id="adm-shared-on"' + (s.enabled ? ' checked' : '') +
+          ' onchange="window.saveSharedService()"><span class="slider"></span></label></div>' +
+        '<label>سقف درخواست روزانه هر کاربر</label>' +
+        '<input type="number" id="adm-shared-req" min="0" value="' + (s.daily_request_limit || 0) + '">' +
+        '<label>سقف توکن روزانه هر کاربر</label>' +
+        '<input type="number" id="adm-shared-tok" min="0" value="' + (s.daily_token_limit || 0) + '">' +
+        '<div class="meta">صفر یعنی بدون سقف. سهمیه در نیمه‌شب UTC صفر می‌شود.</div>' +
+        '<button class="btn" onclick="window.saveSharedService()">ذخیرهٔ سرویس اشتراکی</button>' +
+        '<button class="btn-ghost" style="width:100%;margin-top:10px" onclick="window.openSharedModelModal()">+ افزودن مدل اشتراکی</button>';
+
+      if (!models.length) {
+        html += '<div class="empty">هنوز مدلی اضافه نشده. با دکمهٔ بالا یکی اضافه کنید.</div>';
+      } else {
+        html += models.map(function (m) {
+          var testBadge = m.last_test_status === 'success'
+            ? '<span class="badge" style="color:var(--ok)">تست موفق</span>'
+            : (m.last_test_status ? '<span class="badge" style="color:var(--danger)">تست ناموفق</span>' : '');
+          return '<div class="card"><div class="card-title">' + esc(m.label) +
+            (m.is_default ? ' <span class="badge">پیش‌فرض</span>' : '') +
+            (m.enabled ? '' : ' <span class="badge">غیرفعال</span>') + ' ' + testBadge + '</div>' +
+            '<div class="card-sub mono">' + esc(m.provider) + ' • ' + esc(m.model) + '</div>' +
+            '<div class="btn-row">' +
+            '<button class="btn-ghost" onclick="window.sharedModelAction(\'' + esc(m.connection_id) + '\', \'test\')">تست</button>' +
+            '<button class="btn-ghost" onclick="window.sharedModelAction(\'' + esc(m.connection_id) + '\', \'' + (m.enabled ? 'disable' : 'enable') + '\')">' + (m.enabled ? 'غیرفعال‌سازی' : 'فعال‌سازی') + '</button>' +
+            (m.is_default ? '' : '<button class="btn-ghost" onclick="window.sharedModelAction(\'' + esc(m.connection_id) + '\', \'default\')">پیش‌فرض</button>') +
+            '<button class="btn-danger" onclick="window.deleteSharedModel(\'' + esc(m.connection_id) + '\')">حذف</button>' +
+            '</div></div>';
+        }).join('');
+      }
+      host.innerHTML = html;
+    }).catch(function (e) { host.innerHTML = errorHtml(e); });
+  }
+
+  window.saveSharedService = function () {
+    var on = el('adm-shared-on');
+    api('/api/admin/shared-service', {
+      method: 'POST',
+      body: {
+        enabled: !!(on && on.checked),
+        daily_request_limit: parseInt((el('adm-shared-req') || {}).value, 10) || 0,
+        daily_token_limit: parseInt((el('adm-shared-tok') || {}).value, 10) || 0
+      }
+    }).then(function () {
+      toast('ذخیره شد');
+      loadSharedModels();
+    }).catch(function (e) { toast(e.message); loadSharedModels(); });
+  };
+
+  window.sharedModelAction = function (id, action) {
+    var url = '/api/admin/shared-models/' + id + '/' + action;
+    api(url, { method: 'POST' }).then(function (data) {
+      if (action === 'test' && data.test && data.test.status !== 'success') {
+        toast('تست ناموفق: ' + (data.test.diagnostic || data.test.error || data.test.status));
+      } else if (action === 'test') {
+        toast('تست موفق (' + (data.test.latency || 0) + 'ms)');
+      } else {
+        toast('انجام شد');
+      }
+      loadSharedModels();
+    }).catch(function (e) { toast(e.message); loadSharedModels(); });
+  };
+
+  window.deleteSharedModel = function (id) {
+    if (!window.confirm('این مدل اشتراکی حذف شود؟')) return;
+    api('/api/admin/shared-models/' + id, { method: 'DELETE' })
+      .then(function () { toast('حذف شد'); loadSharedModels(); })
+      .catch(function (e) { toast(e.message); });
+  };
+
+  window.openSharedModelModal = function () {
+    var m = document.createElement('div');
+    m.className = 'modal-backdrop';
+    m.innerHTML = '<div class="modal">' +
+      '<h2 style="margin-bottom:16px">افزودن مدل اشتراکی</h2>' +
+      '<label>عنوان</label><input id="s-label" placeholder="مثلا Qwen عمومی">' +
+      '<label>Provider</label><select id="s-provider"><option value="openai-compatible">OpenAI Compatible</option><option value="anthropic">Anthropic</option></select>' +
+      '<label>Base URL</label><input id="s-url" placeholder="https://api.openai.com/v1">' +
+      '<label>API Key</label><input id="s-key" type="password" placeholder="sk-...">' +
+      '<label>Model Name</label><input id="s-model" placeholder="gpt-4o">' +
+      '<div class="btn-row" style="margin-top:10px"><button class="btn-ghost" onclick="window.discoverSharedModels()">دریافت فهرست مدل‌ها</button></div>' +
+      '<div id="s-discovered"></div>' +
+      '<div class="card-sub" style="margin-top:8px">پیش از ذخیره، مدل یک درخواست آزمایشی واقعی می‌فرستد؛ اگر کلید یا نام مدل غلط باشد ذخیره نمی‌شود.</div>' +
+      '<div style="display:flex;gap:10px;margin-top:20px">' +
+      '<button class="btn" onclick="window.createSharedModel()">ذخیره</button>' +
+      '<button class="btn-ghost" style="flex:1" onclick="window.closeModal()">انصراف</button>' +
+      '</div></div>';
+    m.addEventListener('click', function (e) { if (e.target === m) window.closeModal(); });
+    document.body.appendChild(m);
+  };
+
+  window.discoverSharedModels = function () {
+    var host = el('s-discovered');
+    if (host) host.innerHTML = '<div class="card-sub">در حال دریافت...</div>';
+    api('/api/admin/shared-models/discover', {
+      method: 'POST',
+      body: {
+        provider: el('s-provider').value,
+        base_url: el('s-url').value.trim(),
+        api_key: el('s-key').value.trim()
+      }
+    }).then(function (data) {
+      var models = data.models || [];
+      if (!host) return;
+      if (!models.length) { host.innerHTML = '<div class="card-sub">مدلی برنگشت؛ نام مدل را دستی وارد کنید.</div>'; return; }
+      host.innerHTML = '<div class="card-sub">یک مدل را انتخاب کنید:</div><div class="btn-row">' +
+        models.slice(0, 40).map(function (id) {
+          return '<button class="btn-ghost" onclick="window.pickSharedModel(\'' + esc(id) + '\')">' + esc(id) + '</button>';
+        }).join('') + '</div>';
+    }).catch(function (e) {
+      if (host) host.innerHTML = '<div class="card-sub">دریافت فهرست ممکن نشد؛ نام مدل را دستی وارد کنید. (' + esc(e.message) + ')</div>';
+    });
+  };
+
+  window.pickSharedModel = function (id) {
+    var input = el('s-model');
+    if (input) input.value = id;
+    toast('مدل انتخاب شد');
+  };
+
+  window.createSharedModel = function () {
+    var body = {
+      label: el('s-label').value.trim(),
+      provider: el('s-provider').value,
+      base_url: el('s-url').value.trim(),
+      model: el('s-model').value.trim(),
+      api_key: el('s-key').value.trim()
+    };
+    if (!body.label || !body.model || !body.api_key) { toast('فیلدهای ضروری را پر کنید'); return; }
+    api('/api/admin/shared-models', { method: 'POST', body: body })
+      .then(function () { window.closeModal(); toast('مدل اشتراکی اضافه شد'); loadSharedModels(); })
+      .catch(function (e) { toast(e.message); });
   };
 
   function loadAdminUsers() {

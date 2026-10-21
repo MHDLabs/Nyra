@@ -183,6 +183,62 @@ export async function recordConnectionSuccess(env, connectionId) {
   } catch (err) {}
 }
 
+/** The caller's own enabled connections (never the operator's). */
+export async function getEnabledPersonalConnections(env, userId) {
+  const all = await getUserConnections(env, userId);
+  return all.filter(function (c) { return c.enabled === 1 && c.is_global === 0 && Number(c.telegram_id) === Number(userId); });
+}
+
+/**
+ * Enabled operator-owned connections. These are the models a user with no API
+ * key of their own can actually reach, so the shared-service switch must never
+ * be treated as "available" when this returns zero rows.
+ */
+export async function getEnabledSharedConnections(env) {
+  try {
+    const res = await env.DB.prepare(
+      "SELECT connection_id, telegram_id, label, provider, base_url, model, enabled, is_global, is_default, is_fast, supports_vision, description, display_order, last_test_status, last_test_diagnostic, last_test_error, last_test_at, consecutive_failures, created_at FROM ai_connections WHERE is_global = 1 AND enabled = 1 ORDER BY is_default DESC, display_order ASC, created_at ASC"
+    ).all();
+    return res.results || [];
+  } catch (err) {
+    console.error("getEnabledSharedConnections failed:", err.message);
+    return [];
+  }
+}
+
+/** Operator-owned connections including disabled ones, credential-free. */
+export async function listGlobalConnections(env) {
+  try {
+    const res = await env.DB.prepare(
+      "SELECT connection_id, telegram_id, label, provider, base_url, model, description, enabled, is_global, is_default, is_fast, supports_vision, display_order, last_test_status, last_test_error, last_test_diagnostic, last_test_at, consecutive_failures, created_at FROM ai_connections WHERE is_global = 1 ORDER BY is_default DESC, display_order ASC, created_at ASC"
+    ).all();
+    return res.results || [];
+  } catch (err) {
+    console.error("listGlobalConnections failed:", err.message);
+    return [];
+  }
+}
+
+export async function countEnabledSharedConnections(env) {
+  try {
+    const row = await env.DB.prepare("SELECT COUNT(*) AS c FROM ai_connections WHERE is_global = 1 AND enabled = 1").first();
+    return row ? row.c : 0;
+  } catch (err) { return 0; }
+}
+
+/** Explicit enable/disable for a global connection (admin only). */
+export async function setGlobalConnectionEnabled(env, adminId, connectionId, enabled) {
+  if (!isAdmin(env, adminId)) return false;
+  const conn = await getUserConnectionById(env, adminId, connectionId);
+  if (!conn || conn.is_global !== 1) return false;
+  try {
+    await env.DB.prepare("UPDATE ai_connections SET enabled = ?, updated_at = ? WHERE connection_id = ? AND is_global = 1")
+      .bind(enabled ? 1 : 0, now(), connectionId).run();
+    invalidateUserConnectionsCache(null);
+    return true;
+  } catch (err) { console.error("setGlobalConnectionEnabled failed:", err.message); return false; }
+}
+
 export async function resolveUserActiveConnection(env, user) {
   const conns = await getEnabledUserConnections(env, user.telegram_id);
   if (conns.length === 0) return { connection: null, switched: false, previousMissing: false };

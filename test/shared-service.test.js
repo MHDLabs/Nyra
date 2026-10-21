@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  isSharedConnection, reserveSharedRequest, recordSharedTokenUsage,
+  isSharedConnection, reserveSharedRequest, releaseSharedRequest, recordSharedTokenUsage,
   getSharedUsage, sharedQuotaMessage, todayUTC
 } from "../src/db.js";
 
@@ -14,6 +14,10 @@ function fakeEnv(opts) {
   const settings = new Map(Object.entries(o.settings || {}));
   const usage = new Map(); // `${id}|${date}` -> { requests_count, tokens_used }
   let failOnUpdate = false;
+  // The shared service also requires a usable model: the request path counts
+  // enabled global connections before handing out credit, so a deployment with
+  // the switch on and no model must refuse. Default the stub to "one exists".
+  const sharedModels = o.sharedModels === undefined ? 1 : o.sharedModels;
   return {
     usage,
     settings,
@@ -24,6 +28,9 @@ function fakeEnv(opts) {
           _args: [],
           bind(...args) { stmt._args = args; return stmt; },
           async first() {
+            if (sql.indexOf("COUNT(*) AS c FROM ai_connections") !== -1) {
+              return { c: sharedModels };
+            }
             if (sql.indexOf("FROM app_settings") !== -1) {
               const key = stmt._args[0];
               return settings.has(key) ? { value: settings.get(key) } : null;
@@ -164,4 +171,44 @@ test("usage is isolated per user and per day", async () => {
   assert.equal((await reserveSharedRequest(env, 20, GLOBAL)).allowed, true);
   assert.equal((await reserveSharedRequest(env, 20, GLOBAL)).allowed, false);
   assert.equal((await reserveSharedRequest(env, 21, GLOBAL)).allowed, true, "a different user has their own quota");
+});
+
+test("switch on with no enabled shared model refuses and says so honestly", async () => {
+  // The exact production trap: shared_service_enabled = '1' but nothing to
+  // route to. Telling the user the operator "disabled" the service would send
+  // them hunting for a key they do not need.
+  const env = fakeEnv({ settings: { shared_service_enabled: "1" }, sharedModels: 0 });
+  const res = await reserveSharedRequest(env, 30, GLOBAL);
+  assert.equal(res.allowed, false);
+  assert.equal(res.reason, "shared_model_unavailable");
+  const msg = sharedQuotaMessage(res.reason, 0, 0);
+  assert.doesNotMatch(msg, /disabled by the administrator/);
+  assert.doesNotMatch(msg, /Add your own API key to keep chatting/);
+  assert.match(msg, /administrator/);
+});
+
+test("releaseSharedRequest hands the reserved unit back and floors at zero", async () => {
+  const env = fakeEnv({ settings: { shared_service_enabled: "1", shared_daily_request_limit: "3" } });
+  assert.equal((await reserveSharedRequest(env, 31, GLOBAL)).allowed, true);
+  assert.equal(env.usage.get("31|" + todayUTC()).requests_count, 1);
+  await releaseSharedRequest(env, 31);
+  assert.equal(env.usage.get("31|" + todayUTC()).requests_count, 0);
+  // Releasing a day with no row, or releasing twice, must not go negative.
+  await releaseSharedRequest(env, 31);
+  await releaseSharedRequest(env, 999);
+  assert.equal(env.usage.get("31|" + todayUTC()).requests_count, 0);
+});
+
+test("a released unit can be reused by the next attempt", async () => {
+  const env = fakeEnv({ settings: { shared_service_enabled: "1", shared_daily_request_limit: "1" } });
+  assert.equal((await reserveSharedRequest(env, 32, GLOBAL)).allowed, true);
+  assert.equal((await reserveSharedRequest(env, 32, GLOBAL)).allowed, false, "daily unit is spent");
+  await releaseSharedRequest(env, 32);
+  assert.equal((await reserveSharedRequest(env, 32, GLOBAL)).allowed, true, "failed turn did not cost the user");
+});
+
+test("releaseSharedRequest never throws when the database is broken", async () => {
+  const env = fakeEnv({});
+  env.DB.prepare = function () { throw new Error("D1 unavailable"); };
+  await releaseSharedRequest(env, 33); // must not reject
 });

@@ -14,6 +14,7 @@ import {
   DEFAULT_SHARED_REQUEST_LIMIT, DEFAULT_SHARED_TOKEN_LIMIT
 } from "../config.js";
 import { getSetting } from "./settings.js";
+import { countEnabledSharedConnections } from "./connections.js";
 
 export function todayUTC() {
   return new Date().toISOString().split("T")[0];
@@ -60,6 +61,13 @@ export async function reserveSharedRequest(env, userId, connection) {
   if (!isSharedConnection(connection, userId)) return { allowed: true, shared: false };
   const q = await getSharedQuotas(env);
   if (!q.enabled) return { allowed: false, shared: true, reason: "shared_service_disabled", quota: 0, used: 0 };
+  // The switch being on is not the same as the service working. With no enabled
+  // shared model there is nothing to route to, and saying "disabled by the
+  // administrator" here would be a lie that sends the user hunting for a key
+  // they do not need.
+  if ((await countEnabledSharedConnections(env)) === 0) {
+    return { allowed: false, shared: true, reason: "shared_model_unavailable", quota: 0, used: 0 };
+  }
   const date = todayUTC();
   try {
     // Seed the row so the conditional UPDATE always has a target.
@@ -87,6 +95,17 @@ export async function reserveSharedRequest(env, userId, connection) {
     // Fail closed: an unreadable quota table must not hand out free operator credit.
     return { allowed: false, shared: true, reason: "shared_quota_unavailable", quota: 0, used: 0 };
   }
+}
+
+/**
+ * Hand back a reserved request unit when the turn failed before the provider
+ * produced anything. Without this, an outage on the operator's side burns the
+ * user's daily allowance for an answer they never received.
+ */
+export async function releaseSharedRequest(env, userId) {
+  try {
+    await env.DB.prepare("UPDATE shared_service_usage SET requests_count = MAX(requests_count - 1, 0) WHERE telegram_id = ? AND date = ?").bind(userId, todayUTC()).run();
+  } catch (err) { console.error("releaseSharedRequest failed:", err.message); }
 }
 
 /** Add the measured token cost of a completed shared-service request. */
@@ -122,6 +141,9 @@ export function sharedQuotaMessage(reason, used, quota) {
   }
   if (reason === "shared_token_quota_exceeded") {
     return "⚠ Your daily shared-service token allowance is used up (" + used + " / " + quota + "). It resets at 00:00 UTC. Add your own API key for unlimited use.";
+  }
+  if (reason === "shared_model_unavailable") {
+    return "⚠ No shared model is configured right now. Ask the administrator to add one, or add your own API key from Settings → My Personal Models.";
   }
   if (reason === "shared_quota_unavailable") {
     return "⚠ Could not verify your shared-service quota right now. Please try again in a moment.";

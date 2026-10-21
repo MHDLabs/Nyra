@@ -5,7 +5,7 @@
 import { MAX_TELEGRAM_LENGTH, MEMORY_UPDATE_INTERVAL, RATE_LIMIT_USER_PER_MIN, RATE_LIMIT_USER_PER_HOUR, RATE_LIMIT_CHAT_PER_HOUR, UNHEALTHY_FAILURE_THRESHOLD, UNHEALTHY_WARN_TTL, STREAM_EDIT_THROTTLE_MS, STREAM_PLACEHOLDER, FAST_STREAM_BUDGET_MS, FAST_STALL_TIMEOUT_MS } from "../config.js";
 import { now, escapeHtml, buildUserContent, checkRateLimit } from "../utils.js";
 import { sendMessageReturn, sendMessage, sendMessageSafeResult, editMessage, deleteMessage, startTypingHeartbeat, pickImageFile, downloadTelegramFile } from "../telegram.js";
-import { getUser, upsertUser, getChat, saveThreadMessage, getThreadContext, updateUsageStatsAsync, resolveUserActiveConnection, trackConnectionUsage, reserveSharedRequest, recordSharedTokenUsage, sharedQuotaMessage } from "../db.js";
+import { getUser, upsertUser, getChat, saveThreadMessage, getThreadContext, updateUsageStatsAsync, resolveUserActiveConnection, trackConnectionUsage, reserveSharedRequest, releaseSharedRequest, recordSharedTokenUsage, sharedQuotaMessage } from "../db.js";
 import { normalizeError, humanizeError, shouldNotifyAdmin, tryAgentWithFallback, notifyAdminOnError } from "../ai.js";
 import { buildContextMessages, getUserPersonality, consolidateMemory, consolidateChatSummary, incrementMessageCount } from "../memory.js";
 import { showNoConnectionMessage } from "../menus.js";
@@ -147,7 +147,9 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
   const placeholderResult = await sendMessageSafeResult(env, chatId, STREAM_PLACEHOLDER, { reply_to_message_id: replyToId });
   if (!placeholderResult || !placeholderResult.ok || !placeholderResult.result || typeof placeholderResult.result.message_id !== "number") {
     // No placeholder means the whole edit-in-place strategy is unavailable, but
-    // the turn must still terminate with something the user can see.
+    // the turn must still terminate with something the user can see. The
+    // reserved shared-service unit is refunded because no provider call ran.
+    if (sharedReservation.shared) ctx.waitUntil(releaseSharedRequest(env, userId));
     await sendMessage(env, chatId, "⚠ Could not start a response. Please try again.");
     return;
   }
@@ -214,6 +216,11 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
   }
 
   if (!streamCompleted || streamError) {
+    // Nothing usable was produced, so the reserved unit is handed back: a
+    // provider outage on the operator's side must not cost the user part of
+    // their daily allowance. A partial answer did consume tokens, so it keeps
+    // the charge.
+    if (sharedReservation.shared && accumulated.length === 0) ctx.waitUntil(releaseSharedRequest(env, userId));
     const category = streamErrorCategory || "unknown";
     updateUsageStatsAsync(env, ctx, userId, false, category, null);
     // Terminal state is always visible: the placeholder is rewritten into either

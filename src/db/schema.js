@@ -4,6 +4,11 @@ import { CONTEXT_TTL, DEFAULT_PERSONALITIES, RETIRED_PERSONALITY_IDS, SCHEMA_PRO
 import { now } from "../utils.js";
 
 let schemaReady = false;
+// Set once this isolate has confirmed the database carries every shipped
+// migration. `ensureSchema` is on the hot path (every queue batch), so the
+// comparison must not cost a D1 read per request — but a new deployment must
+// still apply its own migrations instead of waiting for a KV probe window.
+let migrationsSettled = false;
 
 // Inlined as a SQL literal list rather than bound parameters because migrations
 // run through `DB.batch` with pre-built statements. The ids are code constants,
@@ -11,7 +16,16 @@ let schemaReady = false;
 const RETIRED_PERSONALITY_SQL = RETIRED_PERSONALITY_IDS.map(function (id) { return "'" + id + "'"; }).join(",");
 
 export async function ensureSchema(env) {
-  if (schemaReady) return;
+  if (schemaReady) {
+    // Base tables already exist in this isolate, but the database itself may
+    // still owe a migration that shipped with a newer deployment. One indexed
+    // read per isolate, then never again.
+    if (migrationsSettled) return;
+    migrationsSettled = true;
+    try { if (!(await hasPendingMigrations(env))) return; }
+    catch (err) { console.error("Migration probe failed:", err.message); return; }
+    schemaReady = false;
+  }
   const statements = [
     "CREATE TABLE IF NOT EXISTS users (telegram_id INTEGER PRIMARY KEY, first_name TEXT, last_name TEXT, username TEXT, language_code TEXT, preferred_name TEXT, personality_id TEXT DEFAULT 'default', custom_instructions TEXT, memory_mode TEXT DEFAULT 'normal', memory_data TEXT DEFAULT '{}', usage_stats TEXT DEFAULT '{}', fallback_enabled INTEGER DEFAULT 1, msg_counter INTEGER DEFAULT 0, active_connection_id TEXT, active_route_id TEXT, created_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
     "CREATE INDEX IF NOT EXISTS idx_users_last_seen ON users(last_seen_at)",
@@ -110,6 +124,7 @@ export async function ensureSchema(env) {
   }
   await runMaintenance(env);
   schemaReady = true;
+  migrationsSettled = true;
 }
 
 // One-time, versioned schema/data migrations. Destructive statements live here —
@@ -199,6 +214,19 @@ const MIGRATIONS = [
       "DELETE FROM personalities WHERE is_builtin = 1 AND personality_id IN (" + RETIRED_PERSONALITY_SQL + ")",
       "UPDATE users SET personality_id = 'default', updated_at = CAST(strftime('%s','now') AS INTEGER) WHERE personality_id IN (" + RETIRED_PERSONALITY_SQL + ")"
     ]
+  },
+  {
+    // Global connections created by the Telegram wizard (and by the very first
+    // Mini App writes) were stored with is_default = 0, so
+    // `resolveUserActiveConnection` only reached them by falling back to
+    // conns[0]. That is deterministic only by accident of ordering. Promotion
+    // here is idempotent and additive: exactly one enabled global becomes the
+    // default, and only when no enabled global is marked.
+    id: 9,
+    label: "promote one enabled global connection to default",
+    statements: [
+      "UPDATE ai_connections SET is_default = 1, updated_at = CAST(strftime('%s','now') AS INTEGER) WHERE connection_id = (SELECT connection_id FROM ai_connections WHERE is_global = 1 AND enabled = 1 ORDER BY display_order ASC, created_at ASC, connection_id ASC LIMIT 1) AND NOT EXISTS (SELECT 1 FROM ai_connections WHERE is_global = 1 AND enabled = 1 AND is_default = 1)"
+    ]
   }
 ];
 
@@ -253,10 +281,33 @@ async function runMaintenance(env) {
 // so a failing schema build cannot hammer D1 on every invocation.
 const SCHEMA_CHECK_KEY = "nyra:schema:checked_at";
 
+/**
+ * True when the database has not yet recorded every migration in `MIGRATIONS`.
+ * One indexed read, so it is cheap enough to run before honouring the KV probe
+ * window.
+ */
+export async function hasPendingMigrations(env) {
+  try {
+    const res = await env.DB.prepare("SELECT id FROM schema_migrations").all();
+    const applied = new Set((res.results || []).map(function (r) { return r.id; }));
+    for (let i = 0; i < MIGRATIONS.length; i++) if (!applied.has(MIGRATIONS[i].id)) return true;
+    return false;
+  } catch (err) {
+    // `schema_migrations` missing means nothing has been applied yet.
+    return true;
+  }
+}
+
 export async function maybeInitSchema(env) {
   try {
-    const last = parseInt((await env.KV.get(SCHEMA_CHECK_KEY)) || "0", 10);
-    if (Number.isFinite(last) && Date.now() - last < SCHEMA_PROBE_INTERVAL_MS) return;
+    // The probe window must never delay a migration that shipped with this
+    // deployment: an already-initialised production database would otherwise
+    // wait up to SCHEMA_PROBE_INTERVAL_MS (or forever, if only the webhook path
+    // were active) for its schema, and someone would have to run SQL by hand.
+    if (!(await hasPendingMigrations(env))) {
+      const last = parseInt((await env.KV.get(SCHEMA_CHECK_KEY)) || "0", 10);
+      if (Number.isFinite(last) && Date.now() - last < SCHEMA_PROBE_INTERVAL_MS) return;
+    }
     await env.KV.put(SCHEMA_CHECK_KEY, String(Date.now()), { expirationTtl: 86400 });
     await ensureSchema(env);
   } catch (err) {

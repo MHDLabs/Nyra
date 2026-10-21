@@ -1,7 +1,7 @@
 // Self-service user endpoints: profile, usage counters, the Mini App chat
 // box (which runs the real provider pipeline, not a stub), the model picker
 // and the coding-mode switch.
-import { getUserStrict, getUserConnectionById, getEnabledUserConnections, resolveUserActiveConnection, saveThreadMessage, getThreadContext, updateUsageStatsAsync, trackConnectionUsage, reserveSharedRequest, recordSharedTokenUsage, sharedQuotaMessage } from "../db.js";
+import { getUserStrict, getUserConnectionById, getEnabledUserConnections, resolveUserActiveConnection, saveThreadMessage, getThreadContext, updateUsageStatsAsync, trackConnectionUsage, reserveSharedRequest, releaseSharedRequest, recordSharedTokenUsage, sharedQuotaMessage } from "../db.js";
 import { MEMORY_UPDATE_INTERVAL, FAST_STREAM_BUDGET_MS, FAST_STALL_TIMEOUT_MS, AI_STREAM_TOTAL_BUDGET_MS, AI_STREAM_STALL_TIMEOUT_MS } from "../config.js";
 import { now } from "../utils.js";
 import { tryAgentWithFallback, humanizeError } from "../ai.js";
@@ -167,6 +167,8 @@ export async function handleChatMessage(env, ctx, userId, message, request) {
     }
 
     if (!reply) {
+      // No answer was produced, so the reserved shared-service unit is refunded.
+      if (sharedReservation.shared) await releaseSharedRequest(env, userId);
       // `colo` is the data center that ran this request: the outbound provider
       // call egresses from there, so a bare 403 from the provider with no code is
       // usually the network path rather than the key. Recording it here makes

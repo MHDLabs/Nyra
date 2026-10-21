@@ -12,7 +12,7 @@
 //   reminders.js    owner-scoped scheduled reminders, atomic claim/lease
 
 export {
-  ensureSchema, maybeInitSchema
+  ensureSchema, maybeInitSchema, hasPendingMigrations
 } from "./schema.js";
 
 export {
@@ -36,7 +36,8 @@ export {
   toggleUserConnection, setDefaultConnection, setConnectionFast,
   setConnectionVision, updateUserConnectionTest, recordConnectionFailure,
   recordConnectionSuccess, resolveUserActiveConnection,
-  countPersonalConnections
+  countPersonalConnections, getEnabledPersonalConnections, getEnabledSharedConnections,
+  listGlobalConnections, countEnabledSharedConnections, setGlobalConnectionEnabled
 } from "./connections.js";
 
 export {
@@ -57,7 +58,7 @@ export {
 export {
   todayUTC, isSharedConnection, getSharedQuotas, getSharedUsage,
   reserveSharedRequest, recordSharedTokenUsage, getSharedUsageReport,
-  sharedQuotaMessage
+  releaseSharedRequest, sharedQuotaMessage
 } from "./shared-service.js";
 
 export {
