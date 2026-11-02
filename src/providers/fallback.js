@@ -7,7 +7,7 @@ import { AI_PRIMARY_ATTEMPT_TIMEOUT_MS, AI_MAX_PRIMARY_ATTEMPTS, AI_RETRY_DELAYS
 import { truncate, escapeHtml, sleep, getAdminIds } from "../utils.js";
 import { decryptCredential } from "../crypto.js";
 import { sendMessage } from "../telegram.js";
-import { getEnabledUserConnections, recordConnectionFailure, recordConnectionSuccess, resolveUserActiveRoute, buildRoutePlan, recordRouteTokenFailure, recordRouteTokenSuccess, canUseWorkersAI, getWorkersAIModel } from "../db.js";
+import { getEnabledUserConnections, trackConnectionUsage, recordConnectionFailure, recordConnectionSuccess, resolveUserActiveRoute, buildRoutePlan, recordRouteTokenFailure, recordRouteTokenSuccess, canUseWorkersAI, getWorkersAIModel } from "../db.js";
 import { decideNextAction, brainInputFromError } from "../brain.js";
 import { normalizeError, humanizeError, isRetryableCategory } from "./errors.js";
 import { generateOpenAICompatible } from "./openai.js";
@@ -141,6 +141,10 @@ export async function* tryAgentWithFallback(env, user, messages, options) {
         { ...options, totalBudgetMs: deadline - Date.now() });
       if (connection.is_route && connection.token_id) await recordRouteTokenSuccess(env, connection.token_id);
       else if (connection.connection_id) await recordConnectionSuccess(env, connection.connection_id);
+      if (result.usage && result.usage.source !== "unavailable" && connection.connection_id) {
+        const totalTokens = (result.usage.in || 0) + (result.usage.out || 0);
+        await trackConnectionUsage(env, connection.connection_id, user.telegram_id, totalTokens);
+      }
       if (result.text) yield { type: "text", text: result.text };
       yield { type: "done", connection, usage: result.usage, attempts: i + 1, fallbackUsed: i > 0 };
       return;
@@ -236,7 +240,10 @@ export async function* tryStreamWithFallback(env, user, messages, options) {
       const remaining = totalBudgetMs - (Date.now() - budgetStart);
       if (remaining < 3000) break;
       if (attempt > 0) {
-        const delay = AI_RETRY_DELAYS_MS[attempt - 1] || 1000;
+        let delay = AI_RETRY_DELAYS_MS[attempt - 1] || 1000;
+        if (lastError && lastError.retryAfterSeconds) {
+          delay = Math.max(delay, lastError.retryAfterSeconds * 1000);
+        }
         await sleep(delay);
       }
       totalAttempts++;
@@ -254,6 +261,10 @@ export async function* tryStreamWithFallback(env, user, messages, options) {
           }
         }
         await recordConnectionSuccess(env, conn.connection_id);
+        if (currentUsage && currentUsage.source !== "unavailable") {
+          const totalTokens = (currentUsage.in || 0) + (currentUsage.out || 0);
+          await trackConnectionUsage(env, conn.connection_id, user.telegram_id, totalTokens);
+        }
         yield { type: "done", connection: conn, usage: currentUsage, attempts: totalAttempts, fallbackUsed: !isPrimary };
         return;
       } catch (err) {
@@ -324,6 +335,10 @@ export async function* streamViaRoute(env, user, bundle, messages, options, tota
           else if (event.type === "usage") { currentUsage = event.usage; }
         }
         await recordRouteTokenSuccess(env, conn.token_id);
+        if (currentUsage && currentUsage.source !== "unavailable" && conn.connection_id) {
+          const totalTokens = (currentUsage.in || 0) + (currentUsage.out || 0);
+          await trackConnectionUsage(env, conn.connection_id, user.telegram_id, totalTokens);
+        }
         yield { type: "done", connection: conn, usage: currentUsage, attempts: totalAttempts, fallbackUsed: !isPrimary };
         return;
       } catch (err) {

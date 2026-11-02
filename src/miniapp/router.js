@@ -5,7 +5,7 @@
 import { isAdmin, checkRateLimit } from "../utils.js";
 import { RATE_LIMIT_ADMIN_PER_MIN, RATE_LIMIT_USER_PER_MIN } from "../config.js";
 import { extractInitData, handleAuth } from "./auth.js";
-import { handleUserProfile, handleUserStats, handleChatMessage, handleUserConnections, handleSetActiveConnection, handleToggleCodingMode } from "./user.js";
+import { handleUserProfile, handleUserStats, handleUserConnections, handleSetActiveConnection, handleToggleCodingMode } from "./user.js";
 import { handlePersonalModels, handleCreatePersonalModel, handleDeletePersonalModel } from "./personal.js";
 import { handleUserRoutes, handleAdminCreateRoute, handleAdminDeleteRoute, handleAdminRouteAction } from "./routes.js";
 import { handleAdminStats, handleAdminUsers, handleAdminChats, handleAdminSettings, handleAdminUpdateSettings, handleAdminConnectionUsage, handleAdminSharedUsage } from "./admin.js";
@@ -13,6 +13,7 @@ import { handleAdminSharedModels, handleAdminCreateSharedModel, handleAdminUpdat
 import { handleAdminBroadcasts, handleCreateBroadcast, handleBroadcastAction, handleGetBroadcast, handleBroadcastPreview } from "./broadcast-api.js";
 import { handleAdminFailedUpdates, handleReplayFailedUpdate } from "./dlq-api.js";
 import { handleUserMemory, handleSetMemoryMode, handleClearMemory, handlePersonalities, handleSetPersonality, handleCustomInstructions, handleAdminConnectionToggle } from "./preferences.js";
+import { handleI18n, handleSetLocale } from "./i18n-api.js";
 import { jsonOk, jsonError } from "./respond.js";
 
 /** Read a JSON body without throwing on malformed input. */
@@ -29,13 +30,20 @@ async function readBody(request) {
 /**
  * Route Mini App API requests.
  *
- * `pathname` is normalised here (trailing slashes collapsed) so `/api/chat/`
- * hits the same handler as `/api/chat` — previously a stray trailing slash
- * produced a 404 that looked like a missing endpoint.
+ * `pathname` is normalised here (trailing slashes collapsed, duplicate slashes
+ * collapsed, encoded separators rejected) so a stray slash reaches the same
+ * handler while a crafted path can never bypass the admin gate.
  */
 export async function routeMiniAppAPI(env, ctx, request, pathname) {
   const url = new URL(request.url);
   let path = pathname || url.pathname || "";
+  // Reject encoded path separators/dot segments instead of decoding them into a
+  // second route spelling: an encoded slash must never be able to turn a 404
+  // into an admin handler (or vice versa).
+  if (/%2f|%5c|%2e/i.test(path)) return jsonError(404, "Not found");
+  // Collapse duplicate slashes so "/api//admin/stats" can never slip past the
+  // prefix-based admin gate below.
+  path = path.replace(/\/{2,}/g, "/");
   if (path.length > 1 && path.charAt(path.length - 1) === "/") path = path.replace(/\/+$/, "");
   if (path === "") path = "/";
 
@@ -55,9 +63,19 @@ export async function routeMiniAppAPI(env, ctx, request, pathname) {
 
     const userId = validated.userId;
 
+    // Localization dictionary for the Mini App
+    if (path === "/api/i18n" && request.method === "GET") {
+      return await handleI18n(env, userId, url);
+    }
+
+    if (path === "/api/user/locale" && request.method === "POST") {
+      const body = await readBody(request);
+      return await handleSetLocale(env, userId, body);
+    }
+
     // Rate limit every authenticated call. Admin calls have their own budget so
     // panel polling cannot starve the user's own chat allowance.
-    const isAdminPath = path.indexOf("/api/admin/") === 0;
+    const isAdminPath = path === "/api/admin" || path.indexOf("/api/admin/") === 0;
     const limit = isAdminPath ? RATE_LIMIT_ADMIN_PER_MIN * 6 : RATE_LIMIT_USER_PER_MIN * 6;
     const bucket = isAdminPath ? "apiadm:" : "api:";
     const allowed = await checkRateLimit(env, bucket + userId, limit, 60);
@@ -77,11 +95,8 @@ export async function routeMiniAppAPI(env, ctx, request, pathname) {
       return await handleToggleCodingMode(env, userId, body.enabled);
     }
 
-    if (path === "/api/chat" && request.method === "POST") {
-      const body = await readBody(request);
-      return await handleChatMessage(env, ctx, userId, body.message, request);
-    }
-
+    // The Mini App deliberately has no chat endpoint: conversations happen in
+    // Telegram. /api/chat is not a route, so old clients get a clean 404.
     // User model + route endpoints
     if (path === "/api/user/connections" && request.method === "GET") {
       return await handleUserConnections(env, userId);
@@ -150,7 +165,7 @@ export async function routeMiniAppAPI(env, ctx, request, pathname) {
     }
 
     // Admin endpoints (require admin privileges)
-    if (path.indexOf("/api/admin/") === 0) {
+    if (path === "/api/admin" || path.indexOf("/api/admin/") === 0) {
       if (!isAdmin(env, userId)) return jsonError(403, "Forbidden");
 
       if (path === "/api/admin/stats" && request.method === "GET") {

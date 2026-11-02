@@ -1,6 +1,7 @@
 // D1 schema bootstrap, versioned migrations and periodic housekeeping.
 // Owns the one-shot guarded init path (`ensureSchema` / `maybeInitSchema`).
 import { CONTEXT_TTL, DEFAULT_PERSONALITIES, RETIRED_PERSONALITY_IDS, SCHEMA_PROBE_INTERVAL_MS } from "../config.js";
+import { ROUTING_MIGRATIONS } from "./schema-routing.js";
 import { now } from "../utils.js";
 
 let schemaReady = false;
@@ -27,9 +28,9 @@ export async function ensureSchema(env) {
     schemaReady = false;
   }
   const statements = [
-    "CREATE TABLE IF NOT EXISTS users (telegram_id INTEGER PRIMARY KEY, first_name TEXT, last_name TEXT, username TEXT, language_code TEXT, preferred_name TEXT, personality_id TEXT DEFAULT 'default', custom_instructions TEXT, memory_mode TEXT DEFAULT 'normal', memory_data TEXT DEFAULT '{}', usage_stats TEXT DEFAULT '{}', fallback_enabled INTEGER DEFAULT 1, msg_counter INTEGER DEFAULT 0, active_connection_id TEXT, active_route_id TEXT, created_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS users (telegram_id INTEGER PRIMARY KEY, first_name TEXT, last_name TEXT, username TEXT, language_code TEXT, preferred_name TEXT, personality_id TEXT DEFAULT 'default', custom_instructions TEXT, memory_mode TEXT DEFAULT 'normal', memory_data TEXT DEFAULT '{}', usage_stats TEXT DEFAULT '{}', fallback_enabled INTEGER DEFAULT 1, msg_counter INTEGER DEFAULT 0, active_connection_id TEXT, active_route_id TEXT, locale TEXT, onboarding_state TEXT, onboarding_completed INTEGER DEFAULT 0, onboarding_version INTEGER DEFAULT 0, onboarding_started_at INTEGER, active_profile_id TEXT, created_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
     "CREATE INDEX IF NOT EXISTS idx_users_last_seen ON users(last_seen_at)",
-    "CREATE TABLE IF NOT EXISTS chats (chat_id INTEGER PRIMARY KEY, chat_type TEXT NOT NULL, title TEXT, enabled INTEGER DEFAULT 0, mode TEXT DEFAULT 'disabled', summary TEXT DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS chats (chat_id INTEGER PRIMARY KEY, chat_type TEXT NOT NULL, title TEXT, enabled INTEGER DEFAULT 1, mode TEXT DEFAULT 'enabled', disabled_by_admin INTEGER DEFAULT 0, summary TEXT DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
     "CREATE INDEX IF NOT EXISTS idx_chats_enabled ON chats(enabled)",
     "CREATE TABLE IF NOT EXISTS personalities (personality_id TEXT PRIMARY KEY, name TEXT NOT NULL, prompt TEXT NOT NULL, enabled INTEGER DEFAULT 1, is_builtin INTEGER DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
     "CREATE TABLE IF NOT EXISTS custom_personalities (personality_id TEXT PRIMARY KEY, telegram_id INTEGER NOT NULL, name TEXT NOT NULL, description TEXT, prompt TEXT NOT NULL, enabled INTEGER DEFAULT 1, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
@@ -88,7 +89,21 @@ export async function ensureSchema(env) {
     // always stored as UTC seconds; this column only preserves the user's
     // wall-clock context so recurrences and confirmations can be rendered and
     // recomputed in their own zone instead of the worker's.
-    ["users", "timezone", "TEXT"]
+    ["users", "timezone", "TEXT"],
+    // Locale + persistent onboarding state. Existing rows get their locale
+    // backfilled from Telegram's language_code by migration 10; new rows start
+    // with onboarding_completed = 0 so the welcome flow runs exactly once.
+    ["users", "locale", "TEXT"],
+    ["users", "onboarding_state", "TEXT"],
+    ["users", "onboarding_completed", "INTEGER DEFAULT 0"],
+    ["users", "onboarding_version", "INTEGER DEFAULT 0"],
+    ["users", "onboarding_started_at", "INTEGER"],
+    // Selected routing profile (routing profiles are defined by the routing
+    // layer; this column only stores the user's choice).
+    ["users", "active_profile_id", "TEXT"],
+    // Admin-disabled groups are distinguished from groups that were merely
+    // never enabled (the old default). Migration 10 enables the latter only.
+    ["chats", "disabled_by_admin", "INTEGER DEFAULT 0"]
   ];
   for (let i = 0; i < alters.length; i++) {
     const table = alters[i][0];
@@ -130,7 +145,7 @@ export async function ensureSchema(env) {
 // One-time, versioned schema/data migrations. Destructive statements live here —
 // they run exactly once (tracked in schema_migrations) instead of on every cold
 // start, and failures propagate instead of being swallowed.
-const MIGRATIONS = [
+const CORE_MIGRATIONS = [
   {
     id: 1,
     label: "drop legacy continuation_states; retire builtin coder/personality ids",
@@ -227,8 +242,41 @@ const MIGRATIONS = [
     statements: [
       "UPDATE ai_connections SET is_default = 1, updated_at = CAST(strftime('%s','now') AS INTEGER) WHERE connection_id = (SELECT connection_id FROM ai_connections WHERE is_global = 1 AND enabled = 1 ORDER BY display_order ASC, created_at ASC, connection_id ASC LIMIT 1) AND NOT EXISTS (SELECT 1 FROM ai_connections WHERE is_global = 1 AND enabled = 1 AND is_default = 1)"
     ]
+  },
+  {
+    // Locale, onboarding and the group-activation default. Additive only: no
+    // row is deleted and no user-owned value is overwritten. Existing users get
+    // a locale inferred from Telegram's language_code and are marked
+    // onboarding-complete so the new flow never interrupts them mid-conversation.
+    id: 10,
+    label: "add locale preference, group activation defaults and maintenance switch row",
+    statements: [
+      "INSERT OR IGNORE INTO app_settings (key, value, updated_at, updated_by) VALUES ('default_locale', 'en-US', CAST(strftime('%s','now') AS INTEGER), NULL)",
+      "INSERT OR IGNORE INTO app_settings (key, value, updated_at, updated_by) VALUES ('maintenance_enabled', '0', CAST(strftime('%s','now') AS INTEGER), NULL)",
+      "UPDATE users SET locale = CASE WHEN lower(COALESCE(language_code, '')) LIKE 'fa%' THEN 'fa-IR' ELSE 'en-US' END WHERE locale IS NULL OR locale NOT IN ('en-US', 'fa-IR')",
+      // Groups were auto-inserted disabled before this release. Enable those
+      // legacy rows once; a group an admin later disables is marked
+      // disabled_by_admin = 1 and is never touched by this migration again.
+      "UPDATE chats SET enabled = 1, mode = 'enabled', updated_at = CAST(strftime('%s','now') AS INTEGER) WHERE enabled = 0 AND COALESCE(mode, 'disabled') = 'disabled' AND COALESCE(disabled_by_admin, 0) = 0"
+    ]
+  },
+  {
+    // Everyone who already exists when this migration ships has used the bot
+    // before, so they must not be thrown into onboarding. New users are created
+    // with onboarding_completed = 0 and are unaffected.
+    id: 11,
+    label: "mark pre-existing users as onboarding-complete",
+    statements: [
+      "UPDATE users SET onboarding_completed = 1, onboarding_state = NULL, updated_at = CAST(strftime('%s','now') AS INTEGER) WHERE COALESCE(onboarding_completed, 0) = 0"
+    ]
   }
 ];
+
+const MIGRATIONS = CORE_MIGRATIONS.concat(ROUTING_MIGRATIONS);
+
+// Exposed for offline migration tests (test/migrations*.test.js), which apply
+// these statements to an in-memory SQLite database. Not used at runtime.
+export { MIGRATIONS as SCHEMA_MIGRATIONS };
 
 async function runPendingMigrations(env) {
   let appliedIds;

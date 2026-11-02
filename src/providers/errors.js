@@ -88,6 +88,8 @@ export function isRetryableCategory(category) {
   return category === "timeout" ||
     category === "network_error" ||
     category === "server_error" ||
+    category === "provider_overloaded" ||
+    category === "rate_limited" ||
     category === "unexpected_format" ||
     category === "empty_response";
 }
@@ -108,6 +110,18 @@ export async function parseProviderError(resp) {
   try { parsed = JSON.parse(errText); } catch (e) {}
   const err = new Error("HTTP " + resp.status + ": " + truncate(errText, 200));
   err.status = resp.status;
+
+  // Extract Retry-After header for 429/503 responses
+  if (resp.status === 429 || resp.status === 503) {
+    const retryAfter = resp.headers.get("Retry-After");
+    if (retryAfter) {
+      const seconds = parseInt(retryAfter, 10);
+      if (!isNaN(seconds) && seconds > 0) {
+        err.retryAfterSeconds = Math.min(seconds, 300); // cap at 5 minutes
+      }
+    }
+  }
+
   if (parsed) {
     if (parsed.error) {
       if (typeof parsed.error === "string") err.providerMessage = parsed.error;

@@ -3,6 +3,7 @@
 import { CONNECTION_CACHE_TTL_MS } from "../config.js";
 import { generateShortId, isAdmin, now, normalizeBaseUrl } from "../utils.js";
 import { encryptCredential } from "../crypto.js";
+import { ensureConnectionModel } from "./connection-models.js";
 
 let userConnectionsCache = new Map();
 
@@ -53,6 +54,10 @@ export async function saveGlobalConnection(env, adminId, params) {
   await env.DB.prepare(
     "INSERT INTO ai_connections (connection_id, telegram_id, label, provider, base_url, model, encrypted_key, key_iv, encryption_version, enabled, is_global, is_default, description, display_order, supports_vision, consecutive_failures, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 2, 1, ?, 0, ?, ?, ?, 0, ?, ?)"
   ).bind(connectionId, adminId, params.label, params.provider, baseUrl, params.model, encrypted.ct, encrypted.iv, isGlobal, params.description || "", maxOrder, params.supports_vision === 1 || params.supports_vision === true ? 1 : 0, ts, ts).run();
+  // The connection is the credential owner; its model list starts with the
+  // model it was created with so every existing write path (wizard, personal
+  // model, shared model) produces a routable model row. Idempotent by design.
+  try { await ensureConnectionModel(env, connectionId, params.model, maxOrder); } catch (err) {}
   invalidateUserConnectionsCache(null);
   return connectionId;
 }
@@ -81,6 +86,11 @@ export async function updateUserConnection(env, userId, connectionId, updates) {
   values.push(connectionId);
   try {
     await env.DB.prepare("UPDATE ai_connections SET " + fields.join(", ") + " WHERE connection_id = ?").bind.apply(null, values).run();
+    // A new primary model on the connection must also exist in the model list,
+    // otherwise the UI would show a connection whose active model is missing.
+    if (updates.model !== undefined) {
+      try { await ensureConnectionModel(env, connectionId, updates.model, conn.display_order); } catch (err) {}
+    }
     invalidateUserConnectionsCache(null);
     return true;
   } catch (err) { console.error("updateUserConnection failed:", err.message); return false; }
@@ -92,6 +102,11 @@ export async function deleteUserConnection(env, userId, connectionId) {
   if (conn.is_global === 1 && !isAdmin(env, userId)) return false;
   if (conn.is_global === 0 && conn.telegram_id !== userId) return false;
   try {
+    // Remove child configuration rows first: a deleted connection must not
+    // leave dangling model or routing-entry references behind. Historical
+    // usage rows (connection_usage) are deliberately kept as analytics.
+    try { await env.DB.prepare("DELETE FROM connection_models WHERE connection_id = ?").bind(connectionId).run(); } catch (e) {}
+    try { await env.DB.prepare("DELETE FROM routing_profile_entries WHERE connection_id = ?").bind(connectionId).run(); } catch (e) {}
     await env.DB.prepare("DELETE FROM ai_connections WHERE connection_id = ?").bind(connectionId).run();
     invalidateUserConnectionsCache(null);
     try { await env.DB.prepare("UPDATE users SET active_connection_id = NULL, updated_at = ? WHERE active_connection_id = ?").bind(now(), connectionId).run(); } catch (e) {}

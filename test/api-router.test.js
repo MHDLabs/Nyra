@@ -192,10 +192,19 @@ test("returns 404 for an unknown API path", async () => {
   assert.equal((await res.json()).error, "Not found");
 });
 
+test("the Mini App chat endpoint no longer exists", async () => {
+  for (const method of ["GET", "POST"]) {
+    const res = await routeMiniAppAPI(fakeEnv(), ctx,
+      req("/api/chat", { initData: initDataFor(USER_ID), method, body: method === "POST" ? { message: "hi" } : undefined }),
+      "/api/chat");
+    assert.equal(res.status, 404, method + " /api/chat must be gone (chat happens in Telegram)");
+  }
+});
+
 test("returns 404 when the HTTP method does not match the route", async () => {
   const res = await routeMiniAppAPI(fakeEnv(), ctx,
-    req("/api/chat", { initData: initDataFor(USER_ID) }), "/api/chat");
-  assert.equal(res.status, 404, "GET /api/chat is not a route; POST is");
+    req("/api/user/profile", { initData: initDataFor(USER_ID), method: "POST", body: {} }), "/api/user/profile");
+  assert.equal(res.status, 404);
 });
 
 test("normalises a trailing slash instead of 404ing", async () => {

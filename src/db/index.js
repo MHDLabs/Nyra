@@ -1,4 +1,9 @@
 // Storage facade. `src/db.js` re-exports this verbatim, so no caller has to
+
+export {
+  isMaintenanceMode, setMaintenanceMode, getMaintenanceConfirmedBy
+} from "./maintenance.js";
+
 // know how storage is split internally.
 //
 //   schema.js       D1 schema bootstrap, versioned migrations, housekeeping

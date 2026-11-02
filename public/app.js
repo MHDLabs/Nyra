@@ -1,16 +1,15 @@
 /* ============================================
    Nyra AI — Telegram Mini App
-   BlackHole UI, wired to the Worker's real /api surface.
+   Management interface (no chat UI).
    ============================================ */
 (function () {
   'use strict';
 
-  // --- GLOBAL STATE & UTILS ------------------------------------------------
   var tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
   var state = {
-    user: null, isAdmin: false, personalAllowed: false, personalLimit: 5,
-    section: 'chat', chat: [], connections: [], routes: [], personal: [],
-    adminStats: null, adminPage: 0, broadcastPage: 0, dlqPage: 0, personalities: null
+    user: null, isAdmin: false, section: 'models',
+    i18n: {}, locale: 'en-US', dir: 'ltr',
+    connections: [], routes: [], personalities: null
   };
 
   function el(id) { return document.getElementById(id); }
@@ -20,18 +19,23 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
-  function toast(msg) {
-    var t = el('toast');
-    if (!t) return;
-    t.textContent = msg;
-    t.classList.add('show');
-    clearTimeout(toast._t);
-    toast._t = setTimeout(function () { t.classList.remove('show'); }, 2500);
+  function t(key, params) {
+    var msg = state.i18n[key] || key;
+    if (!params) return msg;
+    return msg.replace(/\{(\w+)\}/g, function (m, name) {
+      return params[name] !== undefined ? String(params[name]) : m;
+    });
   }
 
-  // Errors carry the HTTP status so callers can branch on 401 (session
-  // expired), 403 (not an admin) and 404 (endpoint or record missing) instead
-  // of dumping a bare status code into a toast.
+  function toast(msg) {
+    var toastEl = el('toast');
+    if (!toastEl) return;
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function () { toastEl.classList.remove('show'); }, 2500);
+  }
+
   function ApiError(status, message) {
     var e = new Error(message || ('HTTP ' + status));
     e.status = status;
@@ -59,14 +63,12 @@
     });
   }
 
-  // Renders a failure consistently so a 404 endpoint shows something other
-  // than "HTTP 404" and an expired session offers a reload.
   function errorHtml(err) {
-    var msg = err && err.message ? err.message : 'خطای ناشناخته';
+    var msg = err && err.message ? err.message : t('error.server');
     var hint = '';
-    if (err && err.status === 401) hint = '<br><button class="btn-ghost" style="margin-top:12px" onclick="window.location.reload()">تلاش مجدد</button>';
-    else if (err && err.status === 403) hint = '<br><span style="font-size:12px">دسترسی لازم را ندارید</span>';
-    else if (err && err.status === 404) hint = '<br><span style="font-size:12px">این بخش در سرور موجود نیست</span>';
+    if (err && err.status === 401) hint = '<br><button class="btn-ghost" style="margin-top:12px" onclick="window.location.reload()">' + t('action.retry') + '</button>';
+    else if (err && err.status === 403) hint = '<br><span style="font-size:12px">' + t('error.forbidden') + '</span>';
+    else if (err && err.status === 404) hint = '<br><span style="font-size:12px">' + t('error.not_found') + '</span>';
     return '<div class="empty" style="color:var(--danger)">' + esc(msg) + hint + '</div>';
   }
 
@@ -75,11 +77,10 @@
     if (tg) { tg.ready(); tg.expand(); }
     loadTheme();
     initStarfield();
-    initBlackHole();
 
     var initData = tg ? tg.initData : '';
     if (!initData) {
-      el('loading').innerHTML = '<div style="color:var(--danger)">⚠️ این برنامه فقط داخل تلگرام کار می‌کند</div>';
+      el('loading').innerHTML = '<div style="color:var(--danger)">⚠️ This app only works inside Telegram</div>';
       return;
     }
 
@@ -87,20 +88,30 @@
       .then(function (data) {
         state.user = data.user;
         state.isAdmin = !!data.isAdmin;
-        state.personalAllowed = !!data.personal_models_allowed;
-        state.personalLimit = data.personal_model_limit || 5;
+        return api('/api/i18n');
+      })
+      .then(function (i18nData) {
+        state.locale = i18nData.locale || 'en-US';
+        state.dir = i18nData.dir || 'ltr';
+        state.i18n = i18nData.strings || {};
+
+        document.documentElement.lang = state.locale;
+        document.documentElement.dir = state.dir;
 
         var nameEl = el('user-name');
-        if (nameEl) nameEl.textContent = state.user && state.user.first_name ? state.user.first_name : '';
+        if (nameEl && state.user && state.user.first_name) nameEl.textContent = state.user.first_name;
+
+        var loadingText = el('loading-text');
+        if (loadingText) loadingText.textContent = t('state.loading');
 
         el('loading').classList.add('hidden');
         el('shell').classList.remove('hidden');
 
         renderTabs();
-        switchSection('chat');
+        switchSection('models');
       })
       .catch(function (err) {
-        el('loading').innerHTML = '<div style="color:var(--danger)">خطا در اتصال: ' + esc(err.message) + '</div>';
+        el('loading').innerHTML = '<div style="color:var(--danger)">' + esc(err.message || 'Failed to load') + '</div>';
       });
   }
 
@@ -116,25 +127,45 @@
     localStorage.setItem('nyra-theme', light ? 'light' : 'dark');
     var b = el('theme-btn');
     if (b) b.textContent = light ? '🌙' : '☀️';
-    toast(light ? 'تم روشن' : 'تم تاریک');
+    toast(t(light ? 'toast.theme_light' : 'toast.theme_dark'));
+  };
+
+  window.toggleLanguage = function () {
+    var newLocale = state.locale === 'en-US' ? 'fa-IR' : 'en-US';
+    api('/api/user/locale', { method: 'POST', body: { locale: newLocale } })
+      .then(function (data) {
+        state.locale = data.locale;
+        state.dir = data.dir;
+        state.i18n = data.strings || {};
+        document.documentElement.lang = state.locale;
+        document.documentElement.dir = state.dir;
+        toast(t('toast.language_changed'));
+        renderTabs();
+        switchSection(state.section);
+      })
+      .catch(function (err) { toast(err.message); });
   };
 
   // --- NAVIGATION ----------------------------------------------------------
   function getTabs() {
-    var tabs = [{ id: 'chat', label: '💬 گفتگو' }, { id: 'models', label: '🔑 مدل‌ها' }];
-    if (state.isAdmin) tabs.push({ id: 'routes', label: '🧭 مسیرها' });
-    if (state.personalAllowed && !state.isAdmin) tabs.push({ id: 'personal', label: '🧩 شخصی' });
-    tabs.push({ id: 'settings', label: '⚙️ تنظیمات' });
-    if (state.isAdmin) tabs.push({ id: 'admin', label: '🛠 مدیریت' });
+    var tabs = [
+      { id: 'models', label: t('nav.models') },
+      { id: 'preferences', label: t('nav.preferences') }
+    ];
+    if (state.isAdmin) {
+      tabs.push({ id: 'routing', label: t('nav.routing') });
+      tabs.push({ id: 'usage', label: t('nav.usage') });
+      tabs.push({ id: 'admin', label: t('nav.admin') });
+    }
     return tabs;
   }
 
   function renderTabs() {
     var container = el('tabs-container');
     if (!container) return;
-    container.innerHTML = getTabs().map(function (t) {
-      return '<button class="tab' + (t.id === state.section ? ' active' : '') +
-        '" data-tab="' + t.id + '" onclick="window.switchSection(\'' + t.id + '\')">' + t.label + '</button>';
+    container.innerHTML = getTabs().map(function (tab) {
+      return '<button class="tab' + (tab.id === state.section ? ' active' : '') +
+        '" data-tab="' + tab.id + '" onclick="window.switchSection(\'' + tab.id + '\')">' + esc(tab.label) + '</button>';
     }).join('');
   }
 
@@ -145,133 +176,47 @@
     if (target) target.classList.add('active');
     renderTabs();
 
-    if (sec === 'chat') { renderChat(); bindChatBox(); }
-    else if (sec === 'models') loadModels();
-    else if (sec === 'routes') loadRoutes();
-    else if (sec === 'personal') loadPersonal();
-    else if (sec === 'settings') renderSettings();
+    if (sec === 'models') loadModels();
+    else if (sec === 'routing') loadRouting();
+    else if (sec === 'preferences') renderPreferences();
+    else if (sec === 'usage') loadUsage();
     else if (sec === 'admin') loadAdmin();
   };
 
-  // --- CHAT LOGIC ----------------------------------------------------------
-  function renderChat() {
-    var log = el('chat-log');
-    var welcome = el('welcome-screen');
-    if (!log || !welcome) return;
-
-    if (state.chat.length === 0) {
-      log.classList.add('hidden');
-      welcome.classList.remove('hidden');
-    } else {
-      welcome.classList.add('hidden');
-      log.classList.remove('hidden');
-      renderChatLog();
-    }
-  }
-
-  function renderChatLog() {
-    var log = el('chat-log');
-    if (!log) return;
-    log.innerHTML = state.chat.map(function (m) {
-      if (m.role === 'pending') return '<div class="typing-indicator"><span></span><span></span><span></span></div>';
-      if (m.role === 'error') return '<div class="msg err">' + esc(m.text) + '</div>';
-      return '<div class="msg ' + (m.role === 'user' ? 'user' : 'bot') + '">' +
-        esc(m.text).replace(/\n/g, '<br>') + '</div>';
-    }).join('');
-    log.scrollTop = log.scrollHeight;
-  }
-
-  function bindChatBox() {
-    var ta = el('chat-input');
-    var sendBtn = el('send-btn');
-    if (!ta || !sendBtn || ta._bound) return;
-    ta._bound = true;
-
-    ta.addEventListener('input', function () {
-      ta.style.height = 'auto';
-      ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
-      sendBtn.disabled = !ta.value.trim();
-    });
-
-    ta.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); window.sendMessage(); }
-    });
-
-    sendBtn.addEventListener('click', window.sendMessage);
-
-    Array.prototype.forEach.call(document.querySelectorAll('.chip[data-msg]'), function (c) {
-      if (c._bound) return;
-      c._bound = true;
-      c.addEventListener('click', function () {
-        ta.value = c.getAttribute('data-msg');
-        ta.dispatchEvent(new Event('input'));
-        window.sendMessage();
-      });
-    });
-  }
-
-  window.sendMessage = function () {
-    var ta = el('chat-input');
-    var sendBtn = el('send-btn');
-    if (!ta || !sendBtn) return;
-
-    var text = ta.value.trim();
-    if (!text) return;
-
-    ta.value = ''; ta.style.height = 'auto'; sendBtn.disabled = true;
-    state.chat.push({ role: 'user', text: text });
-    state.chat.push({ role: 'pending', text: '' });
-    renderChat();
-
-    api('/api/chat', { method: 'POST', body: { message: text } })
-      .then(function (res) {
-        state.chat = state.chat.filter(function (m) { return m.role !== 'pending'; });
-        state.chat.push({ role: 'bot', text: res.response });
-      })
-      .catch(function (err) {
-        state.chat = state.chat.filter(function (m) { return m.role !== 'pending'; });
-        state.chat.push({ role: 'error', text: 'خطا: ' + err.message });
-      })
-      .then(function () {
-        renderChatLog();
-        sendBtn.disabled = !ta.value.trim();
-      });
-  };
-
-  // --- MODELS & PERSONAL ---------------------------------------------------
+  // --- MODELS & CONNECTIONS ------------------------------------------------
   function loadModels() {
     var box = el('sec-models');
     if (!box) return;
-    box.innerHTML = '<div class="empty">در حال دریافت لیست مدل‌ها...</div>';
+    box.innerHTML = '<div class="empty">' + t('models.loading') + '</div>';
 
     api('/api/user/connections').then(function (data) {
       state.connections = data.connections || [];
       var active = state.connections.filter(function (c) { return c.active; })[0];
 
-      var html = '<div class="card"><div class="card-title">مدل فعال فعلی</div>' +
-        '<div class="card-sub">' + (active ? esc(active.label + ' — ' + active.model) : 'هیچ مدلی انتخاب نشده') + '</div></div>';
-      html += '<div class="card"><div class="card-title">مدل‌های موجود</div>';
+      var html = '<div class="card"><div class="card-title">' + t('models.active_model') + '</div>' +
+        '<div class="card-sub">' + (active ? esc(active.label + ' — ' + active.model) : t('models.no_active_model')) + '</div></div>';
 
-      if (!state.connections.length) html += '<div class="empty">مدلی یافت نشد</div>';
+      html += '<div class="card"><div class="card-title">' + t('models.title') + '</div>';
+      if (!state.connections.length) html += '<div class="empty">' + t('models.empty') + '</div>';
       else html += state.connections.map(function (c) {
         var caps = [];
-        if (c.is_fast) caps.push('سریع');
-        if (c.supports_vision) caps.push('تصویر');
+        if (c.is_fast) caps.push('Fast');
+        if (c.supports_vision) caps.push('Vision');
         return '<div class="row"><div class="grow">' +
           '<div class="name">' + esc(c.label) + '</div>' +
           '<div class="meta mono">' + esc(c.provider) + ' • ' + esc(c.model) +
-            (c.is_global ? ' • عمومی' : ' • شخصی') + (caps.length ? ' • ' + caps.join('/') : '') + '</div>' +
+            (c.is_global ? ' • ' + t('models.shared') : ' • ' + t('models.personal')) +
+            (caps.length ? ' • ' + caps.join('/') : '') + '</div>' +
           '</div>' +
           (c.active
-            ? '<span class="badge ok">فعال</span>'
-            : '<button class="btn-ghost" onclick="window.setActiveModel(\'' + esc(c.connection_id) + '\')">انتخاب</button>') +
+            ? '<span class="badge ok">' + t('status.enabled') + '</span>'
+            : '<button class="btn-ghost" onclick="window.setActiveModel(\'' + esc(c.connection_id) + '\')">' + t('action.select') + '</button>') +
           '</div>';
       }).join('');
-
       html += '</div>';
-      if (state.personalAllowed && !state.isAdmin) {
-        html += '<div class="card"><div class="card-title">مدل شخصی</div>' +
-          '<button class="btn" onclick="window.switchSection(\'personal\')">مدیریت مدل‌های شخصی</button></div>';
+
+      if (!state.isAdmin) {
+        html += '<div class="card"><button class="btn" onclick="window.openPersonalModal()">' + t('models.add_connection') + '</button></div>';
       }
       box.innerHTML = html;
     }).catch(function (e) { box.innerHTML = errorHtml(e); });
@@ -279,51 +224,26 @@
 
   window.setActiveModel = function (id) {
     api('/api/user/active-connection', { method: 'POST', body: { connection_id: id } })
-      .then(function () { toast('مدل تغییر کرد'); loadModels(); })
-      .catch(function (e) { toast('خطا: ' + e.message); });
+      .then(function () { toast(t('toast.saved')); loadModels(); })
+      .catch(function (e) { toast(e.message); });
   };
-
-  function loadPersonal() {
-    var box = el('sec-personal');
-    if (!box) return;
-    box.innerHTML = '<div class="empty">در حال بارگذاری...</div>';
-
-    api('/api/user/personal-models').then(function (data) {
-      state.personal = data.models || [];
-      state.personalLimit = data.limit || state.personalLimit;
-
-      var html = '<div class="card"><div class="card-title">مدل‌های شخصی (' + state.personal.length + '/' + state.personalLimit + ')</div>' +
-        '<button class="btn" onclick="window.openPersonalModal()"' +
-        (state.personal.length >= state.personalLimit ? ' disabled' : '') + '>+ افزودن مدل جدید</button></div>';
-
-      if (!state.personal.length) html += '<div class="empty">هنوز مدلی اضافه نکرده‌اید</div>';
-      else html += state.personal.map(function (m) {
-        return '<div class="card">' +
-          '<div class="card-title">' + esc(m.label) + (m.enabled ? '' : ' <span class="badge">غیرفعال</span>') + '</div>' +
-          '<div class="card-sub mono">' + esc(m.provider) + ' • ' + esc(m.model) + '</div>' +
-          '<button class="btn-danger" onclick="window.deletePersonal(\'' + esc(m.connection_id) + '\')">حذف</button></div>';
-      }).join('');
-
-      box.innerHTML = html;
-    }).catch(function (e) {
-      box.innerHTML = errorHtml(e.status === 403 ? new Error('دسترسی مدل شخصی فعال نیست') : e);
-    });
-  }
 
   window.openPersonalModal = function () {
     var m = document.createElement('div');
     m.className = 'modal-backdrop';
     m.innerHTML = '<div class="modal">' +
-      '<h2 style="margin-bottom:16px">افزودن مدل شخصی</h2>' +
-      '<label>عنوان</label><input id="p-label" placeholder="مثلا GPT-4 من">' +
-      '<label>Provider</label><select id="p-provider"><option value="openai-compatible">OpenAI Compatible</option><option value="anthropic">Anthropic</option></select>' +
-      '<label>Base URL</label><input id="p-url" placeholder="https://api.openai.com/v1">' +
-      '<label>Model Name</label><input id="p-model" placeholder="gpt-4o">' +
-      '<label>API Key</label><input id="p-key" type="password" placeholder="sk-...">' +
-      '<div class="card-sub" style="margin-top:8px">پیش از ذخیره، مدل یک درخواست آزمایشی واقعی می‌فرستد؛ اگر کلید یا نام مدل غلط باشد ذخیره نمی‌شود.</div>' +
+      '<h2 style="margin-bottom:16px">' + t('models.add_connection') + '</h2>' +
+      '<label>' + t('models.label') + '</label><input id="p-label" placeholder="My GPT-4">' +
+      '<label>' + t('models.provider') + '</label><select id="p-provider">' +
+        '<option value="openai-compatible">OpenAI Compatible</option>' +
+        '<option value="anthropic">Anthropic</option></select>' +
+      '<label>' + t('models.base_url') + '</label><input id="p-url" placeholder="https://api.openai.com/v1">' +
+      '<label>' + t('models.model_id') + '</label><input id="p-model" placeholder="gpt-4o">' +
+      '<label>' + t('models.api_key') + '</label><input id="p-key" type="password" placeholder="sk-...">' +
+      '<div class="card-sub" style="margin-top:8px">' + t('models.test_hint') + '</div>' +
       '<div style="display:flex;gap:10px;margin-top:20px">' +
-      '<button class="btn" onclick="window.createPersonal()">ذخیره</button>' +
-      '<button class="btn-ghost" style="flex:1" onclick="window.closeModal()">انصراف</button>' +
+      '<button class="btn" onclick="window.createPersonal()">' + t('action.save') + '</button>' +
+      '<button class="btn-ghost" style="flex:1" onclick="window.closeModal()">' + t('action.cancel') + '</button>' +
       '</div></div>';
     m.addEventListener('click', function (e) { if (e.target === m) window.closeModal(); });
     document.body.appendChild(m);
@@ -342,44 +262,43 @@
       model: el('p-model').value.trim(),
       api_key: el('p-key').value.trim()
     };
-    if (!body.label || !body.model || !body.api_key) { toast('فیلدهای ضروری را پر کنید'); return; }
+    if (!body.label || !body.model || !body.api_key) {
+      toast(t('models.label_required'));
+      return;
+    }
     api('/api/user/personal-models', { method: 'POST', body: body })
-      .then(function () { window.closeModal(); toast('مدل اضافه شد'); loadPersonal(); })
+      .then(function () { window.closeModal(); toast(t('models.created')); loadModels(); })
       .catch(function (e) { toast(e.message); });
   };
 
-  window.deletePersonal = function (id) {
-    if (!window.confirm('آیا مطمئن هستید؟')) return;
-    api('/api/user/personal-models/' + id, { method: 'DELETE' })
-      .then(function () { toast('حذف شد'); loadPersonal(); })
-      .catch(function (e) { toast(e.message); });
-  };
 
-  // --- ROUTES (ADMIN) ------------------------------------------------------
-  function loadRoutes() {
-    var box = el('sec-routes');
+  // --- ROUTING (ADMIN) -----------------------------------------------------
+  function loadRouting() {
+    var box = el('sec-routing');
     if (!box) return;
-    box.innerHTML = '<div class="empty">در حال بارگذاری مسیرها...</div>';
+    box.innerHTML = '<div class="empty">' + t('state.loading') + '</div>';
 
     api('/api/admin/routes').then(function (data) {
       state.routes = data.routes || [];
-      var html = '<button class="btn" onclick="window.openRouteModal()">+ مسیر جدید</button><br><br>';
-      if (!state.routes.length) html += '<div class="empty">مسیری تعریف نشده</div>';
+      var html = '<div class="card"><div class="card-title">' + t('routing.title') + '</div>' +
+        '<div class="card-sub">' + t('routing.subtitle') + '</div>' +
+        '<button class="btn" onclick="window.openRouteModal()">' + t('routing.add_profile') + '</button></div>';
+
+      if (!state.routes.length) html += '<div class="empty">' + t('routing.empty') + '</div>';
       else html += state.routes.map(function (r) {
         var models = r.models || [];
         return '<div class="card">' +
-          '<div class="card-title">' + esc(r.label) + (r.is_default ? '<span class="badge ok">پیش‌فرض</span>' : '') + '</div>' +
-          '<div class="card-sub mono">' + esc(r.provider) + ' • ' + models.length + ' مدل • ' +
-            r.enabled_token_count + '/' + r.token_count + ' توکن فعال</div>' +
+          '<div class="card-title">' + esc(r.label) + (r.is_default ? '<span class="badge ok">' + t('routing.default') + '</span>' : '') + '</div>' +
+          '<div class="card-sub mono">' + esc(r.provider) + ' • ' + t('models.models_count', {count: models.length}) + ' • ' +
+            r.enabled_token_count + '/' + r.token_count + ' tokens</div>' +
           '<div class="chips" style="justify-content:flex-start;margin-bottom:8px">' +
             models.map(function (mm) { return '<span class="chip">' + esc(mm.model) + (mm.is_default ? ' ⭐' : '') + '</span>'; }).join('') +
           '</div>' +
           '<div class="btn-row">' +
-            '<button class="btn-ghost" onclick="window.openRouteDetail(\'' + esc(r.route_id) + '\')">مدیریت</button>' +
-            (r.is_default ? '' : '<button class="btn-ghost" onclick="window.routeAction(\'' + esc(r.route_id) + '\', \'default\', {})">پیش‌فرض</button>') +
-            '<button class="btn-danger" onclick="window.deleteRoute(\'' + esc(r.route_id) + '\')">حذف</button>' +
+            (r.is_default ? '' : '<button class="btn-ghost" onclick="window.routeAction(\'' + esc(r.route_id) + '\', \'default\', {})">' + t('routing.make_default') + '</button>') +
+            '<button class="btn-danger" onclick="window.deleteRoute(\'' + esc(r.route_id) + '\')">' + t('action.delete') + '</button>' +
           '</div></div>';
-      });
+      }).join('');
       box.innerHTML = html;
     }).catch(function (e) { box.innerHTML = errorHtml(e); });
   }
@@ -387,717 +306,237 @@
   window.openRouteModal = function () {
     var m = document.createElement('div');
     m.className = 'modal-backdrop';
-    m.innerHTML = '<div class="modal"><h2>مسیر جدید</h2>' +
-      '<label>عنوان</label><input id="new-route-label" placeholder="OpenAI اصلی">' +
-      '<label>ارائه‌دهنده</label><select id="new-route-provider"><option value="openai">OpenAI-compatible</option><option value="anthropic">Anthropic</option></select>' +
-      '<label>Base URL (اختیاری)</label><input id="new-route-url" placeholder="https://api.openai.com/v1">' +
-      '<label>مدل‌ها (با کاما)</label><input id="new-route-models" placeholder="gpt-4o-mini, gpt-4o">' +
-      '<div class="btn-row"><button class="btn-ghost" onclick="window.closeModal()">انصراف</button>' +
-      '<button class="btn" onclick="window.createRoute()">ایجاد</button></div></div>';
+    m.innerHTML = '<div class="modal"><h2>' + t('routing.new_profile') + '</h2>' +
+      '<label>' + t('routing.label') + '</label><input id="new-route-label" placeholder="Primary">' +
+      '<label>' + t('models.provider') + '</label><select id="new-route-provider">' +
+        '<option value="openai">OpenAI-compatible</option>' +
+        '<option value="anthropic">Anthropic</option></select>' +
+      '<label>' + t('models.base_url') + '</label><input id="new-route-url" placeholder="https://api.openai.com/v1">' +
+      '<label>' + t('models.models') + '</label><input id="new-route-models" placeholder="gpt-4o-mini, gpt-4o">' +
+      '<div class="btn-row"><button class="btn-ghost" onclick="window.closeModal()">' + t('action.cancel') + '</button>' +
+      '<button class="btn" onclick="window.createRoute()">' + t('action.create') + '</button></div></div>';
     m.addEventListener('click', function (e) { if (e.target === m) window.closeModal(); });
     document.body.appendChild(m);
   };
 
   window.createRoute = function () {
-    var label = el('new-route-label').value.trim();
-    var provider = el('new-route-provider').value;
-    var baseUrl = el('new-route-url').value.trim();
     var models = el('new-route-models').value.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
-    if (!label || !models.length) { toast('عنوان و حداقل یک مدل لازم است'); return; }
-    api('/api/admin/routes', { method: 'POST', body: { label: label, provider: provider, base_url: baseUrl, models: models, tokens: [] } })
-      .then(function () { window.closeModal(); toast('مسیر ساخته شد'); loadRoutes(); })
-      .catch(function (e) { toast('خطا: ' + e.message); });
+    var body = {
+      label: el('new-route-label').value.trim(),
+      provider: el('new-route-provider').value,
+      base_url: el('new-route-url').value.trim(),
+      models: models
+    };
+    if (!body.label) { toast(t('routing.label_required')); return; }
+    api('/api/admin/routes', { method: 'POST', body: body })
+      .then(function () { window.closeModal(); toast(t('toast.saved')); loadRouting(); })
+      .catch(function (e) { toast(e.message); });
   };
 
-  window.openRouteDetail = function (routeId) {
-    var route = state.routes.filter(function (r) { return r.route_id === routeId; })[0];
-    if (!route) return;
-    var models = route.models || [];
-    var m = document.createElement('div');
-    m.className = 'modal-backdrop';
-    m.innerHTML = '<div class="modal"><h2>' + esc(route.label) + '</h2>' +
-      '<div class="card-sub">' + esc(route.provider) + '</div>' +
-      '<div class="card"><div class="card-title">مدل‌ها</div>' +
-      (models.length ? models.map(function (mm) {
-        return '<div class="row"><div class="grow"><div class="name">' + esc(mm.model) + (mm.is_default ? ' ⭐' : '') + '</div></div>' +
-          (mm.is_default ? '' : '<button class="btn-ghost" onclick="window.routeAction(\'' + esc(routeId) + '\', \'model-default\', {model_id:\'' + esc(mm.model_id) + '\'})">پیش‌فرض</button>') +
-          '<button class="btn-danger" onclick="window.routeAction(\'' + esc(routeId) + '\', \'model-remove\', {model_id:\'' + esc(mm.model_id) + '\'})">حذف</button></div>';
-      }).join('') : '<div class="empty">مدلی نیست</div>') +
-      '</div>' +
-      '<div class="card"><div class="card-title">افزودن مدل</div><input id="add-model-input" placeholder="نام مدل">' +
-      '<button class="btn" onclick="window.routeAction(\'' + esc(routeId) + '\', \'model-add\', {model: el(\'add-model-input\').value.trim()})">افزودن</button></div>' +
-      '<div class="card"><div class="card-title">توکن‌ها</div>' +
-      '<div class="card-sub">' + route.enabled_token_count + ' از ' + route.token_count + ' فعال</div>' +
-      '<label>افزودن توکن</label><input id="add-token-input" type="password" placeholder="کلید API">' +
-      '<button class="btn" onclick="window.routeAction(\'' + esc(routeId) + '\', \'token-add\', {api_key: el(\'add-token-input\').value.trim()})">افزودن توکن</button></div>' +
-      '<button class="btn-ghost" style="width:100%;padding:12px" onclick="window.closeModal()">بستن</button></div>';
-    m.addEventListener('click', function (e) { if (e.target === m) window.closeModal(); });
-    document.body.appendChild(m);
+  window.deleteRoute = function (id) {
+    if (!window.confirm(t('routing.delete_confirm'))) return;
+    api('/api/admin/routes/' + id, { method: 'DELETE' })
+      .then(function () { toast(t('action.delete')); loadRouting(); })
+      .catch(function (e) { toast(e.message); });
   };
 
-  window.routeAction = function (routeId, action, body) {
-    api('/api/admin/routes/' + routeId + '/' + action, { method: 'POST', body: body })
-      .then(function () {
-        toast('انجام شد');
-        if (document.querySelector('.modal-backdrop')) window.closeModal();
-        loadRoutes();
-      })
-      .catch(function (e) { toast('خطا: ' + e.message); });
+  window.routeAction = function (id, action, body) {
+    api('/api/admin/routes/' + id + '/' + action, { method: 'POST', body: body })
+      .then(function () { toast(t('toast.saved')); loadRouting(); })
+      .catch(function (e) { toast(e.message); });
   };
 
-  window.deleteRoute = function (routeId) {
-    if (!window.confirm('مسیر حذف شود؟')) return;
-    api('/api/admin/routes/' + routeId, { method: 'DELETE' })
-      .then(function () { toast('حذف شد'); loadRoutes(); })
-      .catch(function (e) { toast('خطا: ' + e.message); });
-  };
 
-  // --- SETTINGS ------------------------------------------------------------
-  function renderSettings() {
-    var box = el('sec-settings');
-    var u = state.user || {};
+  // --- PREFERENCES ---------------------------------------------------------
+  function renderPreferences() {
+    var box = el('sec-preferences');
     if (!box) return;
-    box.innerHTML = '<div class="card"><div class="card-title">پروفایل کاربری</div>' +
-      '<div class="row"><span class="grow">نام</span><span>' + esc(u.first_name) + '</span></div>' +
-      '<div class="row"><span class="grow">ID تلگرام</span><span class="mono">' + esc(u.telegram_id) + '</span></div></div>' +
-      '<div class="card"><div class="card-title">حالت توسعه‌دهنده</div>' +
-      '<div class="row"><span class="grow">فعال‌سازی Coding Mode</span>' +
-      '<label class="switch"><input type="checkbox" id="coding-toggle"' + (u.coding_mode ? ' checked' : '') +
-      '><span class="slider"></span></label></div></div>' +
-      '<div class="card"><div class="card-title">حافظه</div><div id="memory-host"><div class="empty">در حال بارگذاری...</div></div></div>' +
-      '<div class="card"><div class="card-title">شخصیت</div><div id="personality-host"><div class="empty">در حال بارگذاری...</div></div></div>' +
-      '<div class="card"><div class="card-title">دستورات سفارشی</div><div id="instructions-host"><div class="empty">در حال بارگذاری...</div></div></div>' +
-      '<div class="card"><div class="card-title">آمار</div><div id="user-stats"><div class="empty">در حال بارگذاری...</div></div></div>';
+    box.innerHTML = '<div class="empty">' + t('state.loading') + '</div>';
 
-    var toggle = el('coding-toggle');
-    if (toggle) toggle.addEventListener('change', function () {
-      api('/api/user/coding-mode', { method: 'POST', body: { enabled: toggle.checked } })
-        .then(function () { state.user.coding_mode = toggle.checked ? 1 : 0; toast('ذخیره شد'); })
-        .catch(function (err) { toast('خطا: ' + err.message); toggle.checked = !toggle.checked; });
-    });
+    Promise.all([
+      api('/api/user/personality'),
+      api('/api/user/memory'),
+      api('/api/user/custom-instructions')
+    ]).then(function (results) {
+      var personalities = results[0].personalities || [];
+      var current = results[0].current || 'default';
+      var memory = results[1];
+      var customInst = results[2].text || '';
 
-    api('/api/user/stats').then(function (s) {
-      var host = el('user-stats');
-      if (!host) return;
-      host.innerHTML = '<div class="row"><span class="grow">کل پیام‌ها</span><span>' + (s.total || 0) + '</span></div>' +
-        '<div class="row"><span class="grow">موفق</span><span>' + (s.success || 0) + '</span></div>' +
-        '<div class="row"><span class="grow">ناموفق</span><span>' + (s.fail || 0) + '</span></div>';
-    }).catch(function (e) {
-      var host = el('user-stats');
-      if (host) host.innerHTML = errorHtml(e);
-    });
+      var html = '<div class="card"><div class="card-title">' + t('prefs.personality') + '</div>';
+      html += personalities.map(function (p) {
+        return '<button class="chip' + (p.id === current ? ' active' : '') +
+          '" onclick="window.setPersonality(\'' + p.id + '\')">' + esc(p.name) + '</button>';
+      }).join('');
+      html += '</div>';
 
-    loadMemory();
-    loadPersonalities();
-    loadInstructions();
-  }
+      html += '<div class="card"><div class="card-title">' + t('prefs.memory_mode') + '</div>' +
+        '<select id="memory-mode" onchange="window.setMemoryMode(this.value)">' +
+        '<option value="off"' + (memory.mode === 'off' ? ' selected' : '') + '>' + t('prefs.memory_off') + '</option>' +
+        '<option value="session"' + (memory.mode === 'session' ? ' selected' : '') + '>' + t('prefs.memory_session') + '</option>' +
+        '<option value="always"' + (memory.mode === 'always' ? ' selected' : '') + '>' + t('prefs.memory_always') + '</option>' +
+        '</select></div>';
 
-  function loadMemory() {
-    var host = el('memory-host');
-    if (!host) return;
-    api('/api/user/memory').then(function (data) {
-      var modes = [['normal', 'کامل'], ['minimal', 'حداقلی'], ['none', 'خاموش']];
-      host.innerHTML =
-        '<div class="row"><span class="grow">حالت</span><span class="mono">' + esc(data.mode) + '</span></div>' +
-        '<div class="btn-row">' + modes.map(function (m) {
-          return '<button class="' + (data.mode === m[0] ? 'btn' : 'btn-ghost') + '" onclick="window.setMemoryMode(\'' + m[0] + '\')">' + m[1] + '</button>';
-        }).join('') + '</div>' +
-        '<div class="card-sub" style="margin:12px 0 4px">آنچه به خاطر دارم</div>' +
-        '<div class="mono" style="white-space:pre-wrap;font-size:12px">' + esc(data.formatted || '') + '</div>' +
-        (data.msg_counter ? '<div class="card-sub" style="margin-top:8px">پیام‌ها تا به‌روزرسانی بعدی: ' + data.msg_counter + '</div>' : '') +
-        '<button class="btn-danger" style="width:100%;margin-top:12px" onclick="window.clearMemory()">پاک کردن حافظه</button>';
-    }).catch(function (e) { host.innerHTML = errorHtml(e); });
-  }
+      html += '<div class="card"><div class="card-title">' + t('prefs.custom_instructions') + '</div>' +
+        '<textarea id="custom-inst" rows="4" maxlength="1000" placeholder="' + t('prefs.custom_hint') + '">' + esc(customInst) + '</textarea>' +
+        '<button class="btn" onclick="window.saveCustomInstructions()">' + t('action.save') + '</button></div>';
 
-  window.setMemoryMode = function (mode) {
-    api('/api/user/memory', { method: 'POST', body: { mode: mode } })
-      .then(function () { toast('حالت حافظه ذخیره شد'); loadMemory(); })
-      .catch(function (e) { toast('خطا: ' + e.message); });
-  };
-
-  window.clearMemory = function () {
-    if (!window.confirm('تمام حافظه پاک شود؟')) return;
-    api('/api/user/memory/clear', { method: 'POST' })
-      .then(function () { toast('حافظه پاک شد'); loadMemory(); })
-      .catch(function (e) { toast('خطا: ' + e.message); });
-  };
-
-  function loadPersonalities() {
-    var host = el('personality-host');
-    if (!host) return;
-    api('/api/user/personality').then(function (data) {
-      state.personalities = data;
-      var all = (data.builtins || []).concat(data.customs || []);
-      if (!all.length) { host.innerHTML = '<div class="empty">شخصیتی موجود نیست</div>'; return; }
-      host.innerHTML = '<div class="row"><span class="grow">فعال</span><span>' +
-        esc((all.filter(function (p) { return p.id === data.personality_id; })[0] || { name: data.personality_id }).name) + '</span></div>' +
-        all.map(function (p) {
-          var active = p.id === data.personality_id;
-          return '<div class="row"><div class="grow"><div class="name">' + esc(p.name) + '</div>' +
-            '<div class="meta">' + (p.builtin ? 'پیش‌فرض سیستم' : 'شخصی') + '</div></div>' +
-            (active ? '<span class="badge ok">فعال</span>'
-              : '<button class="btn-ghost" onclick="window.setPersonality(\'' + esc(p.id) + '\')">انتخاب</button>') +
-            '</div>';
-        }).join('');
-    }).catch(function (e) { host.innerHTML = errorHtml(e); });
+      box.innerHTML = html;
+    }).catch(function (e) { box.innerHTML = errorHtml(e); });
   }
 
   window.setPersonality = function (id) {
-    api('/api/user/personality', { method: 'POST', body: { personality_id: id } })
-      .then(function () { toast('شخصیت تغییر کرد'); loadPersonalities(); })
-      .catch(function (e) { toast('خطا: ' + e.message); });
+    api('/api/user/personality', { method: 'POST', body: { personality: id } })
+      .then(function () { toast(t('toast.saved')); renderPreferences(); })
+      .catch(function (e) { toast(e.message); });
   };
 
-  function loadInstructions() {
-    var host = el('instructions-host');
-    if (!host) return;
-    api('/api/user/custom-instructions').then(function (data) {
-      host.innerHTML =
-        '<div class="card-sub">این متن به هر درخواست اضافه می‌شود (حداکثر ' + (data.max || 1000) + ' کاراکتر).</div>' +
-        '<textarea id="ci-input" rows="4" placeholder="مثلا: کوتاه جواب بده">' + esc(data.text || '') + '</textarea>' +
-        '<div class="btn-row">' +
-          '<button class="btn" onclick="window.saveInstructions()">ذخیره</button>' +
-          '<button class="btn-ghost" onclick="window.clearInstructions()">پاک کردن</button>' +
-        '</div>';
-    }).catch(function (e) { host.innerHTML = errorHtml(e); });
+  window.setMemoryMode = function (mode) {
+    api('/api/user/memory', { method: 'POST', body: { mode: mode } })
+      .then(function () { toast(t('toast.saved')); })
+      .catch(function (e) { toast(e.message); });
+  };
+
+  window.saveCustomInstructions = function () {
+    var text = el('custom-inst').value.trim();
+    api('/api/user/custom-instructions', { method: 'POST', body: { text: text } })
+      .then(function () { toast(t('toast.saved')); })
+      .catch(function (e) { toast(e.message); });
+  };
+
+  // --- USAGE (ADMIN) -------------------------------------------------------
+  function loadUsage() {
+    var box = el('sec-usage');
+    if (!box) return;
+    box.innerHTML = '<div class="empty">' + t('state.loading') + '</div>';
+
+    Promise.all([
+      api('/api/admin/connection-usage?days=7'),
+      api('/api/admin/shared-usage?days=7')
+    ]).then(function (results) {
+      var connUsage = results[0].usage || [];
+      var sharedUsage = results[1].usage || [];
+
+      var html = '<div class="card"><div class="card-title">' + t('usage.connection_title') + '</div>';
+      if (!connUsage.length) html += '<div class="empty">' + t('state.empty') + '</div>';
+      else html += '<table><tr><th>' + t('usage.connection') + '</th><th>' + t('usage.requests') + '</th><th>' + t('usage.tokens') + '</th></tr>' +
+        connUsage.map(function (u) {
+          return '<tr><td>' + esc(u.label || u.connection_id) + '</td><td>' + u.requests + '</td><td>' + u.tokens + '</td></tr>';
+        }).join('') + '</table>';
+      html += '</div>';
+
+      html += '<div class="card"><div class="card-title">' + t('usage.shared_title') + '</div>';
+      if (!sharedUsage.length) html += '<div class="empty">' + t('state.empty') + '</div>';
+      else html += '<table><tr><th>' + t('usage.user') + '</th><th>' + t('usage.requests') + '</th><th>' + t('usage.tokens') + '</th></tr>' +
+        sharedUsage.map(function (u) {
+          return '<tr><td>' + esc(u.first_name || 'User ' + u.telegram_id) + '</td><td>' + u.requests + '</td><td>' + u.tokens + '</td></tr>';
+        }).join('') + '</table>';
+      html += '</div>';
+
+      box.innerHTML = html;
+    }).catch(function (e) { box.innerHTML = errorHtml(e); });
   }
 
-  window.saveInstructions = function () {
-    var input = el('ci-input');
-    if (!input) return;
-    api('/api/user/custom-instructions', { method: 'POST', body: { text: input.value } })
-      .then(function () { toast('ذخیره شد'); loadInstructions(); })
-      .catch(function (e) { toast('خطا: ' + e.message); });
-  };
-
-  window.clearInstructions = function () {
-    api('/api/user/custom-instructions', { method: 'POST', body: { clear: true } })
-      .then(function () { toast('پاک شد'); loadInstructions(); })
-      .catch(function (e) { toast('خطا: ' + e.message); });
-  };
 
   // --- ADMIN ---------------------------------------------------------------
   function loadAdmin() {
     var box = el('sec-admin');
     if (!box) return;
-    box.innerHTML = '<div class="empty">در حال دریافت آمار...</div>';
+    box.innerHTML = '<div class="empty">' + t('state.loading') + '</div>';
 
-    Promise.all([api('/api/admin/stats'), api('/api/admin/settings')]).then(function (res) {
-      state.adminStats = res[0];
-      var settings = res[1];
-      box.innerHTML =
+    api('/api/admin/stats').then(function (data) {
+      var html = '<div class="card"><div class="card-title">' + t('admin.stats') + '</div>' +
         '<div class="stat-grid">' +
-          '<div class="stat-card"><div class="stat-val">' + (state.adminStats.users || 0) + '</div><div class="stat-lbl">کاربران</div></div>' +
-          '<div class="stat-card"><div class="stat-val">' + (state.adminStats.requests || 0) + '</div><div class="stat-lbl">درخواست‌ها</div></div>' +
-          '<div class="stat-card"><div class="stat-val">' + (state.adminStats.chats || 0) + '</div><div class="stat-lbl">گروه‌ها</div></div>' +
-          '<div class="stat-card"><div class="stat-val">' + (state.adminStats.connections || 0) + '</div><div class="stat-lbl">اتصال‌ها</div></div>' +
-        '</div>' +
-        '<div class="card"><div class="card-title">تنظیمات جهانی</div>' +
-          '<div class="row"><span class="grow">اجازه مدل شخصی</span>' +
-          '<label class="switch"><input type="checkbox" id="adm-pers"' + (settings.allow_personal_models ? ' checked' : '') +
-          '><span class="slider"></span></label></div>' +
-          '<label>سقف مدل شخصی</label>' +
-          '<input type="number" id="adm-limit" min="1" value="' + (settings.personal_model_limit || 5) + '">' +
-          '<label>دسترسی Workers AI</label>' +
-          '<select id="adm-workers-ai">' +
-            '<option value="disabled"' + (settings.workers_ai_policy === 'disabled' ? ' selected' : '') + '>خاموش</option>' +
-            '<option value="admins"' + (settings.workers_ai_policy === 'admins' ? ' selected' : '') + '>فقط مدیران</option>' +
-            '<option value="all"' + (settings.workers_ai_policy === 'all' ? ' selected' : '') + '>همهٔ کاربران مجاز</option>' +
-          '</select>' +
-          '<label>مدل Workers AI (شناسهٔ @cf/...)</label>' +
-          '<input id="adm-workers-model" value="' + esc(settings.workers_ai_model || '@cf/meta/llama-3.1-8b-instruct') + '" placeholder="@cf/meta/llama-3.1-8b-instruct">' +
-          (settings.workers_ai_available ? '' : '<div class="meta">اتصال Workers AI در این محیط در دسترس نیست.</div>') +
-          '<button class="btn" onclick="window.saveAdminSettings()">ذخیره تنظیمات</button>' +
-        '</div>' +
-        '<div class="card"><div class="card-title">مدل‌های اشتراکی (سرویس عمومی)</div>' +
-          '<div class="card-sub">این مدل‌ها با کلید خود شما اجرا می‌شوند و کاربران بدون کلید از آن‌ها استفاده می‌کنند؛ سهمیهٔ روزانه در همان کارت اعمال می‌شود.</div>' +
-          '<div id="admin-shared"><div class="empty">در حال بارگذاری...</div></div></div>' +
-        '<div class="card"><div class="card-title">کاربران</div><div id="admin-users"><div class="empty">در حال بارگذاری...</div></div>' +
-          '<div class="pager">' +
-            '<button class="btn-ghost" onclick="window.adminUsersPage(-1)">‹ قبلی</button>' +
-            '<span id="admin-page-label">1</span>' +
-            '<button class="btn-ghost" onclick="window.adminUsersPage(1)">بعدی ›</button>' +
-          '</div></div>' +
-        '<div class="card"><div class="card-title">اتصال‌ها</div><div id="admin-conns"><div class="empty">در حال بارگذاری...</div></div></div>' +
-        '<div class="card"><div class="card-title">مصرف اتصال‌ها</div><div id="admin-usage"><div class="empty">در حال بارگذاری...</div></div></div>' +
-        '<div class="card"><div class="card-title">پیام همگانی</div><div id="admin-broadcast"><div class="empty">در حال بارگذاری...</div></div></div>' +
-        '<div class="card"><div class="card-title">خطاهای صف</div><div id="admin-dlq"><div class="empty">در حال بارگذاری...</div></div></div>' +
-        '<div class="card"><div class="card-title">مسیرها</div>' +
-          '<button class="btn" onclick="window.switchSection(\'routes\')">مدیریت مسیرها</button></div>';
-      loadAdminUsers();
-      loadSharedModels();
-      loadAdminConnections();
-      loadAdminUsage();
-      loadBroadcasts();
-      loadDLQ();
+        '<div><strong>' + (data.total_users || 0) + '</strong><br>' + t('admin.total_users') + '</div>' +
+        '<div><strong>' + (data.active_today || 0) + '</strong><br>' + t('admin.active_today') + '</div>' +
+        '<div><strong>' + (data.total_chats || 0) + '</strong><br>' + t('admin.total_chats') + '</div>' +
+        '<div><strong>' + (data.requests_today || 0) + '</strong><br>' + t('admin.requests_today') + '</div>' +
+        '</div></div>';
+
+      html += '<div class="card"><div class="card-title">' + t('admin.shared_service') + '</div>';
+      html += '<label>' + t('admin.service_enabled') + '</label>' +
+        '<select id="shared-enabled"><option value="1">' + t('status.enabled') + '</option><option value="0">' + t('status.disabled') + '</option></select>';
+      html += '<label>' + t('admin.daily_request_limit') + '</label><input id="shared-req-limit" type="number" value="100">';
+      html += '<label>' + t('admin.daily_token_limit') + '</label><input id="shared-tok-limit" type="number" value="50000">';
+      html += '<button class="btn" onclick="window.saveSharedSettings()">' + t('action.save') + '</button></div>';
+
+      html += '<div class="card"><div class="card-title">' + t('admin.maintenance') + '</div>' +
+        '<button class="btn-danger" onclick="window.toggleMaintenance()">' + t('admin.toggle_maintenance') + '</button></div>';
+
+      html += '<div class="card"><div class="card-title">' + t('admin.shared_models') + '</div>' +
+        '<button class="btn" onclick="window.manageSharedModels()">' + t('admin.manage_shared') + '</button></div>';
+
+      box.innerHTML = html;
     }).catch(function (e) { box.innerHTML = errorHtml(e); });
   }
 
-  window.saveAdminSettings = function () {
-    api('/api/admin/settings', {
-      method: 'POST',
-      body: {
-        allow_personal_models: el('adm-pers').checked,
-        personal_model_limit: parseInt(el('adm-limit').value, 10) || 5,
-        workers_ai_policy: el('adm-workers-ai').value,
-        workers_ai_model: el('adm-workers-model').value.trim()
-      }
-    }).then(function (s) {
-      toast('تنظیمات ذخیره شد');
-      state.personalAllowed = s.allow_personal_models;
-      state.personalLimit = s.personal_model_limit;
-    }).catch(function (e) { toast(e.message); });
-  };
-
-  // --- SHARED MODELS (ADMIN) ----------------------------------------------
-  // One request returns the models, the switch and a server-computed `ready`
-  // flag, so the panel can never show "on" for a service that cannot answer.
-  function loadSharedModels() {
-    var host = el('admin-shared');
-    if (!host) return;
-    api('/api/admin/shared-models').then(function (data) {
-      state.sharedModels = data;
-      var models = data.models || [];
-      var s = data.settings || {};
-      var status = data.ready
-        ? '<span class="badge" style="color:var(--ok)">آماده</span>'
-        : '<span class="badge" style="color:var(--danger)">' +
-            (data.reason === 'no_shared_model' ? 'مدلی ثبت نشده' : 'خاموش') + '</span>';
-
-      var html =
-        '<div class="row"><span class="grow">سرویس اشتراکی ' + status + '</span>' +
-          '<label class="switch"><input type="checkbox" id="adm-shared-on"' + (s.enabled ? ' checked' : '') +
-          ' onchange="window.saveSharedService()"><span class="slider"></span></label></div>' +
-        '<label>سقف درخواست روزانه هر کاربر</label>' +
-        '<input type="number" id="adm-shared-req" min="0" value="' + (s.daily_request_limit || 0) + '">' +
-        '<label>سقف توکن روزانه هر کاربر</label>' +
-        '<input type="number" id="adm-shared-tok" min="0" value="' + (s.daily_token_limit || 0) + '">' +
-        '<div class="meta">صفر یعنی بدون سقف. سهمیه در نیمه‌شب UTC صفر می‌شود.</div>' +
-        '<button class="btn" onclick="window.saveSharedService()">ذخیرهٔ سرویس اشتراکی</button>' +
-        '<button class="btn-ghost" style="width:100%;margin-top:10px" onclick="window.openSharedModelModal()">+ افزودن مدل اشتراکی</button>';
-
-      if (!models.length) {
-        html += '<div class="empty">هنوز مدلی اضافه نشده. با دکمهٔ بالا یکی اضافه کنید.</div>';
-      } else {
-        html += models.map(function (m) {
-          var testBadge = m.last_test_status === 'success'
-            ? '<span class="badge" style="color:var(--ok)">تست موفق</span>'
-            : (m.last_test_status ? '<span class="badge" style="color:var(--danger)">تست ناموفق</span>' : '');
-          return '<div class="card"><div class="card-title">' + esc(m.label) +
-            (m.is_default ? ' <span class="badge">پیش‌فرض</span>' : '') +
-            (m.enabled ? '' : ' <span class="badge">غیرفعال</span>') + ' ' + testBadge + '</div>' +
-            '<div class="card-sub mono">' + esc(m.provider) + ' • ' + esc(m.model) + '</div>' +
-            '<div class="btn-row">' +
-            '<button class="btn-ghost" onclick="window.sharedModelAction(\'' + esc(m.connection_id) + '\', \'test\')">تست</button>' +
-            '<button class="btn-ghost" onclick="window.sharedModelAction(\'' + esc(m.connection_id) + '\', \'' + (m.enabled ? 'disable' : 'enable') + '\')">' + (m.enabled ? 'غیرفعال‌سازی' : 'فعال‌سازی') + '</button>' +
-            (m.is_default ? '' : '<button class="btn-ghost" onclick="window.sharedModelAction(\'' + esc(m.connection_id) + '\', \'default\')">پیش‌فرض</button>') +
-            '<button class="btn-danger" onclick="window.deleteSharedModel(\'' + esc(m.connection_id) + '\')">حذف</button>' +
-            '</div></div>';
-        }).join('');
-      }
-      host.innerHTML = html;
-    }).catch(function (e) { host.innerHTML = errorHtml(e); });
-  }
-
-  window.saveSharedService = function () {
-    var on = el('adm-shared-on');
-    api('/api/admin/shared-service', {
-      method: 'POST',
-      body: {
-        enabled: !!(on && on.checked),
-        daily_request_limit: parseInt((el('adm-shared-req') || {}).value, 10) || 0,
-        daily_token_limit: parseInt((el('adm-shared-tok') || {}).value, 10) || 0
-      }
-    }).then(function () {
-      toast('ذخیره شد');
-      loadSharedModels();
-    }).catch(function (e) { toast(e.message); loadSharedModels(); });
-  };
-
-  window.sharedModelAction = function (id, action) {
-    var url = '/api/admin/shared-models/' + id + '/' + action;
-    api(url, { method: 'POST' }).then(function (data) {
-      if (action === 'test' && data.test && data.test.status !== 'success') {
-        toast('تست ناموفق: ' + (data.test.diagnostic || data.test.error || data.test.status));
-      } else if (action === 'test') {
-        toast('تست موفق (' + (data.test.latency || 0) + 'ms)');
-      } else {
-        toast('انجام شد');
-      }
-      loadSharedModels();
-    }).catch(function (e) { toast(e.message); loadSharedModels(); });
-  };
-
-  window.deleteSharedModel = function (id) {
-    if (!window.confirm('این مدل اشتراکی حذف شود؟')) return;
-    api('/api/admin/shared-models/' + id, { method: 'DELETE' })
-      .then(function () { toast('حذف شد'); loadSharedModels(); })
-      .catch(function (e) { toast(e.message); });
-  };
-
-  window.openSharedModelModal = function () {
-    var m = document.createElement('div');
-    m.className = 'modal-backdrop';
-    m.innerHTML = '<div class="modal">' +
-      '<h2 style="margin-bottom:16px">افزودن مدل اشتراکی</h2>' +
-      '<label>عنوان</label><input id="s-label" placeholder="مثلا Qwen عمومی">' +
-      '<label>Provider</label><select id="s-provider"><option value="openai-compatible">OpenAI Compatible</option><option value="anthropic">Anthropic</option></select>' +
-      '<label>Base URL</label><input id="s-url" placeholder="https://api.openai.com/v1">' +
-      '<label>API Key</label><input id="s-key" type="password" placeholder="sk-...">' +
-      '<label>Model Name</label><input id="s-model" placeholder="gpt-4o">' +
-      '<div class="btn-row" style="margin-top:10px"><button class="btn-ghost" onclick="window.discoverSharedModels()">دریافت فهرست مدل‌ها</button></div>' +
-      '<div id="s-discovered"></div>' +
-      '<div class="card-sub" style="margin-top:8px">پیش از ذخیره، مدل یک درخواست آزمایشی واقعی می‌فرستد؛ اگر کلید یا نام مدل غلط باشد ذخیره نمی‌شود.</div>' +
-      '<div style="display:flex;gap:10px;margin-top:20px">' +
-      '<button class="btn" onclick="window.createSharedModel()">ذخیره</button>' +
-      '<button class="btn-ghost" style="flex:1" onclick="window.closeModal()">انصراف</button>' +
-      '</div></div>';
-    m.addEventListener('click', function (e) { if (e.target === m) window.closeModal(); });
-    document.body.appendChild(m);
-  };
-
-  window.discoverSharedModels = function () {
-    var host = el('s-discovered');
-    if (host) host.innerHTML = '<div class="card-sub">در حال دریافت...</div>';
-    api('/api/admin/shared-models/discover', {
-      method: 'POST',
-      body: {
-        provider: el('s-provider').value,
-        base_url: el('s-url').value.trim(),
-        api_key: el('s-key').value.trim()
-      }
-    }).then(function (data) {
-      var models = data.models || [];
-      if (!host) return;
-      if (!models.length) { host.innerHTML = '<div class="card-sub">مدلی برنگشت؛ نام مدل را دستی وارد کنید.</div>'; return; }
-      host.innerHTML = '<div class="card-sub">یک مدل را انتخاب کنید:</div><div class="btn-row">' +
-        models.slice(0, 40).map(function (id) {
-          return '<button class="btn-ghost" onclick="window.pickSharedModel(\'' + esc(id) + '\')">' + esc(id) + '</button>';
-        }).join('') + '</div>';
-    }).catch(function (e) {
-      if (host) host.innerHTML = '<div class="card-sub">دریافت فهرست ممکن نشد؛ نام مدل را دستی وارد کنید. (' + esc(e.message) + ')</div>';
-    });
-  };
-
-  window.pickSharedModel = function (id) {
-    var input = el('s-model');
-    if (input) input.value = id;
-    toast('مدل انتخاب شد');
-  };
-
-  window.createSharedModel = function () {
+  window.saveSharedSettings = function () {
     var body = {
-      label: el('s-label').value.trim(),
-      provider: el('s-provider').value,
-      base_url: el('s-url').value.trim(),
-      model: el('s-model').value.trim(),
-      api_key: el('s-key').value.trim()
+      shared_service_enabled: parseInt(el('shared-enabled').value, 10),
+      shared_daily_request_limit: parseInt(el('shared-req-limit').value, 10),
+      shared_daily_token_limit: parseInt(el('shared-tok-limit').value, 10)
     };
-    if (!body.label || !body.model || !body.api_key) { toast('فیلدهای ضروری را پر کنید'); return; }
-    api('/api/admin/shared-models', { method: 'POST', body: body })
-      .then(function () { window.closeModal(); toast('مدل اشتراکی اضافه شد'); loadSharedModels(); })
+    api('/api/admin/settings', { method: 'POST', body: body })
+      .then(function () { toast(t('toast.saved')); })
       .catch(function (e) { toast(e.message); });
   };
 
-  function loadAdminUsers() {
-    api('/api/admin/users?page=' + state.adminPage).then(function (data) {
-      var users = data.users || [];
-      var box = el('admin-users');
-      if (!box) return;
-      box.innerHTML = users.length === 0 ? '<div class="empty">کاربری نیست</div>' :
-        users.map(function (u) {
-          return '<div class="row"><div class="grow">' +
-            '<div class="name">' + esc(u.first_name || u.username || u.telegram_id) + '</div>' +
-            '<div class="meta mono">' + esc(u.telegram_id) + '</div></div></div>';
-        }).join('');
-      var label = el('admin-page-label');
-      if (label) label.textContent = String(state.adminPage + 1);
-    }).catch(function (e) {
-      var box = el('admin-users');
-      if (box) box.innerHTML = errorHtml(e);
-    });
-  }
-
-  window.adminUsersPage = function (delta) {
-    state.adminPage = Math.max(0, state.adminPage + delta);
-    loadAdminUsers();
+  window.toggleMaintenance = function () {
+    if (!window.confirm(t('admin.maintenance_confirm'))) return;
+    api('/api/admin/settings', { method: 'POST', body: { maintenance_mode: 1 } })
+      .then(function () { toast(t('admin.maintenance_enabled')); })
+      .catch(function (e) { toast(e.message); });
   };
 
-  // Fast / vision capability switches for the admin's global connections.
-  function loadAdminConnections() {
-    var host = el('admin-conns');
-    if (!host) return;
-    api('/api/user/connections').then(function (data) {
-      var globals = (data.connections || []).filter(function (c) { return c.is_global; });
-      if (!globals.length) { host.innerHTML = '<div class="empty">اتصال عمومی وجود ندارد</div>'; return; }
-      host.innerHTML = globals.map(function (c) {
-        return '<div class="card"><div class="card-title">' + esc(c.label) + '</div>' +
-          '<div class="card-sub mono">' + esc(c.provider) + ' • ' + esc(c.model) + '</div>' +
-          '<div class="row"><span class="grow">سریع (fast)</span>' +
-          '<label class="switch"><input type="checkbox" onchange="window.toggleConnectionCapability(\'' + esc(c.connection_id) + '\', \'fast\', this.checked)"' +
-          (c.is_fast ? ' checked' : '') + '><span class="slider"></span></label></div>' +
-          '<div class="row"><span class="grow">پشتیبانی تصویر</span>' +
-          '<label class="switch"><input type="checkbox" onchange="window.toggleConnectionCapability(\'' + esc(c.connection_id) + '\', \'vision\', this.checked)"' +
-          (c.supports_vision ? ' checked' : '') + '><span class="slider"></span></label></div>' +
-          '</div>';
-      }).join('');
-    }).catch(function (e) { host.innerHTML = errorHtml(e); });
-  }
-
-  window.toggleConnectionCapability = function (connectionId, field, checked) {
-    api('/api/admin/connection-toggle', { method: 'POST', body: { connection_id: connectionId, field: field } })
-      .then(function () { toast('ذخیره شد'); loadAdminConnections(); })
-      .catch(function (e) { toast('خطا: ' + e.message); loadAdminConnections(); });
+  window.manageSharedModels = function () {
+    toast(t('admin.shared_models_hint'));
   };
 
-  function loadAdminUsage() {
-    var host = el('admin-usage');
-    if (!host) return;
-    api('/api/admin/connection-usage?days=7').then(function (data) {
-      var stats = data.stats || [];
-      if (!stats.length) { host.innerHTML = '<div class="empty">مصرفی در ۷ روز گذشته ثبت نشده</div>'; return; }
-      host.innerHTML = '<div class="card-sub">۷ روز گذشته</div>' + stats.map(function (s) {
-        return '<div class="row"><div class="grow"><div class="name">' + esc(s.label || s.connection_id) + '</div>' +
-          '<div class="meta">' + (s.total_requests || 0) + ' درخواست • ' + (s.unique_users || 0) + ' کاربر</div></div>' +
-          '<span class="mono">' + (s.total_tokens || 0) + ' توکن</span></div>';
-      }).join('');
-    }).catch(function (e) { host.innerHTML = errorHtml(e); });
-  }
-
-  function loadBroadcasts() {
-    var host = el('admin-broadcast');
-    if (!host) return;
-    api('/api/admin/broadcasts?page=' + state.broadcastPage).then(function (data) {
-      var list = data.broadcasts || [];
-      var html = '<div class="btn-row" style="margin-bottom:12px">' +
-        '<button class="btn" onclick="window.openBroadcastModal()">+ پیام جدید</button>' +
-        '<button class="btn-ghost" onclick="window.broadcastPage(-1)">‹</button>' +
-        '<button class="btn-ghost" onclick="window.broadcastPage(1)">›</button></div>';
-      if (!list.length) html += '<div class="empty">پیامی ارسال نشده</div>';
-      else html += list.map(function (b) {
-        var actions = '';
-        if (b.status === 'draft') actions = '<button class="btn-ghost" onclick="window.broadcastAction(\'' + esc(b.broadcast_id) + '\', \'start\')">شروع</button>';
-        else if (b.status === 'running') actions = '<button class="btn-ghost" onclick="window.broadcastAction(\'' + esc(b.broadcast_id) + '\', \'pause\')">توقف موقت</button>';
-        else if (b.status === 'paused') actions = '<button class="btn-ghost" onclick="window.broadcastAction(\'' + esc(b.broadcast_id) + '\', \'resume\')">ادامه</button>';
-        if (b.status === 'draft' || b.status === 'running' || b.status === 'paused') {
-          actions += '<button class="btn-danger" onclick="window.broadcastAction(\'' + esc(b.broadcast_id) + '\', \'cancel\')">لغو</button>';
-        }
-        return '<div class="card"><div class="card-title">' + esc(b.target_type) +
-          '<span class="badge' + (b.status === 'completed' ? ' ok' : '') + '">' + esc(b.status) + '</span></div>' +
-          '<div class="card-sub">' + esc(String(b.message || '').slice(0, 120)) + '</div>' +
-          '<div class="row"><span class="grow">' + (b.sent_count || 0) + ' از ' + (b.total_count || 0) +
-            ' • ناموفق ' + (b.failed_count || 0) + '</span></div>' +
-          (actions ? '<div class="btn-row">' + actions + '</div>' : '') +
-          '</div>';
-      }).join('');
-      host.innerHTML = html;
-    }).catch(function (e) { host.innerHTML = errorHtml(e); });
-  }
-
-  window.broadcastPage = function (delta) {
-    state.broadcastPage = Math.max(0, state.broadcastPage + delta);
-    loadBroadcasts();
-  };
-
-  window.openBroadcastModal = function () {
-    var m = document.createElement('div');
-    m.className = 'modal-backdrop';
-    m.innerHTML = '<div class="modal"><h2>پیام همگانی</h2>' +
-      '<label>مخاطبان</label><select id="bc-target">' +
-        '<option value="all_users">همه کاربران</option>' +
-        '<option value="active_users">کاربران فعال (۳۰ روز)</option>' +
-        '<option value="all_chats">همه گروه‌ها</option>' +
-      '</select>' +
-      '<div class="card-sub" id="bc-count" style="margin-top:8px"></div>' +
-      '<label>متن</label><textarea id="bc-message" rows="5" placeholder="متن پیام..."></textarea>' +
-      '<div class="btn-row"><button class="btn-ghost" onclick="window.closeModal()">انصراف</button>' +
-      '<button class="btn" onclick="window.createBroadcast()">ایجاد پیش‌نویس</button></div>' +
-      '<div class="card-sub" style="margin-top:12px">پس از ایجاد، دکمه شروع را بزنید. تلگرام ۴۰۹۶ کاراکتر برای هر پیام می‌پذیرد.</div></div>';
-    m.addEventListener('click', function (e) { if (e.target === m) window.closeModal(); });
-    document.body.appendChild(m);
-    var sel = el('bc-target');
-    if (sel) {
-      sel.addEventListener('change', previewBroadcastTargets);
-      previewBroadcastTargets();
-    }
-  };
-
-  function previewBroadcastTargets() {
-    var sel = el('bc-target');
-    var host = el('bc-count');
-    if (!sel || !host) return;
-    host.textContent = 'در حال شمارش مخاطبان...';
-    api('/api/admin/broadcast/preview', { method: 'POST', body: { targetType: sel.value } })
-      .then(function (d) { host.textContent = 'تعداد مخاطبان: ' + (d.count || 0); })
-      .catch(function (e) { host.textContent = 'شمارش ناموفق: ' + e.message; });
-  }
-
-  window.createBroadcast = function () {
-    var target = el('bc-target');
-    var message = el('bc-message');
-    if (!target || !message) return;
-    var text = message.value.trim();
-    if (!text) { toast('متن پیام خالی است'); return; }
-    api('/api/admin/broadcast/create', { method: 'POST', body: { message: text, targetType: target.value } })
-      .then(function () { window.closeModal(); toast('پیش‌نویس ساخته شد'); loadBroadcasts(); })
-      .catch(function (e) { toast('خطا: ' + e.message); });
-  };
-
-  window.broadcastAction = function (id, action) {
-    if (action === 'cancel' && !window.confirm('این پیام لغو شود؟')) return;
-    api('/api/admin/broadcast/' + id + '/' + action, { method: 'POST' })
-      .then(function (r) {
-        toast(action === 'start' && r.totalCount ? 'شروع شد — ' + r.totalCount + ' مخاطب' : 'انجام شد');
-        loadBroadcasts();
-      })
-      .catch(function (e) { toast('خطا: ' + e.message); });
-  };
-
-  function loadDLQ() {
-    var host = el('admin-dlq');
-    if (!host) return;
-    api('/api/admin/failed-updates?page=' + state.dlqPage + '&limit=20').then(function (data) {
-      var items = data.items || [];
-      var html = '<div class="card-sub">مجموع: ' + (data.total || 0) + ' رکورد</div>';
-      if (!items.length) html += '<div class="empty">خطایی ثبت نشده</div>';
-      else html += items.map(function (it) {
-        return '<div class="card"><div class="card-title">#' + esc(it.id) + ' <span class="badge">' + esc(it.update_id) + '</span></div>' +
-          '<div class="card-sub mono">' + esc(it.message_text || '(بدون متن)') + '</div>' +
-          '<div class="mono" style="white-space:pre-wrap;font-size:11px;opacity:0.7">' + esc(String(it.error_info || '').slice(0, 300)) + '</div>' +
-          (it.replayed_at
-            ? '<div class="card-sub" style="margin-top:8px">قبلا بازپخش شده</div>'
-            : '<button class="btn-ghost" style="margin-top:8px" onclick="window.replayUpdate(' + it.id + ')">بازپخش</button>') +
-          '</div>';
-      }).join('');
-      html += '<div class="pager">' +
-        '<button class="btn-ghost" onclick="window.dlqPage(-1)">‹ قبلی</button>' +
-        '<span>' + (state.dlqPage + 1) + '</span>' +
-        '<button class="btn-ghost" onclick="window.dlqPage(1)">بعدی ›</button></div>';
-      host.innerHTML = html;
-    }).catch(function (e) { host.innerHTML = errorHtml(e); });
-  }
-
-  window.dlqPage = function (delta) {
-    state.dlqPage = Math.max(0, state.dlqPage + delta);
-    loadDLQ();
-  };
-
-  window.replayUpdate = function (id) {
-    api('/api/admin/failed-updates/replay', { method: 'POST', body: { id: id } })
-      .then(function () { toast('بازپخش شد'); loadDLQ(); })
-      .catch(function (e) { toast('خطا: ' + e.message); });
-  };
-
-  // Inline `onclick` attributes run in the global scope, so the DOM helper the
-  // route-detail modal uses (`el('add-model-input')`) must be reachable there.
-  window.el = el;
-
-  // --- VISUALS: STARFIELD & BLACK HOLE -------------------------------------
+  // --- STARFIELD BACKGROUND ------------------------------------------------
   function initStarfield() {
-    var cvs = el('space-canvas');
-    if (!cvs) return;
-    var ctx = cvs.getContext('2d');
+    var canvas = el('space-canvas');
+    if (!canvas) return;
+    var ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
     var stars = [];
-    var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-    function resize() {
-      cvs.width = window.innerWidth;
-      cvs.height = window.innerHeight;
-      stars = [];
-      for (var i = 0; i < 80; i++) {
-        stars.push({
-          x: Math.random() * cvs.width, y: Math.random() * cvs.height,
-          s: Math.random() * 1.5, o: Math.random(), sp: Math.random() * 0.02
-        });
-      }
+    for (var i = 0; i < 100; i++) {
+      stars.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        r: Math.random() * 1.5,
+        v: Math.random() * 0.5 + 0.1
+      });
     }
-    window.addEventListener('resize', resize);
-    resize();
-
-    var rgb = [200, 200, 255];
-    (function anim() {
-      ctx.clearRect(0, 0, cvs.width, cvs.height);
+    function animate() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#ffffff';
       for (var i = 0; i < stars.length; i++) {
         var s = stars[i];
-        s.o += s.sp;
-        var a = Math.abs(Math.sin(s.o)) * 0.8;
-        ctx.fillStyle = 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + a + ')';
-        ctx.beginPath(); ctx.arc(s.x, s.y, s.s, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = Math.random() * 0.7 + 0.3;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+        ctx.fill();
+        s.y += s.v;
+        if (s.y > canvas.height) s.y = 0;
       }
-      if (!reduce && !document.hidden) requestAnimationFrame(anim);
-      else if (!reduce) setTimeout(anim, 400);
-    })();
+      requestAnimationFrame(animate);
+    }
+    animate();
+    window.addEventListener('resize', function () {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    });
   }
 
-  function initBlackHole() {
-    var cvs = el('blackhole-canvas');
-    if (!cvs) return;
-    var ctx = cvs.getContext('2d');
-    var size = 260;
-    cvs.width = size * 2; cvs.height = size * 2;
-    ctx.scale(2, 2);
-    var c = size / 2;
-    var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Bind language toggle
+  var langBtn = el('lang-btn');
+  if (langBtn) langBtn.addEventListener('click', window.toggleLanguage);
 
-    var particles = [];
-    for (var i = 0; i < 120; i++) {
-      var r = 45 + Math.random() * 60;
-      var t = (r - 45) / 60;
-      var col = t < 0.3 ? 'hsla(220,90%,75%,' : t < 0.6 ? 'hsla(280,85%,65%,' : 'hsla(20,95%,55%,';
-      particles.push({
-        a: Math.random() * Math.PI * 2, r: r, br: r,
-        sp: 0.01 + Math.random() * 0.015, s: 0.5 + Math.random() * 2,
-        col: col, op: 0.5 + Math.random() * 0.5
-      });
-    }
-
-    function frame() {
-      ctx.clearRect(0, 0, size, size);
-
-      // Accretion glow
-      var g = ctx.createRadialGradient(c, c, 30, c, c, 120);
-      g.addColorStop(0, 'rgba(124,92,255,0.1)');
-      g.addColorStop(1, 'transparent');
-      ctx.fillStyle = g;
-      ctx.beginPath(); ctx.arc(c, c, 120, 0, Math.PI * 2); ctx.fill();
-
-      // Orbiting particles
-      particles.sort(function (a, b) {
-        return (Math.sin(a.a) * a.r) - (Math.sin(b.a) * b.r);
-      });
-      for (var i = 0; i < particles.length; i++) {
-        var p = particles[i];
-        p.a += p.sp;
-        var wob = p.br + Math.sin(p.a * 3) * 3;
-        var x = c + Math.cos(p.a) * wob;
-        var y = c + Math.sin(p.a) * wob * 0.35; // flattened disc
-        var depth = (Math.sin(p.a) + 1) / 2;
-        var alpha = p.op * (0.4 + depth * 0.6);
-        ctx.fillStyle = p.col + alpha + ')';
-        ctx.beginPath(); ctx.arc(x, y, p.s * (0.6 + depth * 0.6), 0, Math.PI * 2); ctx.fill();
-      }
-
-      // Event horizon
-      var h = ctx.createRadialGradient(c, c, 0, c, c, 30);
-      h.addColorStop(0, '#000');
-      h.addColorStop(0.8, '#050508');
-      h.addColorStop(1, '#0a0a12');
-      ctx.fillStyle = h;
-      ctx.beginPath(); ctx.arc(c, c, 30, 0, Math.PI * 2); ctx.fill();
-
-      // Photon ring
-      ctx.strokeStyle = 'rgba(200,180,255,0.3)';
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.arc(c, c, 32, 0, Math.PI * 2); ctx.stroke();
-    }
-
-    (function loop() {
-      frame();
-      if (!reduce) requestAnimationFrame(loop);
-    })();
+  // Boot
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
   }
-
-  // --- BOOT ----------------------------------------------------------------
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
-  else init();
 })();

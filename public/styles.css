@@ -237,3 +237,20 @@ label { font-size: 12px; color: var(--text-muted); margin-top: 12px; display: bl
 .switch .slider::before { position: absolute; content: ""; height: 18px; width: 18px; right: 2px; bottom: 2px; background: var(--text-muted); border-radius: 50%; transition: 0.3s; }
 .switch input:checked + .slider { background: var(--accent); border-color: var(--accent); }
 .switch input:checked + .slider::before { transform: translateX(-20px); background: #fff; }
+
+/* Direction-specific text alignment for mixed content */
+[dir="ltr"] .mono,
+[dir="ltr"] .meta {
+  text-align: left;
+}
+
+[dir="rtl"] .mono,
+[dir="rtl"] .meta {
+  text-align: right;
+}
+
+[dir="ltr"] input,
+[dir="ltr"] textarea,
+[dir="ltr"] select {
+  text-align: left;
+}

@@ -175,6 +175,23 @@ export const EDGE_TTS_URL = "wss://speech.platform.bing.com/consumer/speech/synt
 export const EDGE_TTS_TIMEOUT_MS = 15000;
 export const EDGE_TTS_MAX_CHARS = 800;
 
+// --- Localization & onboarding --------------------------------------------
+// The only shipped locales. Locale is persisted per user (users.locale) and is
+// shared by the Telegram bot and the Mini App. DEFAULT_LOCALE applies to users
+// whose Telegram language_code is neither fa nor en.
+export const SUPPORTED_LOCALES = ["en-US", "fa-IR"];
+export const DEFAULT_LOCALE = "en-US";
+// Bump when the onboarding sequence changes in a way that must be shown again.
+export const ONBOARDING_VERSION = 1;
+export const ONBOARDING_MAX_NAME_LENGTH = 50;
+export const ONBOARDING_STEPS = ["language", "name", "personality", "disclosure"];
+// app_settings keys owned by the operations layer.
+export const SETTING_MAINTENANCE_ENABLED = "maintenance_enabled";
+export const SETTING_DEFAULT_LOCALE = "default_locale";
+// A maintenance notice is sent at most once per chat per this window instead of
+// on every incoming message.
+export const MAINTENANCE_NOTICE_TTL_S = 3600;
+
 export const DEFAULT_PERSONALITIES = [
   {
     id: "default",

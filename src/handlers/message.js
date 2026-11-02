@@ -1,15 +1,18 @@
-// Incoming message pipeline: group access checks, flow-state interception
-// (setup wizards own the next message), command dispatch, and the group
-// trigger / reaction logic that decides whether Nyra answers at all.
+// Incoming message pipeline: group access checks, onboarding interception,
+// flow-state interception (setup wizards own the next message), command dispatch,
+// maintenance check, and the group trigger / reaction logic that decides whether Nyra answers at all.
 import { MAX_MODEL_LENGTH, MAX_API_KEY_LENGTH } from "../config.js";
 import { now, escapeHtml, isAdmin } from "../utils.js";
 import { tg, sendMessage, deleteMessage, buildInlineKeyboard } from "../telegram.js";
-import { getBotIdentity, getChat, recordGroupChatAndCheckAccess, isUserBlocked, isGroupTrigger, determineThreadId, getFlowState, clearFlowState, addRouteModel, addRouteToken } from "../db.js";
+import { getBotIdentity, getChat, recordGroupChatAndCheckAccess, isUserBlocked, isGroupTrigger, determineThreadId, getFlowState, clearFlowState, addRouteModel, addRouteToken, getUser } from "../db.js";
 import { handleFlowMessage } from "../flows.js";
 import { handleUserCommand } from "../commands.js";
 import { shouldReact, trySetReaction, extractMessageText, setConfiguredReactions, clearConfiguredReactions } from "../reactions.js";
 import { handleAIMessage } from "./ai-message.js";
 import { parseCommand } from "./command-parse.js";
+import { handleOnboardingMessage, getOnboardingState } from "./onboarding.js";
+import { isMaintenanceMode } from "../db/maintenance.js";
+import { t } from "../i18n/index.js";
 
 export async function processMessage(env, ctx, message) {
   const from = message.from;
@@ -26,13 +29,32 @@ export async function processMessage(env, ctx, message) {
   if (await isUserBlocked(env, from.id)) return;
 
   if (!isGroup) {
+    // Check onboarding state first (takes priority over flows)
+    const onboardingState = await getOnboardingState(env, from.id);
+    if (onboardingState && onboardingState.step && onboardingState.step !== "complete") {
+      // Allow /cancel to exit onboarding
+      if (/^\/cancel(@\w+)?$/i.test(text)) {
+        await env.DB.prepare("UPDATE users SET onboarding_state = NULL, updated_at = ? WHERE telegram_id = ?")
+          .bind(now(), from.id).run();
+        await sendMessage(env, chat.id, "Onboarding cancelled.");
+        return;
+      }
+      // Commands during onboarding clear state and process command
+      if (text.startsWith("/")) {
+        await env.DB.prepare("UPDATE users SET onboarding_state = NULL, updated_at = ? WHERE telegram_id = ?")
+          .bind(now(), from.id).run();
+        // Continue to command processing below
+      } else {
+        // Handle onboarding message
+        const handled = await handleOnboardingMessage(env, chat.id, from.id, text);
+        if (handled) return;
+      }
+    }
+
     const flowState = await getFlowState(env, from.id);
     if (flowState) {
       if (/^\/cancel(@\w+)?$/i.test(text)) { await clearFlowState(env, from.id); await sendMessage(env, chat.id, "Cancelled."); return; }
       if (text.startsWith("/")) { await clearFlowState(env, from.id); }
-      // Reaction allowlist: the admin panel arms this flow, then the next plain
-      // message holds the emoji Nyra may react with. "default" clears the
-      // override so the built-in set applies again.
       else if (flowState.flowType === "reaction_config") {
         if (!isAdmin(env, from.id)) { await clearFlowState(env, from.id); return; }
         if (/^(default|reset|پیش\u200c?فرض)$/i.test(text.trim())) {
@@ -101,8 +123,16 @@ export async function processMessage(env, ctx, message) {
     const identity = await getBotIdentity(env);
     const parsed = parseCommand(text, identity);
     if (!parsed) return;
-    const handled = await handleUserCommand(env, ctx, parsed.command, parsed.args, message, from, chat);
-    if (!handled) await sendMessage(env, chat.id, "Unknown command. Try /help.");
+    await handleUserCommand(env, ctx, parsed.command, parsed.args, message, from, chat);
+    return;
+  }
+
+  // Maintenance check for AI messages (not commands)
+  const maintenance = await isMaintenanceMode(env);
+  if (maintenance) {
+    const user = await getUser(env, from.id);
+    const locale = user?.locale || "en-US";
+    await sendMessage(env, chat.id, t(locale, "maintenance.notice"));
     return;
   }
 
@@ -110,8 +140,6 @@ export async function processMessage(env, ctx, message) {
   if (!hasContent) return;
 
   if (isGroup) {
-    // Try to set reaction (independent, fire-and-forget). The Chat object is
-    // passed so the classifier can honour per-chat allowed reactions.
     if (shouldReact(message, chat)) {
       trySetReaction(env, ctx, chat, message.message_id, extractMessageText(message), from.id);
     }

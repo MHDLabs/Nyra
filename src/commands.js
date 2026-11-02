@@ -1,247 +1,105 @@
-// Nyra — commands: user command handlers and the admin panel.
-import { RATE_LIMIT_ADMIN_PER_MIN, MAX_PERSONALITIES, MAX_PERSONALITY_PROMPT, MAX_PERSONALITY_DESC } from "./config.js";
-import { now, escapeHtml, generateShortId, sanitizeMemoryString, sanitizeMemoryFact, dedupeArray, filterSubstrings, isAdmin, checkRateLimit, containsPhrase } from "./utils.js";
+// Nyra — commands: simplified /start /help /admin with onboarding.
+import { isAdmin, escapeHtml } from "./utils.js";
+import { sendMessage, buildInlineKeyboard, editMessage } from "./telegram.js";
+import { getUser, upsertUser } from "./db.js";
+import { t } from "./i18n/index.js";
+import { startOnboarding, getOnboardingState } from "./handlers/onboarding.js";
+import { isMaintenanceMode } from "./db/maintenance.js";
 import { getMasterKey } from "./crypto.js";
-import { sendMessage, editMessage, buildInlineKeyboard } from "./telegram.js";
-import { getUser, upsertUser, resolveUserActiveConnection } from "./db.js";
-import { parseMemoryData, serializeMemoryData, formatMemoryForUser } from "./memory.js";
-import { showNoConnectionMessage, showSettingsMenu, showPersonalitiesForUser, showUsage } from "./menus.js";
-import { createBroadcast, startBroadcast, cancelBroadcast, listBroadcasts, calculateBroadcastTargets } from "./broadcast.js";
-import { getAllowedReactions, getConfiguredReactions, setConfiguredReactions, clearConfiguredReactions } from "./reactions.js";
+import { getConfiguredReactions, getAllowedReactions } from "./reactions.js";
+import { showSettingsMenu, showPersonalitiesForUser } from "./menus.js";
 
-async function handleStartCommand(env, chatId, userId) {
+async function handleStartCommand(env, chatId, userId, from, isGroup) {
+  if (isGroup) {
+    const user = await getUser(env, userId);
+    const locale = user?.locale || "en-US";
+    await sendMessage(env, chatId, t(locale, "commands.start.group"));
+    return;
+  }
+
+  // Check onboarding status
   const user = await getUser(env, userId);
-  const resolved = await resolveUserActiveConnection(env, user);
-  if (!resolved.connection) { await showNoConnectionMessage(env, chatId, false); return; }
-  const name = (user && user.preferred_name) ? user.preferred_name : null;
-  const greeting = name ? "Hi " + escapeHtml(name) + ", I'm Nyra." : "Hi, I'm Nyra.";
-  const text = "<b>" + greeting + "</b>\n\nYour active model: <b>" + escapeHtml(resolved.connection.label) + "</b>\n\nUse /settings to manage preferences.\nUse /help for the command list.";
-  await sendMessage(env, chatId, text, { parse_mode: "HTML" });
+  if (!user || user.onboarding_completed !== 1) {
+    await startOnboarding(env, chatId, userId, from);
+    return;
+  }
+
+  // Regular start for completed users
+  const locale = user.locale || "en-US";
+  const name = user.preferred_name || user.first_name || "";
+  const msg = name ? t(locale, "commands.start.greeting", { name }) : t(locale, "commands.start.greeting_anon");
+  await sendMessage(env, chatId, msg);
 }
 
 async function handleHelpCommand(env, chatId, userId, isGroup) {
-  const lines = [
-    "<b>Commands</b>", "",
-    "/start — Greeting",
-    "/help — This message",
-    "/settings — Preferences (private)",
-    "/personality — Choose a personality (private)",
-    "/memory — View your memory (private)",
-    "/forget [topic] — Clear memory or forget a topic",
-    "/remember &lt;fact&gt; — Explicitly remember",
-    "/setname &lt;name&gt; — Set your preferred name",
-    "/usage — Your usage statistics (private)",
-    "/newpersonality — Create a custom personality (private)"
-  ];
+  const user = await getUser(env, userId);
+  const locale = user?.locale || "en-US";
+
+  let text = t(locale, "commands.help");
+
   if (isAdmin(env, userId)) {
-    lines.push("");
-    lines.push("<b>Admin</b>");
-    lines.push("/admin — Admin panel (private chat only)");
-    lines.push("/stats — Statistics (private chat only)");
-    lines.push("/broadcast — Send a message to users/groups (private chat only)");
+    text += "\n" + t(locale, "commands.help.admin_line");
   }
+
+  await sendMessage(env, chatId, text);
+}
+
+async function handleAdminCommand(env, chatId, userId, isGroup) {
+  const user = await getUser(env, userId);
+  const locale = user?.locale || "en-US";
+
+  if (!isAdmin(env, userId)) {
+    await sendMessage(env, chatId, t(locale, "commands.admin.denied"));
+    return;
+  }
+
   if (isGroup) {
-    lines.push("");
-    lines.push("<b>Group usage</b>");
-    lines.push("In groups, Nyra only responds when you say her name (Nyra / نیرا / نيرا) or reply to one of her messages.");
-  }
-  await sendMessage(env, chatId, lines.join("\n"), { parse_mode: "HTML" });
-}
-
-async function handleRememberCommand(env, chatId, userId, args) {
-  const fact = sanitizeMemoryFact(args);
-  if (!fact) { await sendMessage(env, chatId, "Usage: /remember <fact>"); return; }
-  if (fact.length > 300) { await sendMessage(env, chatId, "Fact too long (max 300 characters)."); return; }
-  const user = await getUser(env, userId);
-  if (!user) { await sendMessage(env, chatId, "Please send /start first."); return; }
-  if (user.memory_mode === "none") { await sendMessage(env, chatId, "Memory is disabled. Enable it in /settings → Memory."); return; }
-  const data = parseMemoryData(user.memory_data);
-  if (!Array.isArray(data.explicit_facts)) data.explicit_facts = [];
-  const lowerFact = fact.toLowerCase();
-  let isDuplicate = false;
-  for (let i = 0; i < data.explicit_facts.length; i++) {
-    if (String(data.explicit_facts[i]).toLowerCase() === lowerFact) { isDuplicate = true; break; }
-  }
-  if (isDuplicate) { await sendMessage(env, chatId, "I already remember that."); return; }
-  data.explicit_facts.push(fact);
-  data.explicit_facts = filterSubstrings(dedupeArray(data.explicit_facts.map(sanitizeMemoryFact).filter(Boolean)));
-  if (data.explicit_facts.length > 20) data.explicit_facts = data.explicit_facts.slice(-20);
-  data.last_updated = now();
-  try {
-    const result = await env.DB.prepare("UPDATE users SET memory_data = ?, updated_at = ? WHERE telegram_id = ? AND memory_data = ?").bind(serializeMemoryData(data), now(), userId, user.memory_data || "{}").run();
-    if (!result || !result.meta || result.meta.changes !== 1) throw new Error("Memory update was not applied");
-    const saved = await env.DB.prepare("SELECT memory_data FROM users WHERE telegram_id = ?").bind(userId).first();
-    const verified = parseMemoryData(saved && saved.memory_data);
-    if (!Array.isArray(verified.explicit_facts) || !verified.explicit_facts.includes(fact)) throw new Error("Memory write could not be verified");
-    await sendMessage(env, chatId, "Got it. I'll remember: " + escapeHtml(fact));
-  } catch (err) { await sendMessage(env, chatId, "Could not save that. Try again."); }
-}
-
-async function handleForgetCommand(env, chatId, userId, args) {
-  const user = await getUser(env, userId);
-  if (!user) return;
-  const topic = (args || "").trim();
-  if (!topic) {
-    try {
-      const result = await env.DB.prepare("UPDATE users SET memory_data = ?, updated_at = ? WHERE telegram_id = ?").bind(JSON.stringify({ last_updated: now() }), now(), userId).run();
-      if (!result || !result.meta || result.meta.changes !== 1) throw new Error("Memory update was not applied");
-      await sendMessage(env, chatId, "Memory cleared.");
-    } catch (err) { await sendMessage(env, chatId, "Could not clear memory. Try again."); }
+    await sendMessage(env, chatId, t(locale, "commands.admin.private_only"));
     return;
   }
-  const data = parseMemoryData(user.memory_data);
-  let changed = false;
-  const filterField = function (field) {
-    if (Array.isArray(data[field])) {
-      const filtered = data[field].filter(function (f) { return !containsPhrase(String(f), topic); });
-      if (filtered.length !== data[field].length) { data[field] = filtered; changed = true; }
-    }
-  };
-  filterField("explicit_facts");
-  filterField("interests");
-  filterField("tools");
-  filterField("projects");
-  if (data.communication_style && containsPhrase(data.communication_style, topic)) { delete data.communication_style; changed = true; }
-  if (data.preferred_name && containsPhrase(data.preferred_name, topic)) { delete data.preferred_name; changed = true; }
-  if (!changed) { await sendMessage(env, chatId, "Nothing matching that found in memory."); return; }
-  data.last_updated = now();
-  try {
-    const result = await env.DB.prepare("UPDATE users SET memory_data = ?, updated_at = ? WHERE telegram_id = ? AND memory_data = ?").bind(serializeMemoryData(data), now(), userId, user.memory_data || "{}").run();
-    if (!result || !result.meta || result.meta.changes !== 1) throw new Error("Memory update was not applied");
-    const saved = await env.DB.prepare("SELECT memory_data FROM users WHERE telegram_id = ?").bind(userId).first();
-    if (parseMemoryData(saved && saved.memory_data).explicit_facts?.some(item => containsPhrase(String(item), topic))) throw new Error("Memory deletion could not be verified");
-    await sendMessage(env, chatId, "Removed from memory: " + escapeHtml(topic));
-  } catch (err) { await sendMessage(env, chatId, "Could not update memory."); }
+
+  // Open admin panel in message with inline keyboard
+  const miniappUrl = env.MINIAPP_URL || "https://nyra.example.com";
+  const keyboard = buildInlineKeyboard([[
+    { text: "Open Mini App", web_app: { url: miniappUrl } }
+  ]]);
+
+  await sendMessage(env, chatId, t(locale, "commands.admin.open"), { reply_markup: keyboard });
 }
 
-async function handleMemoryCommand(env, chatId, userId) {
-  const user = await getUser(env, userId);
-  if (!user) return;
-  const mode = user.memory_mode || "normal";
-  if (mode === "none") { await sendMessage(env, chatId, "Memory is disabled. Enable it in /settings → Memory."); return; }
-  const formatted = formatMemoryForUser(user.memory_data, mode);
-  const header = "<b>Your Memory</b> (mode: " + mode + ")\n\n";
-  await sendMessage(env, chatId, header + formatted, { parse_mode: "HTML" });
-}
-
-async function handleSetNameCommand(env, chatId, userId, args) {
-  const name = sanitizeMemoryString(args);
-  if (!name || name.length > 50) { await sendMessage(env, chatId, "Usage: /setname <name> (max 50 characters)."); return; }
-  try {
-    await env.DB.prepare("UPDATE users SET preferred_name = ?, updated_at = ? WHERE telegram_id = ?").bind(name, now(), userId).run();
-    await sendMessage(env, chatId, "Got it — I'll call you " + escapeHtml(name) + ".");
-  } catch (err) { await sendMessage(env, chatId, "Could not update. Try again."); }
-}
-
-async function handleUsageCommand(env, chatId, userId) { await showUsage(env, chatId, null, userId); }
-
-async function handleNewPersonalityCommand(env, chatId, userId) {
-  const existing = await env.DB.prepare("SELECT COUNT(*) AS c FROM custom_personalities WHERE telegram_id = ?").bind(userId).first();
-  if (existing && existing.c >= MAX_PERSONALITIES) { await sendMessage(env, chatId, "You already have " + MAX_PERSONALITIES + " custom personalities."); return; }
-  await sendMessage(env, chatId, "To create a custom personality, send:\n\n<code>/newpersonality Name | Description | System instructions...</code>", { parse_mode: "HTML" });
-}
-
-async function handleNewPersonalitySubmit(env, chatId, userId, args) {
-  const parts = (args || "").split("|").map(function (s) { return s.trim(); });
-  if (parts.length < 3) { await sendMessage(env, chatId, "Format: /newpersonality Name | Description | System instructions"); return; }
-  const name = parts[0];
-  const description = parts[1];
-  const prompt = parts.slice(2).join(" | ");
-  if (name.length === 0 || name.length > 50) { await sendMessage(env, chatId, "Name must be 1–50 characters."); return; }
-  if (description.length > MAX_PERSONALITY_DESC) { await sendMessage(env, chatId, "Description too long."); return; }
-  if (prompt.length > MAX_PERSONALITY_PROMPT) { await sendMessage(env, chatId, "Prompt too long."); return; }
-  const existing = await env.DB.prepare("SELECT COUNT(*) AS c FROM custom_personalities WHERE telegram_id = ?").bind(userId).first();
-  if (existing && existing.c >= MAX_PERSONALITIES) { await sendMessage(env, chatId, "You already have " + MAX_PERSONALITIES + " custom personalities."); return; }
-  const id = generateShortId();
-  try {
-    await env.DB.prepare("INSERT INTO custom_personalities (personality_id, telegram_id, name, description, prompt, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)")
-      .bind(id, userId, name, description, prompt, now(), now()).run();
-    await sendMessage(env, chatId, "✅ Personality '" + escapeHtml(name) + "' created. Manage it in /settings → Personalities.", { parse_mode: "HTML" });
-  } catch (err) { await sendMessage(env, chatId, "Could not create personality. Try again."); }
-}
-
-/**
- * Admin mass-messaging from Telegram itself.
- *
- * The Mini App admin panel could already manage broadcasts, but the bot — where
- * an admin actually is when they decide to send something — had no command at
- * all. Usage is deliberately explicit about the target so a bare
- * `/broadcast hello` cannot blast every user by accident.
- */
-async function handleBroadcastCommand(env, ctx, from, chat, args) {
+export async function handleUserCommand(env, ctx, command, args, message, from, chat) {
   const userId = from.id;
-  if (!isAdmin(env, userId)) { await sendMessage(env, chat.id, "Unknown command."); return; }
-  if (chat.type !== "private") { await sendMessage(env, chat.id, "Broadcast is only available in private chat."); return; }
-  const rateOk = await checkRateLimit(env, "admin:" + userId, RATE_LIMIT_ADMIN_PER_MIN, 60);
-  if (!rateOk) { await sendMessage(env, chat.id, "Rate limit reached."); return; }
+  const chatId = chat.id;
+  const isGroup = chat.type === "group" || chat.type === "supergroup";
 
-  const usage = "<b>Broadcast</b>\n\n" +
-    "<code>/broadcast &lt;target&gt; | &lt;message&gt;</code>\n" +
-    "target: <code>all_users</code> | <code>all_chats</code> | <code>active_users</code>\n\n" +
-    "<code>/broadcast list</code> — recent campaigns\n" +
-    "<code>/broadcast cancel &lt;id&gt;</code> — stop a campaign\n\n" +
-    "Example:\n<code>/broadcast all_users | Nyra has a new model!</code>";
-
-  const raw = (args || "").trim();
-  if (!raw) { await sendMessage(env, chat.id, usage, { parse_mode: "HTML" }); return; }
-
-  if (raw === "list") {
-    const result = await listBroadcasts(env, 0, 10);
-    const rows = result.broadcasts || [];
-    if (!rows.length) { await sendMessage(env, chat.id, "No broadcasts yet."); return; }
-    const lines = ["<b>Recent broadcasts</b>", ""];
-    for (const b of rows) {
-      lines.push("<code>" + b.broadcast_id + "</code>\n" +
-        escapeHtml(b.target_type) + " — " + b.status +
-        " (" + b.sent_count + "/" + b.total_count + " sent, " + b.failed_count + " failed)");
+  // Check maintenance mode for all commands except admin
+  if (command !== "admin") {
+    const maintenance = await isMaintenanceMode(env);
+    if (maintenance) {
+      const user = await getUser(env, userId);
+      const locale = user?.locale || "en-US";
+      await sendMessage(env, chatId, t(locale, "maintenance.notice"));
+      return;
     }
-    await sendMessage(env, chat.id, lines.join("\n"), { parse_mode: "HTML" });
-    return;
   }
 
-  if (raw.indexOf("cancel ") === 0) {
-    const id = raw.slice(7).trim();
-    if (!id) { await sendMessage(env, chat.id, "Usage: /broadcast cancel <id>"); return; }
-    try {
-      await cancelBroadcast(env, id, userId);
-      await sendMessage(env, chat.id, "Cancelled " + escapeHtml(id) + ".");
-    } catch (err) { await sendMessage(env, chat.id, "Could not cancel: " + escapeHtml(err.message)); }
-    return;
+  // Only three commands supported
+  if (command === "start") {
+    await handleStartCommand(env, chatId, userId, from, isGroup);
+  } else if (command === "help") {
+    await handleHelpCommand(env, chatId, userId, isGroup);
+  } else if (command === "admin") {
+    await handleAdminCommand(env, chatId, userId, isGroup);
+  } else {
+    // Legacy command moved to Mini App
+    const user = await getUser(env, userId);
+    const locale = user?.locale || "en-US";
+    const miniappUrl = env.MINIAPP_URL || "https://nyra.example.com";
+    const keyboard = buildInlineKeyboard([[
+      { text: "Open Mini App", web_app: { url: miniappUrl } }
+    ]]);
+    await sendMessage(env, chatId, t(locale, "commands.legacy.moved"), { reply_markup: keyboard });
   }
-
-  const sep = raw.indexOf("|");
-  if (sep === -1) { await sendMessage(env, chat.id, usage, { parse_mode: "HTML" }); return; }
-  const targetType = raw.slice(0, sep).trim();
-  const message = raw.slice(sep + 1).trim();
-  if (["all_users", "all_chats", "active_users"].indexOf(targetType) === -1) {
-    await sendMessage(env, chat.id, "Invalid target. Use all_users, all_chats or active_users.");
-    return;
-  }
-  if (!message) { await sendMessage(env, chat.id, "Message is empty."); return; }
-  if (message.length > 4096) { await sendMessage(env, chat.id, "Message too long (max 4096 characters)."); return; }
-
-  try {
-    const targets = await calculateBroadcastTargets(env, targetType, null);
-    if (!targets.length) { await sendMessage(env, chat.id, "No recipients found for " + targetType + "."); return; }
-    const created = await createBroadcast(env, userId, message, targetType, null);
-    const started = await startBroadcast(env, ctx, created.broadcastId, userId);
-    await sendMessage(env, chat.id,
-      "🚀 Broadcast started.\n<code>" + created.broadcastId + "</code>\n" +
-      "Recipients: <b>" + (started.totalCount || targets.length) + "</b>\n" +
-      "Stop with <code>/broadcast cancel " + created.broadcastId + "</code>", { parse_mode: "HTML" });
-  } catch (err) {
-    console.error("Broadcast command failed:", err.message);
-    await sendMessage(env, chat.id, "Broadcast failed: " + escapeHtml(err.message));
-  }
-}
-
-async function handleAdminCommand(env, from, chat) {
-  const userId = from.id;
-  if (!isAdmin(env, userId)) { await sendMessage(env, chat.id, "Unknown command."); return; }
-  if (chat.type !== "private") { await sendMessage(env, chat.id, "Admin panel is only available in private chat."); return; }
-  const rateOk = await checkRateLimit(env, "admin:" + userId, RATE_LIMIT_ADMIN_PER_MIN, 60);
-  if (!rateOk) { await sendMessage(env, chat.id, "Rate limit reached."); return; }
-  await showAdminMenu(env, chat.id, null);
 }
 
 export async function showAdminMenu(env, chatId, messageId) {
@@ -250,7 +108,7 @@ export async function showAdminMenu(env, chatId, messageId) {
     [{ text: "👥 Users", callback_data: "adm:users" }, { text: "💬 Groups", callback_data: "adm:groups" }],
     [{ text: "🚫 Blocked", callback_data: "adm:blocked" }, { text: "📊 Stats", callback_data: "adm:stats" }],
     [{ text: "🤖 Models", callback_data: "adm:conns" }, { text: "💚 Status", callback_data: "adm:status" }],
-    [{ text: "😀 Reactions", callback_data: "adm:react" }],
+    [{ text: "😀 Reactions", callback_data: "adm:react" }, { text: "⚠️ Maintenance", callback_data: "adm:maint" }],
     [{ text: "Close", callback_data: "adm:close" }]
   ];
   await editMessage(env, chatId, messageId, text, buildInlineKeyboard(rows), "HTML");
@@ -361,6 +219,30 @@ export async function showAdminReactions(env, chatId, messageId) {
   ];
   await editMessage(env, chatId, messageId, lines.join("\n"), buildInlineKeyboard(buttons), "HTML");
 }
+
+export async function showAdminMaintenance(env, chatId, messageId) {
+  const { isMaintenanceMode } = await import("./db/maintenance.js");
+  const enabled = await isMaintenanceMode(env);
+
+  const status = enabled ? "🔴 ENABLED" : "🟢 DISABLED";
+  const text = `<b>Emergency Maintenance</b>
+
+Status: ${status}
+
+When enabled, Nyra stops responding to ordinary AI messages across all chats. Only administrators can toggle this switch.
+
+Use this during critical maintenance, outages, or emergencies.`;
+
+  const toggleText = enabled ? "✅ Disable Maintenance" : "⚠️ Enable Maintenance";
+  const toggleData = enabled ? "adm:maint:off" : "adm:maint:on";
+
+  const rows = [
+    [{ text: toggleText, callback_data: toggleData }],
+    [{ text: "« Back", callback_data: "adm:menu" }]
+  ];
+  await editMessage(env, chatId, messageId, text, buildInlineKeyboard(rows), "HTML");
+}
+
 
 export async function handleUserCommand(env, ctx, command, args, message, from, chat) {
   const userId = from.id;

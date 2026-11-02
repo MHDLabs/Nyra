@@ -11,6 +11,7 @@ import { showSettingsMenu, showModelList, showPersonalitiesForUser, showMyPerson
 import { startAddConnectionFlow, startEditConnectionFlow, flowPromptLabel, flowPromptApiKey, flowPromptReview, handleFlowSkip, flowFetchModels, showModelPage, flowSelectModel, finalizeConnectionFromFlow, startAddRouteFlow, startEditRouteFlow, routePromptBaseUrl, routePromptModels, routePromptReview, finalizeRouteFromFlow } from "../flows.js";
 import { showAdminMenu, showAdminUsers, showAdminGroups, showAdminBlocked, showAdminStats, showAdminStatus, showAdminReactions } from "../commands.js";
 import { setConfiguredReactions, clearConfiguredReactions } from "../reactions.js";
+import { handleOnboardingCallback } from "./onboarding.js";
 
 export async function handleCallbackQuery(env, ctx, query) {
   const data = query.data || "";
@@ -154,6 +155,14 @@ export async function handleCallbackQuery(env, ctx, query) {
       await showPersonalModelsMenu(env, chatId, messageId, userId);
       return;
     }
+    return;
+  }
+
+
+  if (namespace === "onboard") {
+    const action = parts[1];
+    const value = parts[2];
+    await handleOnboardingCallback(env, chatId, userId, messageId, action, value, query.id);
     return;
   }
 
@@ -354,6 +363,25 @@ export async function handleCallbackQuery(env, ctx, query) {
     return;
   }
 
+    if (action === "maint") {
+      if (!isAdmin(env, userId)) { await answerCallback(env, query.id, "Access denied."); return; }
+      const { showAdminMaintenance } = await import("../commands.js");
+      if (parts[1] === "on") {
+        const { setMaintenanceMode } = await import("../db/maintenance.js");
+        await setMaintenanceMode(env, true, userId);
+        await answerCallback(env, query.id, "⚠️ Maintenance mode ENABLED");
+        await showAdminMaintenance(env, chatId, messageId);
+      } else if (parts[1] === "off") {
+        const { setMaintenanceMode } = await import("../db/maintenance.js");
+        await setMaintenanceMode(env, false, userId);
+        await answerCallback(env, query.id, "✅ Maintenance mode disabled");
+        await showAdminMaintenance(env, chatId, messageId);
+      } else {
+        await answerCallback(env, query.id, "");
+        await showAdminMaintenance(env, chatId, messageId);
+      }
+      return;
+    }
   if (namespace === "adm") {
     if (!isAdmin(env, userId)) { await answerCallback(env, query.id, "Unauthorized."); return; }
     await answerCallback(env, query.id, "");

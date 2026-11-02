@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="fa" dir="rtl">
+<html lang="en" dir="ltr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
@@ -7,74 +7,34 @@
   <title>Nyra AI</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css">
-  <!-- The asset layer ignores the query string, but the browser does not: the
-       version token forces a returning client to fetch the new bundle instead
-       of replaying a cached one from before a re-skin. Bump it on release. -->
-  <link rel="stylesheet" href="/styles.css?v=20261120">
+  <link rel="stylesheet" href="/styles.css?v=20261102">
 </head>
 <body>
   <canvas id="space-canvas"></canvas>
 
   <div id="app">
-    <!-- Loading / auth gate -->
     <div id="loading">
       <div class="spinner"></div>
-      <span>در حال بارگذاری Nyra...</span>
+      <span id="loading-text">Loading Nyra...</span>
     </div>
 
-    <!-- Main shell (revealed after auth) -->
     <div id="shell" class="hidden">
       <header class="header">
         <div class="logo">
           <div class="logo-icon"></div>
           <span>Nyra <span id="user-name"></span></span>
         </div>
-        <button id="theme-btn" class="icon-btn" type="button" onclick="window.toggleTheme()">🌓</button>
+        <button id="lang-btn" class="icon-btn" type="button" title="Change language">🌐</button>
+        <button id="theme-btn" class="icon-btn" type="button" title="Toggle theme">🌓</button>
       </header>
 
       <nav class="tabs" id="tabs-container"></nav>
 
       <main class="content">
-        <!-- Chat -->
-        <div id="sec-chat" class="section active">
-          <div id="welcome-screen" class="welcome-screen">
-            <div class="blackhole-container">
-              <div class="bh-glow"></div>
-              <canvas id="blackhole-canvas"></canvas>
-            </div>
-            <h1 class="welcome-title">Nyra AI</h1>
-            <p class="welcome-sub">هر چیزی که بخوای... فقط بپرس</p>
-            <div class="chips">
-              <div class="chip" data-msg="سیاه‌چاله چیست؟">🌌 سیاه‌چاله چیست؟</div>
-              <div class="chip" data-msg="یک ایده کسب‌وکار بده">💡 ایده کسب‌وکار</div>
-              <div class="chip" data-msg="یک کد React بنویس">💻 کد React</div>
-              <div class="chip" data-msg="یک داستان علمی‌تخیلی کوتاه">📚 داستان کوتاه</div>
-            </div>
-          </div>
-
-          <div id="chat-log" class="chat-log hidden"></div>
-
-          <div class="chat-input-area">
-            <div class="input-wrapper">
-              <textarea id="chat-input" rows="1" placeholder="پیام خود را بنویسید..."></textarea>
-              <button id="send-btn" class="send-btn" type="button" disabled>➤</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Models -->
-        <div id="sec-models" class="section"></div>
-
-        <!-- Routes (admin) -->
-        <div id="sec-routes" class="section"></div>
-
-        <!-- Personal models -->
-        <div id="sec-personal" class="section"></div>
-
-        <!-- Settings -->
-        <div id="sec-settings" class="section"></div>
-
-        <!-- Admin -->
+        <div id="sec-models" class="section active"></div>
+        <div id="sec-routing" class="section"></div>
+        <div id="sec-preferences" class="section"></div>
+        <div id="sec-usage" class="section"></div>
         <div id="sec-admin" class="section"></div>
       </main>
     </div>
@@ -82,6 +42,6 @@
 
   <div id="toast"></div>
 
-  <script src="/app.js?v=20261120"></script>
+  <script src="/app.js?v=20261102"></script>
 </body>
 </html>

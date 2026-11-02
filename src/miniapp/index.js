@@ -7,7 +7,7 @@ export {
 } from "./auth.js";
 
 export {
-  handleUserProfile, handleUserStats, handleChatMessage,
+  handleUserProfile, handleUserStats,
   handleUserConnections, handleSetActiveConnection, handleToggleCodingMode
 } from "./user.js";
 

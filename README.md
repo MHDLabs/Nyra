@@ -48,7 +48,7 @@ Prefer the CLI? The full manual flow is in [Setup](#-setup) → *Option B*.
 - **👥 Multiple connections** — admins define shared global models; users can add their own, switch per chat, and set a personal default.
 - **🔐 Encrypted keys** — provider API keys are sealed with AES-256-GCM (HKDF-derived per owner) and never leave the database in plaintext.
 - **🛟 Automatic fallback** — if a connection fails or times out, Nyra retries and falls back to other enabled connections within a time budget.
-- **🧠 Memory** — persistent per-user memory with three modes (normal, minimal, none), explicit `/remember` and `/forget`, and periodic consolidation.
+- **🧠 Memory** — persistent per-user memory with three modes (normal, minimal, none), managed through the Mini App.
 - **🎭 Personalities** — five built-ins (Default, Friend, Funny, Romantic Nyra, Creative), plus up to 10 custom personalities per user.
 - **👥 Group support** — in groups, Nyra replies only when mentioned by name (`Nyra` / `نیرا` / `نيرا`) or when you reply to one of her messages; context is tracked per thread.
 - **🛡️ Rate limiting & blocking** — per-user, per-chat, and per-admin limits, plus an admin block list.
@@ -216,18 +216,11 @@ Admins manage this from the Mini App (`/api/admin/shared-settings`, `/api/admin/
 
 | Command | Description |
 | --- | --- |
-| `/start` | Greeting and active model |
-| `/help` | Command list |
-| `/settings` | Preferences (private chat) |
-| `/personality` | Choose a personality (private chat) |
-| `/memory` | View your memory (private chat) |
-| `/remember <fact>` | Explicitly remember something |
-| `/forget [topic]` | Clear memory or forget one topic |
-| `/setname <name>` | Set your preferred name |
-| `/usage` | Your usage statistics (private chat) |
-| `/newpersonality` | Create a custom personality (private chat) |
-| `/admin` | Admin panel (admins, private chat) |
-| `/stats` | Statistics (admins, private chat) |
+| `/start` | Start onboarding or show welcome message |
+| `/help` | Display available commands and usage guide |
+| `/admin` | Open the Mini App management interface (admins only) |
+
+**All other settings** — preferences, personality, memory, API connections, models, routing, usage, and group management — are managed through the **Telegram Mini App**, accessible via the menu button or `/admin` command for administrators.
 
 ## 🔐 Security notes
 
@@ -249,7 +242,7 @@ Behaviour is covered by Node's built-in test runner — no dependencies to insta
 npm test
 ```
 
-The suite (223 tests in `test/`) covers message splitting (`split.test.js`), memory serialization (`memory.test.js`), crypto including mandatory-secret validation (`crypto.test.js`), sanitizers and admin-ID parsing (`utils.test.js`), Mini App routes for every endpoint (`routes.test.js`), settings validation (`settings.test.js`), reaction classification (`reactions.test.js`), the prompt brain (`brain.test.js`), the deploy-URL extraction (`deploy.test.js`), queue ordering and DLQ handling (`modules.test.js`), the agent tool loop, shared-service quotas (`shared-service.test.js`) and voice transcription and synthesis (`voice-stt.test.js`, `voice-tts.test.js`).
+The suite (277 tests in `test/`) covers message splitting (`split.test.js`), memory serialization (`memory.test.js`), crypto including mandatory-secret validation (`crypto.test.js`), sanitizers and admin-ID parsing (`utils.test.js`), Mini App routes for every endpoint (`routes.test.js`), settings validation (`settings.test.js`), reaction classification (`reactions.test.js`), the prompt brain (`brain.test.js`), the deploy-URL extraction (`deploy.test.js`), queue ordering and DLQ handling (`modules.test.js`), the agent tool loop, shared-service quotas (`shared-service.test.js`) and voice transcription and synthesis (`voice-stt.test.js`, `voice-tts.test.js`).
 
 ## 📄 License
 
