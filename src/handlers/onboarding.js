@@ -4,7 +4,7 @@ import { now, escapeHtml, isAdmin } from "../utils.js";
 import { sendMessage, answerCallback, editMessage, buildInlineKeyboard } from "../telegram.js";
 import { getUser, upsertUser } from "../db.js";
 import { t } from "../i18n/index.js";
-import { getSharedServiceEnabled, getSharedRequestLimit, getSharedTokenLimit } from "../db/shared-service.js";
+import { isSharedServiceEnabled as getSharedServiceEnabled, getSharedRequestLimit, getSharedTokenLimit } from "../db/settings.js";
 
 const MAX_NAME_LENGTH = 50;
 const ONBOARDING_VERSION = 1;
