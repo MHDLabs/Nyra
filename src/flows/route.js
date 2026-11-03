@@ -3,6 +3,7 @@
 // single-connection wizard even though both are driven by the same
 // getFlowState/setFlowState mechanism.
 import { MAX_MODEL_LENGTH, MAX_URL_LENGTH, MAX_API_KEY_LENGTH, OPENAI_DEFAULT_URL, ANTHROPIC_DEFAULT_URL, MAX_ROUTE_MODELS, MAX_ROUTE_TOKENS, MAX_ROUTE_LABEL_LENGTH } from "../config.js";
+import { validateBaseUrlDetailed } from "../security.js";
 import { escapeHtml, isAdmin } from "../utils.js";
 import { sendMessage, deleteMessage, buildInlineKeyboard } from "../telegram.js";
 import { setFlowState, clearFlowState, saveRoute, addRouteModel, addRouteToken, isPersonalModelsAllowed } from "../db.js";
@@ -95,10 +96,12 @@ export async function handleRouteFlowStep(env, chatId, userId, text, message, fl
   }
   if (step === "route_base_url") {
     if (text.length === 0 || text.length > MAX_URL_LENGTH) { await sendMessage(env, chatId, "URL must be 1–" + MAX_URL_LENGTH + " characters."); return true; }
-    let url;
-    try { url = new URL(text); if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("bad protocol"); }
-    catch (err) { await sendMessage(env, chatId, "That doesn't look like a valid URL."); return true; }
-    flowState.base_url = url.toString().replace(/\/+$/, "");
+    const validation = validateBaseUrlDetailed(text);
+    if (!validation.ok) {
+      await sendMessage(env, chatId, "⚠ " + validation.reason);
+      return true;
+    }
+    flowState.base_url = validation.url;
     flowState.step = "route_models";
     await setFlowState(env, userId, flowState);
     await routePromptModels(env, chatId, null);

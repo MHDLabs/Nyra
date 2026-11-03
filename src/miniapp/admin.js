@@ -116,6 +116,12 @@ export async function handleAdminUpdateSettings(env, userId, body) {
       const res = await setSharedServiceSettings(env, userId, body.shared_service);
       if (!res.ok) return jsonError(400, res.error);
     }
+    // Maintenance mode toggle
+    if (body && body.maintenance_mode !== undefined) {
+      const { setMaintenanceMode } = await import("../db/maintenance.js");
+      const enabled = body.maintenance_mode === 1 || body.maintenance_mode === true;
+      await setMaintenanceMode(env, userId, enabled);
+    }
     return await handleAdminSettings(env);
   } catch (err) { return jsonError(500, "Failed to update settings"); }
 }

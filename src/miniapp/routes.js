@@ -1,6 +1,7 @@
 // Route (multi-model failover bundle) CRUD shared by the self-service view
 // and the admin panel; both call the same handlers with the admin's user id.
 import { getUserRoutes, getRouteById, getRouteModels, getRouteTokens, getRouteBundle, saveRoute, updateRoute, deleteRoute, setDefaultRoute, addRouteModel, removeRouteModel, setRouteDefaultModel, addRouteToken, removeRouteToken, toggleRouteToken } from "../db.js";
+import { validateBaseUrl } from "../security.js";
 import { jsonOk, jsonError } from "./respond.js";
 
 /** List routes the user can see (admin: all their routes; user: routes available). */
@@ -29,7 +30,9 @@ export async function handleUserRoutes(env, userId) {
 export async function handleAdminCreateRoute(env, userId, body) {
   try {
     if (!body || !body.label || !body.provider) return jsonError(400, "Missing fields");
-    const routeId = await saveRoute(env, userId, { label: body.label, provider: body.provider, base_url: body.base_url || "", models: body.models || [], tokens: body.tokens || [] });
+    const baseUrl = body.base_url || "";
+    if (baseUrl && !validateBaseUrl(baseUrl)) return jsonError(400, "Invalid base URL");
+    const routeId = await saveRoute(env, userId, { label: body.label, provider: body.provider, base_url: baseUrl, models: body.models || [], tokens: body.tokens || [] });
     return jsonOk({ success: true, route_id: routeId });
   } catch (err) { return jsonError(500, "Failed to create route"); }
 }
@@ -49,6 +52,7 @@ export async function handleAdminRouteAction(env, userId, routeId, action, body)
     if (!route) return jsonError(404, "Route not found");
     switch (action) {
       case "update":
+        if (body.base_url && !validateBaseUrl(body.base_url)) return jsonError(400, "Invalid base URL");
         await updateRoute(env, userId, routeId, { label: body.label, provider: body.provider, base_url: body.base_url });
         break;
       case "default":

@@ -75,19 +75,17 @@ export async function reserveSharedRequest(env, userId, connection) {
     // Atomic check-and-increment. `requestLimit = 0` disables the request cap;
     // `meta.changes` tells us whether the row was actually incremented, so two
     // concurrent requests cannot both take the last remaining unit.
+    // Check token quota BEFORE incrementing requests to prevent race
+    const used = await getSharedUsage(env, userId, date);
+    if (q.tokenLimit > 0 && used.tokens >= q.tokenLimit) {
+      return { allowed: false, shared: true, reason: "shared_token_quota_exceeded", quota: q.tokenLimit, used: used.tokens };
+    }
     const res = await env.DB.prepare(
       "UPDATE shared_service_usage SET requests_count = requests_count + 1 WHERE telegram_id = ? AND date = ? AND (? = 0 OR requests_count < ?)"
     ).bind(userId, date, q.requestLimit, q.requestLimit).run();
     const changed = res && res.meta ? res.meta.changes : 0;
-    const used = await getSharedUsage(env, userId, date);
     if (!changed) {
       return { allowed: false, shared: true, reason: "shared_request_quota_exceeded", quota: q.requestLimit, used: used.requests };
-    }
-    if (q.tokenLimit > 0 && used.tokens >= q.tokenLimit) {
-      // Already over the token allowance: refuse, and hand the reserved unit back
-      // so it is not lost to a request that never ran.
-      await env.DB.prepare("UPDATE shared_service_usage SET requests_count = MAX(requests_count - 1, 0) WHERE telegram_id = ? AND date = ?").bind(userId, date).run();
-      return { allowed: false, shared: true, reason: "shared_token_quota_exceeded", quota: q.tokenLimit, used: used.tokens };
     }
     return { allowed: true, shared: true, used: used.requests, quota: q.requestLimit, tokenLimit: q.tokenLimit };
   } catch (err) {

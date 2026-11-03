@@ -386,7 +386,7 @@
   }
 
   window.setPersonality = function (id) {
-    api('/api/user/personality', { method: 'POST', body: { personality: id } })
+    api('/api/user/personality', { method: 'POST', body: { personality_id: id } })
       .then(function () { toast(t('toast.saved')); renderPreferences(); })
       .catch(function (e) { toast(e.message); });
   };

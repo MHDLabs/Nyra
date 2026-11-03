@@ -11,6 +11,7 @@ import { ensureWebhook, ensureMenuButton } from "./telegram.js";
 import { routeMiniAppAPI } from "./miniapp.js";
 import { logFailedUpdate } from "./dlq.js";
 import { pruneOldTranscripts } from "./voice/stt.js";
+import { deliverDueReminders } from "./reminders/deliver.js";
 import { handleWebhook, handleSetup, handleStatus, processMessage, handleCallbackQuery } from "./handlers/index.js";
 
 // A queue message's ordering group. Two updates only need to stay serialized
@@ -136,6 +137,8 @@ export default {
     // `pruneStaleTranscripts`); this is the safety net for rows whose thread was
     // never visited again.
     ctx.waitUntil(pruneOldTranscripts(env, 7 * 24 * 3600));
+    // Deliver due reminders
+    ctx.waitUntil(deliverDueReminders(env, Math.floor(Date.now() / 1000)));
   },
   // Queue consumer: runs the full AI pipeline outside the webhook request lifecycle.
   // Consumer invocations allow long wall time (vs. the 30s post-response waitUntil cap),
