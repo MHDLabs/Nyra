@@ -86,3 +86,27 @@ export async function replayFailedUpdate(env, id) {
     return false;
   }
 }
+
+/**
+ * Clean up old failed updates to avoid retaining sensitive data indefinitely.
+ * Keeps the most recent N days of failures for debugging, deletes older records.
+ * @param {object} env - Worker environment bindings
+ * @param {number} retentionDays - Days to retain (default 30)
+ * @returns {Promise<number>} Number of records deleted
+ */
+export async function cleanupOldFailedUpdates(env, retentionDays = 30) {
+  const cutoff = now() - (retentionDays * 24 * 3600);
+  try {
+    const result = await env.DB.prepare(
+      "DELETE FROM failed_updates WHERE created_at < ? AND replayed_at IS NULL"
+    ).bind(cutoff).run();
+    const deleted = result?.meta?.changes || 0;
+    if (deleted > 0) {
+      console.log(`DLQ cleanup: deleted ${deleted} failed updates older than ${retentionDays} days`);
+    }
+    return deleted;
+  } catch (err) {
+    console.error("DLQ cleanup failed:", err.message);
+    return 0;
+  }
+}

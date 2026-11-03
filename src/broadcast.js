@@ -148,13 +148,18 @@ async function processBroadcast(env, broadcastId) {
         break;
       }
 
-      // Get next batch of pending recipients
+      // Get next batch of pending recipients (atomic claim)
+      const claimTime = now();
       const recipients = await env.DB.prepare(`
-        SELECT recipient_id 
-        FROM broadcast_recipients 
-        WHERE broadcast_id = ? AND status = 'pending'
-        LIMIT ?
-      `).bind(broadcastId, BROADCAST_BATCH_SIZE).all();
+        UPDATE broadcast_recipients 
+        SET status = 'processing', claimed_at = ?
+        WHERE recipient_id IN (
+          SELECT recipient_id FROM broadcast_recipients 
+          WHERE broadcast_id = ? AND status = 'pending'
+          LIMIT ?
+        )
+        RETURNING recipient_id
+      `).bind(claimTime, broadcastId, BROADCAST_BATCH_SIZE).all();
 
       if (!recipients.results || recipients.results.length === 0) {
         // All sent, mark as completed
@@ -188,7 +193,7 @@ async function processBroadcast(env, broadcastId) {
             // Mark as sent
             await env.DB.prepare(`
               UPDATE broadcast_recipients 
-              SET status = 'sent', sent_at = ?
+              SET status = 'sent', sent_at = ?, claimed_at = NULL
               WHERE broadcast_id = ? AND recipient_id = ?
             `).bind(now(), broadcastId, recipientId).run();
 
@@ -204,7 +209,7 @@ async function processBroadcast(env, broadcastId) {
           // Mark as failed
           await env.DB.prepare(`
             UPDATE broadcast_recipients 
-            SET status = 'failed', error_message = ?, sent_at = ?
+            SET status = 'failed', error_message = ?, sent_at = ?, claimed_at = NULL
             WHERE broadcast_id = ? AND recipient_id = ?
           `).bind(err.message, now(), broadcastId, recipientId).run();
 

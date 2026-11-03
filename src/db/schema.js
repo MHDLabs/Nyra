@@ -161,8 +161,9 @@ const CORE_MIGRATIONS = [
     statements: [
       "CREATE TABLE IF NOT EXISTS broadcasts (broadcast_id TEXT PRIMARY KEY, created_by INTEGER NOT NULL, message TEXT NOT NULL, target_type TEXT NOT NULL, target_filter TEXT, status TEXT DEFAULT 'draft', total_count INTEGER DEFAULT 0, sent_count INTEGER DEFAULT 0, failed_count INTEGER DEFAULT 0, created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER)",
       "CREATE INDEX IF NOT EXISTS idx_broadcasts_status ON broadcasts(status, created_at)",
-      "CREATE TABLE IF NOT EXISTS broadcast_recipients (id INTEGER PRIMARY KEY AUTOINCREMENT, broadcast_id TEXT NOT NULL, recipient_id INTEGER NOT NULL, status TEXT DEFAULT 'pending', error_message TEXT, created_at INTEGER NOT NULL, sent_at INTEGER, UNIQUE(broadcast_id, recipient_id))",
-      "CREATE INDEX IF NOT EXISTS idx_broadcast_recipients_status ON broadcast_recipients(broadcast_id, status)"
+      "CREATE TABLE IF NOT EXISTS broadcast_recipients (id INTEGER PRIMARY KEY AUTOINCREMENT, broadcast_id TEXT NOT NULL, recipient_id INTEGER NOT NULL, status TEXT DEFAULT 'pending', error_message TEXT, created_at INTEGER NOT NULL, sent_at INTEGER, claimed_at INTEGER, UNIQUE(broadcast_id, recipient_id))",
+      "CREATE INDEX IF NOT EXISTS idx_broadcast_recipients_status ON broadcast_recipients(broadcast_id, status)",
+      "CREATE INDEX IF NOT EXISTS idx_broadcast_recipients_claimed ON broadcast_recipients(broadcast_id, status, claimed_at)"
     ]
   },
   {

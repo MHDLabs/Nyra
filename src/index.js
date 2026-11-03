@@ -9,7 +9,7 @@ import { getMasterKey, validateSecrets } from "./crypto.js";
 import { ensureSchema, maybeInitSchema } from "./db.js";
 import { ensureWebhook, ensureMenuButton } from "./telegram.js";
 import { routeMiniAppAPI } from "./miniapp.js";
-import { logFailedUpdate } from "./dlq.js";
+import { logFailedUpdate, cleanupOldFailedUpdates } from "./dlq.js";
 import { pruneOldTranscripts } from "./voice/stt.js";
 import { deliverDueReminders } from "./reminders/deliver.js";
 import { handleWebhook, handleSetup, handleStatus, processMessage, handleCallbackQuery } from "./handlers/index.js";
@@ -139,6 +139,8 @@ export default {
     ctx.waitUntil(pruneOldTranscripts(env, 7 * 24 * 3600));
     // Deliver due reminders
     ctx.waitUntil(deliverDueReminders(env, Math.floor(Date.now() / 1000)));
+    // Clean up old failed updates (30 day retention)
+    ctx.waitUntil(cleanupOldFailedUpdates(env, 30));
   },
   // Queue consumer: runs the full AI pipeline outside the webhook request lifecycle.
   // Consumer invocations allow long wall time (vs. the 30s post-response waitUntil cap),
