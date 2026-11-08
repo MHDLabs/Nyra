@@ -76,8 +76,10 @@ export async function handleWebhook(request, env, ctx) {
   // feel instant instead of waiting for the queue consumer's batch window.
   const msgUpdate = update.message;
   const cbUpdate = update.callback_query;
+  // Commands and button taps run inline (await) so Telegram delivery is reliable.
+  // waitUntil alone can drop work on isolate recycle; users then see "no response".
   if (cbUpdate && cbUpdate.from && !cbUpdate.from.is_bot) {
-    ctx.waitUntil(safeCallback(env, ctx, cbUpdate));
+    await safeCallback(env, ctx, cbUpdate);
     return okResponse();
   }
   if (msgUpdate && msgUpdate.from && !msgUpdate.from.is_bot && msgUpdate.chat) {
@@ -85,12 +87,12 @@ export async function handleWebhook(request, env, ctx) {
     if (ctype === "private" || ctype === "group" || ctype === "supergroup") {
       const isCommand = typeof msgUpdate.text === "string" && msgUpdate.text.trim().startsWith("/");
       if (isCommand) {
-        ctx.waitUntil(safeProcessMessage(env, ctx, msgUpdate));
+        await safeProcessMessage(env, ctx, msgUpdate);
         return okResponse();
       }
       try {
         if (await isFastMessage(env, msgUpdate.from)) {
-          ctx.waitUntil(safeProcessMessage(env, ctx, msgUpdate));
+          await safeProcessMessage(env, ctx, msgUpdate);
           return okResponse();
         }
       } catch (err) {

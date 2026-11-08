@@ -138,11 +138,6 @@ async function handleAdminCommand(env, chatId, userId, isGroup) {
     await sendMessage(env, chatId, t(locale, "commands.admin.private_only"));
     return;
   }
-  const rateOk = await checkRateLimit(env, "admin:" + userId, RATE_LIMIT_ADMIN_PER_MIN, 60);
-  if (!rateOk) {
-    await sendMessage(env, chatId, locale.startsWith("fa") ? "محدودیت نرخ. کمی بعد دوباره تلاش کنید." : "Rate limit reached. Try again shortly.");
-    return;
-  }
   await showAdminMenu(env, chatId, null);
 }
 
@@ -417,13 +412,19 @@ export async function handleUserCommand(env, ctx, command, args, message, from, 
 
 
 export async function showAdminMenu(env, chatId, messageId) {
-  const text = "<b>Admin Panel</b>\n\nSelect a section:";
+  const user = chatId ? await getUser(env, chatId).catch(function () { return null; }) : null;
+  // Admin panel is always opened in private chat where chatId === admin telegram id.
+  const locale = (user && user.locale) || "en-US";
+  const fa = String(locale).indexOf("fa") === 0;
+  const text = fa
+    ? "<b>پنل مدیریت</b>\n\nیک بخش را انتخاب کنید:"
+    : "<b>Admin Panel</b>\n\nSelect a section:";
   const rows = [
-    [{ text: "👥 Users", callback_data: "adm:users" }, { text: "💬 Groups", callback_data: "adm:groups" }],
-    [{ text: "🚫 Blocked", callback_data: "adm:blocked" }, { text: "📊 Stats", callback_data: "adm:stats" }],
-    [{ text: "🤖 Models", callback_data: "adm:conns" }, { text: "💚 Status", callback_data: "adm:status" }],
-    [{ text: "😀 Reactions", callback_data: "adm:react" }, { text: "⚠️ Maintenance", callback_data: "adm:maint" }],
-    [{ text: "Close", callback_data: "adm:close" }]
+    [{ text: fa ? "👥 کاربران" : "👥 Users", callback_data: "adm:users" }, { text: fa ? "💬 گروه‌ها" : "💬 Groups", callback_data: "adm:groups" }],
+    [{ text: fa ? "🚫 مسدودها" : "🚫 Blocked", callback_data: "adm:blocked" }, { text: fa ? "📊 آمار" : "📊 Stats", callback_data: "adm:stats" }],
+    [{ text: fa ? "🤖 مدل‌ها" : "🤖 Models", callback_data: "adm:conns" }, { text: fa ? "💚 وضعیت" : "💚 Status", callback_data: "adm:status" }],
+    [{ text: fa ? "😀 واکنش‌ها" : "😀 Reactions", callback_data: "adm:react" }, { text: fa ? "⚠️ نگهداری" : "⚠️ Maintenance", callback_data: "adm:maint" }],
+    [{ text: fa ? "بستن" : "Close", callback_data: "adm:close" }]
   ];
   await editMessage(env, chatId, messageId, text, buildInlineKeyboard(rows), "HTML");
 }
@@ -552,7 +553,7 @@ Use this during critical maintenance, outages, or emergencies.`;
 
   const rows = [
     [{ text: toggleText, callback_data: toggleData }],
-    [{ text: "« Back", callback_data: "adm:menu" }]
+    [{ text: "« Back", callback_data: "adm:main" }]
   ];
   await editMessage(env, chatId, messageId, text, buildInlineKeyboard(rows), "HTML");
 }
