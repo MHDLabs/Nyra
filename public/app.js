@@ -150,6 +150,7 @@
   function getTabs() {
     var tabs = [
       { id: 'models', label: t('nav.models') },
+      { id: 'automations', label: t('nav.automations') },
       { id: 'preferences', label: t('nav.preferences') }
     ];
     if (state.isAdmin) {
@@ -177,6 +178,7 @@
     renderTabs();
 
     if (sec === 'models') loadModels();
+    else if (sec === 'automations') loadAutomations();
     else if (sec === 'routing') loadRouting();
     else if (sec === 'preferences') renderPreferences();
     else if (sec === 'usage') loadUsage();
@@ -532,6 +534,224 @@
   // Bind language toggle
   var langBtn = el('lang-btn');
   if (langBtn) langBtn.addEventListener('click', window.toggleLanguage);
+
+
+  // --- AUTOMATIONS (reminders, proactive, schedules) -----------------------
+  function fmtWhen(ts) {
+    if (!ts) return '—';
+    try {
+      return new Date(Number(ts) * 1000).toLocaleString(state.locale || undefined, {
+        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+      });
+    } catch (e) { return String(ts); }
+  }
+
+  function loadAutomations() {
+    var box = el('sec-automations');
+    if (!box) return;
+    box.innerHTML = '<div class="empty">' + t('state.loading') + '</div>';
+    api('/api/automations').then(function (data) {
+      state.automations = data;
+      renderAutomations();
+    }).catch(function (err) {
+      box.innerHTML = errorHtml(err);
+    });
+  }
+
+  function renderAutomations() {
+    var box = el('sec-automations');
+    if (!box) return;
+    var data = state.automations || {};
+    var proactive = data.proactive || {};
+    var reminders = data.reminders || [];
+    var schedules = data.schedules || [];
+    var tz = data.timezone || '';
+
+    var html = '';
+    html += '<div class="auto-hero glass-panel">';
+    html += '<h2>' + esc(t('auto.title')) + '</h2>';
+    html += '<p>' + esc(t('auto.subtitle')) + '</p>';
+    html += '</div>';
+
+    // Timezone
+    html += '<div class="glass-card">';
+    html += '<h3>' + esc(t('auto.timezone')) + '</h3>';
+    html += '<div class="meta">' + (tz ? esc(tz) : esc(t('auto.timezone_missing'))) + '</div>';
+    html += '<div class="field"><label for="auto-tz">' + esc(t('auto.timezone_label')) + '</label>';
+    html += '<select id="auto-tz">';
+    var zones = ['Asia/Tehran','Europe/Berlin','Europe/London','America/New_York','UTC','Asia/Dubai','Asia/Tokyo'];
+    if (tz && zones.indexOf(tz) === -1) zones.unshift(tz);
+    zones.forEach(function (z) {
+      html += '<option value="' + esc(z) + '"' + (z === tz ? ' selected' : '') + '>' + esc(z) + '</option>';
+    });
+    html += '</select></div>';
+    html += '<button class="btn-primary" type="button" onclick="window.saveTimezone()">' + esc(t('auto.save')) + '</button>';
+    html += '</div>';
+
+    // Proactive
+    html += '<div class="glass-card">';
+    html += '<h3>' + esc(t('auto.proactive')) + '</h3>';
+    html += '<p class="meta">' + esc(t('auto.proactive_hint')) + '</p>';
+    html += '<div class="toggle-row"><span>' + esc(t('auto.proactive_enable')) + '</span>';
+    html += '<button type="button" class="toggle" id="proactive-toggle" role="switch" aria-checked="' +
+      (proactive.enabled ? 'true' : 'false') + '" onclick="window.toggleProactive()"></button></div>';
+    html += '<div class="field"><label for="proactive-hours">' + esc(t('auto.threshold')) + '</label>';
+    html += '<input id="proactive-hours" type="number" min="1" max="168" value="' +
+      esc(String(proactive.threshold_hours || 24)) + '"></div>';
+    html += '<div class="auto-grid two">';
+    html += '<div class="field"><label for="quiet-start">' + esc(t('auto.quiet_start')) + '</label>';
+    html += '<input id="quiet-start" type="number" min="0" max="23" placeholder="—" value="' +
+      (proactive.quiet_start != null ? esc(String(proactive.quiet_start)) : '') + '"></div>';
+    html += '<div class="field"><label for="quiet-end">' + esc(t('auto.quiet_end')) + '</label>';
+    html += '<input id="quiet-end" type="number" min="0" max="23" placeholder="—" value="' +
+      (proactive.quiet_end != null ? esc(String(proactive.quiet_end)) : '') + '"></div>';
+    html += '</div>';
+    html += '<button class="btn-primary" type="button" onclick="window.saveProactive()">' + esc(t('auto.save')) + '</button>';
+    html += '</div>';
+
+    // Reminders
+    html += '<div class="glass-card">';
+    html += '<h3>' + esc(t('auto.reminders')) + ' <span class="pill">' + reminders.length + '</span></h3>';
+    if (!reminders.length) html += '<div class="meta">' + esc(t('auto.reminders_empty')) + '</div>';
+    reminders.forEach(function (r) {
+      html += '<div class="glass-card" style="margin:8px 0;box-shadow:none">';
+      html += '<div style="font-weight:600">' + esc(r.title || ('#' + r.id)) + '</div>';
+      html += '<div class="meta">' + esc(fmtWhen(r.next_run_at)) + ' · ' + esc(r.status || '') +
+        (r.recurrence ? ' · ' + esc(String(r.recurrence)) : '') + '</div>';
+      html += '<div class="row-actions">';
+      html += '<button class="btn-ghost" type="button" onclick="window.reminderAction(' + r.id + ',\'done\')">' + esc(t('auto.done')) + '</button>';
+      html += '<button class="btn-danger" type="button" onclick="window.reminderAction(' + r.id + ',\'cancel\')">' + esc(t('auto.cancel')) + '</button>';
+      html += '</div></div>';
+    });
+    html += '<p class="meta" style="margin-top:8px">' + esc(t('auto.reminders_cmd_hint')) + '</p>';
+    html += '</div>';
+
+    // Schedules
+    html += '<div class="glass-card">';
+    html += '<div class="toggle-row"><h3 style="margin:0">' + esc(t('auto.schedules')) +
+      ' <span class="pill">' + schedules.length + '</span></h3>';
+    html += '<button class="btn-primary" type="button" onclick="window.openScheduleModal()">' + esc(t('auto.add_schedule')) + '</button></div>';
+    if (!schedules.length) html += '<div class="meta" style="margin-top:8px">' + esc(t('auto.schedules_empty')) + '</div>';
+    schedules.forEach(function (s) {
+      html += '<div class="glass-card" style="margin:8px 0;box-shadow:none">';
+      html += '<div style="font-weight:600">' + esc(s.title) +
+        ' <span class="pill muted">' + esc(s.kind) + '</span>' +
+        (s.enabled ? ' <span class="pill ok">' + esc(t('auto.enabled')) + '</span>' :
+          ' <span class="pill warn">' + esc(t('auto.paused')) + '</span>') + '</div>';
+      html += '<div class="meta">' + esc(s.local_time) + ' · ' + esc(s.timezone || '') +
+        ' · next ' + esc(fmtWhen(s.next_run_at)) + '</div>';
+      if (s.message_text) html += '<div class="meta">' + esc(s.message_text) + '</div>';
+      html += '<div class="row-actions">';
+      html += '<button class="btn-ghost" type="button" onclick="window.toggleSchedule(' + s.id + ',' + (s.enabled ? 'false' : 'true') + ')">' +
+        esc(s.enabled ? t('auto.pause') : t('auto.resume')) + '</button>';
+      html += '<button class="btn-danger" type="button" onclick="window.removeSchedule(' + s.id + ')">' + esc(t('auto.delete')) + '</button>';
+      html += '</div></div>';
+    });
+    html += '</div>';
+
+    box.innerHTML = html;
+  }
+
+  window.saveTimezone = function () {
+    var sel = el('auto-tz');
+    if (!sel) return;
+    api('/api/automations/timezone', { method: 'POST', body: { timezone: sel.value } })
+      .then(function () { toast(t('auto.saved')); loadAutomations(); })
+      .catch(function (err) { toast(err.message); });
+  };
+
+  window.toggleProactive = function () {
+    var btn = el('proactive-toggle');
+    if (!btn) return;
+    var on = btn.getAttribute('aria-checked') === 'true';
+    btn.setAttribute('aria-checked', on ? 'false' : 'true');
+  };
+
+  window.saveProactive = function () {
+    var btn = el('proactive-toggle');
+    var hours = el('proactive-hours');
+    var qs = el('quiet-start');
+    var qe = el('quiet-end');
+    var body = {
+      enabled: btn && btn.getAttribute('aria-checked') === 'true',
+      threshold_hours: hours ? Number(hours.value) : 24,
+      quiet_start: qs && qs.value !== '' ? Number(qs.value) : null,
+      quiet_end: qe && qe.value !== '' ? Number(qe.value) : null
+    };
+    api('/api/automations/proactive', { method: 'POST', body: body })
+      .then(function () { toast(t('auto.saved')); loadAutomations(); })
+      .catch(function (err) { toast(err.message); });
+  };
+
+  window.reminderAction = function (id, action) {
+    api('/api/automations/reminders/' + id + '/' + action, { method: 'POST', body: {} })
+      .then(function () { toast(t('auto.saved')); loadAutomations(); })
+      .catch(function (err) { toast(err.message); });
+  };
+
+  window.toggleSchedule = function (id, enabled) {
+    api('/api/automations/schedules/' + id, { method: 'POST', body: { enabled: !!enabled } })
+      .then(function () { toast(t('auto.saved')); loadAutomations(); })
+      .catch(function (err) { toast(err.message); });
+  };
+
+  window.removeSchedule = function (id) {
+    if (!confirm(t('auto.confirm_delete'))) return;
+    api('/api/automations/schedules/' + id, { method: 'DELETE' })
+      .then(function () { toast(t('auto.saved')); loadAutomations(); })
+      .catch(function (err) { toast(err.message); });
+  };
+
+  window.openScheduleModal = function () {
+    var root = el('modal-root');
+    if (!root) return;
+    var tz = (state.automations && state.automations.timezone) || 'UTC';
+    root.classList.remove('hidden');
+    root.setAttribute('aria-hidden', 'false');
+    root.innerHTML = '<div class="modal-sheet glass-panel" role="dialog" aria-modal="true">' +
+      '<h3>' + esc(t('auto.add_schedule')) + '</h3>' +
+      '<div class="field"><label>' + esc(t('auto.kind')) + '</label>' +
+      '<select id="sch-kind"><option value="good_morning">' + esc(t('auto.kind_morning')) +
+      '</option><option value="good_night">' + esc(t('auto.kind_night')) +
+      '</option><option value="custom">' + esc(t('auto.kind_custom')) +
+      '</option><option value="weekly">' + esc(t('auto.kind_weekly')) + '</option></select></div>' +
+      '<div class="field"><label>' + esc(t('auto.sch_title')) + '</label>' +
+      '<input id="sch-title" maxlength="120" placeholder="' + esc(t('auto.sch_title')) + '"></div>' +
+      '<div class="field"><label>' + esc(t('auto.local_time')) + '</label>' +
+      '<input id="sch-time" placeholder="08:00" value="08:00"></div>' +
+      '<div class="field"><label>' + esc(t('auto.timezone_label')) + '</label>' +
+      '<input id="sch-tz" value="' + esc(tz) + '"></div>' +
+      '<div class="field"><label>' + esc(t('auto.message')) + '</label>' +
+      '<textarea id="sch-msg" placeholder="' + esc(t('auto.message_hint')) + '"></textarea></div>' +
+      '<div class="btn-row">' +
+      '<button class="btn-primary" type="button" onclick="window.createSchedule()">' + esc(t('auto.create')) + '</button>' +
+      '<button class="btn-ghost" type="button" onclick="window.closeModal()">' + esc(t('auto.close')) + '</button>' +
+      '</div></div>';
+  };
+
+  window.closeModal = function () {
+    var root = el('modal-root');
+    if (!root) return;
+    root.classList.add('hidden');
+    root.setAttribute('aria-hidden', 'true');
+    root.innerHTML = '';
+  };
+
+  window.createSchedule = function () {
+    var body = {
+      kind: (el('sch-kind') || {}).value || 'custom',
+      title: (el('sch-title') || {}).value || '',
+      local_time: (el('sch-time') || {}).value || '',
+      timezone: (el('sch-tz') || {}).value || '',
+      message_text: (el('sch-msg') || {}).value || null,
+      generation_mode: 'template'
+    };
+    if (!body.title) body.title = body.kind;
+    api('/api/automations/schedules', { method: 'POST', body: body })
+      .then(function () { window.closeModal(); toast(t('auto.saved')); loadAutomations(); })
+      .catch(function (err) { toast(err.message); });
+  };
+
 
   // Boot
   if (document.readyState === 'loading') {

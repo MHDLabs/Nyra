@@ -292,6 +292,44 @@ export async function sendMessageReturn(env, chatId, text, options) {
   return firstResult;
 }
 
+/**
+ * Send a Rich Message (Bot API 10.1+). Uses markdown-style InputRichMessage.
+ * Returns the Telegram API result object.
+ */
+export async function sendRichMessage(env, chatId, text, options) {
+  const opts = options || {};
+  const body = truncate(String(text || ""), 32000);
+  const payload = {
+    chat_id: chatId,
+    rich_message: { markdown: body }
+  };
+  if (opts.disable_notification) payload.disable_notification = true;
+  if (opts.reply_markup) payload.reply_markup = opts.reply_markup;
+  if (opts.reply_to_message_id) payload.reply_to_message_id = opts.reply_to_message_id;
+  return await tg(env, "sendRichMessage", payload);
+}
+
+/**
+ * Prefer sendRichMessage; on method-not-found / unsupported clients fall back
+ * to classic sendMessage so delivery never depends on Rich Message support.
+ */
+export async function sendRichMessageSafe(env, chatId, text, options) {
+  const opts = options || {};
+  let result = await sendRichMessage(env, chatId, text, opts);
+  if (result && result.ok) return result;
+  const desc = String(result && result.description || "").toLowerCase();
+  const unsupported = !result || result.error_code === 404 || result.error_code === 400 ||
+    /unknown method|not found|unsupported|rich.?message/i.test(desc);
+  if (unsupported) {
+    return await sendMessageReturn(env, chatId, text, {
+      parse_mode: opts.parse_mode,
+      reply_markup: opts.reply_markup,
+      reply_to_message_id: opts.reply_to_message_id
+    });
+  }
+  return result;
+}
+
 export async function sendMessage(env, chatId, text, options) {
   const result = await sendMessageReturn(env, chatId, text, options);
   return result && result.ok;
