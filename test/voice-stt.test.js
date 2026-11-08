@@ -2,6 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
 
+
+  isVoiceMessage, isVoiceTranscribable, getSttKey, transcribeVoice,
+  withTranscript, pruneStaleTranscripts, pruneOldTranscripts, getTranscript
+} from "../src/voice/stt.js";
+import { STT_MAX_BYTES } from "../src/config.js";
+
 function hostIs(url, host) {
   try { return new URL(String(url)).hostname === host; } catch (e) {
     return false;
@@ -17,10 +23,6 @@ function urlContainsPath(url, needle) {
   }
 }
 
-  isVoiceMessage, isVoiceTranscribable, getSttKey, transcribeVoice,
-  withTranscript, pruneStaleTranscripts, pruneOldTranscripts, getTranscript
-} from "../src/voice/stt.js";
-import { STT_MAX_BYTES } from "../src/config.js";
 
 function voice(over) {
   return Object.assign({ message_id: 10, voice: { file_id: "f1", file_size: 1024 } }, over || {});
