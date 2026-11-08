@@ -2,15 +2,11 @@
 // "/", so this is the URL that initialises the schema, teaches the Worker
 // its public origin, and registers the Telegram webhook + menu button.
 import { checkMemoryRate } from "../utils.js";
-import { ensureWebhook, ensureMenuButton } from "../telegram.js";
+import { ensureWebhook, ensureMenuButton, tg } from "../telegram.js";
 import { maybeInitSchema } from "../db.js";
 import { getBuildInfo, checkUpstreamUpdate, UPSTREAM_REPO, UPSTREAM_BRANCH } from "../version.js";
+import { getMasterKey, getWebhookSecret } from "../crypto.js";
 
-// GET /status — plain-text status + bootstrap endpoint (the Mini App owns "/").
-// Idempotent: initialises the schema (KV-gated), registers/verifies the Telegram
-// webhook from the request's own origin, and points the bot's menu button at the
-// Mini App, so a fresh one-click deployment becomes functional the first time
-// this (or any other Worker-handled) URL is opened.
 export async function handleStatus(request, env, adminIds) {
   const clientIp = request.headers.get("CF-Connecting-IP") || "unknown";
   if (!checkMemoryRate("status:" + clientIp, 30, 60000)) return new Response("Too Many Requests", { status: 429 });
@@ -31,8 +27,6 @@ export async function handleStatus(request, env, adminIds) {
     ? build.shortSha + (build.ref ? " (" + build.ref + ")" : "") + (build.builtAt ? " @ " + build.builtAt : "") + " [" + build.source + "]"
     : "unknown (deploy without CI build metadata)";
 
-  // Soft upstream check — never blocks status. ?update=1 forces a check;
-  // otherwise we still check so admins see drift after OTA deploys.
   let updateLine = "not checked";
   try {
     const upd = await checkUpstreamUpdate(env);
@@ -40,9 +34,7 @@ export async function handleStatus(request, env, adminIds) {
       updateLine = "check failed (" + (upd.error || "error") + ")";
     } else if (upd.updateAvailable === true) {
       updateLine = "UPDATE AVAILABLE — upstream " + UPSTREAM_REPO + "@" + UPSTREAM_BRANCH +
-        " is " + (upd.upstream.shortSha || "?") +
-        (upd.upstream.message ? ' "' + upd.upstream.message + '"' : "") +
-        " — push/merge to main with deploy secrets, or re-run the Deploy workflow";
+        " is " + (upd.upstream.shortSha || "?");
     } else if (upd.updateAvailable === false) {
       updateLine = "up to date with " + UPSTREAM_REPO + "@" + UPSTREAM_BRANCH;
     } else {
@@ -52,10 +44,48 @@ export async function handleStatus(request, env, adminIds) {
     updateLine = "check error";
   }
 
+  // Live Telegram diagnostics (no secrets printed).
+  let botLine = "unknown";
+  let tgHookLine = "unknown";
+  try {
+    const me = await tg(env, "getMe", {});
+    if (me && me.ok && me.result) {
+      botLine = "@" + (me.result.username || "?") + " id=" + me.result.id + " can_join=" + !!me.result.can_join_groups;
+    } else {
+      botLine = "getMe failed: " + ((me && me.description) || "error");
+    }
+  } catch (err) {
+    botLine = "getMe error: " + (err && err.message ? err.message : "error");
+  }
+  try {
+    const info = await tg(env, "getWebhookInfo", {});
+    if (info && info.ok && info.result) {
+      const r = info.result;
+      tgHookLine = (r.url || "(none)") +
+        " pending=" + (r.pending_update_count ?? "?") +
+        (r.last_error_message ? " last_error=" + r.last_error_message : " last_error=none") +
+        (r.last_error_date ? " last_error_at=" + r.last_error_date : "");
+    } else {
+      tgHookLine = "getWebhookInfo failed: " + ((info && info.description) || "error");
+    }
+  } catch (err) {
+    tgHookLine = "getWebhookInfo error";
+  }
+
+  let secretsLine = "ok";
+  const missing = [];
+  if (!env.TELEGRAM_BOT_TOKEN) missing.push("TELEGRAM_BOT_TOKEN");
+  if (!(await getWebhookSecret(env))) missing.push("TELEGRAM_SECRET");
+  if (!getMasterKey(env)) missing.push("ENCRYPTION_KEY(invalid_or_missing)");
+  if (missing.length) secretsLine = "MISSING/INVALID: " + missing.join(", ");
+
   const body = [
     "Nyra is running.",
     "",
+    "Secrets:     " + secretsLine,
     "Webhook:     " + hookLine,
+    "TG webhook:  " + tgHookLine,
+    "Bot:         " + botLine,
     "Menu button: " + menuLine,
     "Admin IDs:   " + adminLine,
     "Queue:       " + (env.NYRA_QUEUE ? "bound (NYRA_QUEUE)" : "MISSING — check the queues config in wrangler.toml"),

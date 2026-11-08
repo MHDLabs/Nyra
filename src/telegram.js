@@ -139,7 +139,9 @@ export async function ensureWebhook(env, origin) {
     const set = await tg(env, "setWebhook", {
       url: webhookUrl,
       secret_token: secret,
-      allowed_updates: ["message", "callback_query"]
+      allowed_updates: ["message", "callback_query"],
+      // Clear Telegram's backlog after 503s so retries don't keep failing forever.
+      drop_pending_updates: true
     });
     if (set && set.ok) {
       await writeWebhookState(env, { url: target, attemptedAt: 0, verifiedAt: nowMs, secretTag: secretTag });

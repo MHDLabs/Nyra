@@ -8,6 +8,31 @@ import { processMessage } from "./message.js";
 import { handleCallbackQuery } from "./callback.js";
 import { isFastMessage } from "./fast-path.js";
 
+async function safeProcessMessage(env, ctx, message) {
+  try {
+    await processMessage(env, ctx, message);
+  } catch (err) {
+    console.error("processMessage failed:", err && err.stack ? err.stack : err);
+    try {
+      const chatId = message && message.chat && message.chat.id;
+      if (chatId) {
+        const { sendMessage } = await import("../telegram.js");
+        await sendMessage(env, chatId, "Sorry — something went wrong handling that message. Please try again.");
+      }
+    } catch (e2) {
+      console.error("processMessage failure notify failed:", e2 && e2.message ? e2.message : e2);
+    }
+  }
+}
+
+async function safeCallback(env, ctx, cb) {
+  try {
+    await handleCallbackQuery(env, ctx, cb);
+  } catch (err) {
+    console.error("handleCallbackQuery failed:", err && err.stack ? err.stack : err);
+  }
+}
+
 export async function handleWebhook(request, env, ctx) {
   const secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "";
   const expectedSecret = await getWebhookSecret(env);
@@ -52,7 +77,7 @@ export async function handleWebhook(request, env, ctx) {
   const msgUpdate = update.message;
   const cbUpdate = update.callback_query;
   if (cbUpdate && cbUpdate.from && !cbUpdate.from.is_bot) {
-    ctx.waitUntil(handleCallbackQuery(env, ctx, cbUpdate));
+    ctx.waitUntil(safeCallback(env, ctx, cbUpdate));
     return okResponse();
   }
   if (msgUpdate && msgUpdate.from && !msgUpdate.from.is_bot && msgUpdate.chat) {
@@ -60,12 +85,12 @@ export async function handleWebhook(request, env, ctx) {
     if (ctype === "private" || ctype === "group" || ctype === "supergroup") {
       const isCommand = typeof msgUpdate.text === "string" && msgUpdate.text.trim().startsWith("/");
       if (isCommand) {
-        ctx.waitUntil(processMessage(env, ctx, msgUpdate));
+        ctx.waitUntil(safeProcessMessage(env, ctx, msgUpdate));
         return okResponse();
       }
       try {
         if (await isFastMessage(env, msgUpdate.from)) {
-          ctx.waitUntil(processMessage(env, ctx, msgUpdate));
+          ctx.waitUntil(safeProcessMessage(env, ctx, msgUpdate));
           return okResponse();
         }
       } catch (err) {
