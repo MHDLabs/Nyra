@@ -142,16 +142,13 @@ export async function getScheduleById(env, id, telegramId) {
 
 export async function createSchedule(env, data) {
   const ts = now();
-  let days = data.days_of_week;
-  if (data.kind === "weekly" && (!Array.isArray(days) || !days.length)) {
-    days = [1]; // Monday — never treat weekly as unconstrained daily
+  let dayList = data.days_of_week;
+  if (data.kind === "weekly" && (!Array.isArray(dayList) || !dayList.length)) {
+    dayList = [1]; // Monday — never treat weekly as unconstrained daily
   }
-  const next = computeNextRunAt(data.local_time, data.timezone, days, ts);
+  const next = computeNextRunAt(data.local_time, data.timezone, dayList, ts);
   if (!next) return { ok: false, reason: "bad_schedule" };
-  data = Object.assign({}, data, { days_of_week: days });
-  const days = Array.isArray(data.days_of_week) && data.days_of_week.length
-    ? data.days_of_week.join(",")
-    : null;
+  const days = Array.isArray(dayList) && dayList.length ? dayList.join(",") : null;
   try {
     const result = await env.DB.prepare(
       "INSERT INTO schedules (telegram_id, chat_id, kind, title, message_text, generation_mode, recurrence, local_time, timezone, days_of_week, enabled, next_run_at, attempts, created_at, updated_at) " +
