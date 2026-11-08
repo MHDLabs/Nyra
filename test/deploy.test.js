@@ -24,7 +24,7 @@ test("extractWorkerUrls finds the workers.dev URL and prefers it first", () => {
   const urls = extractWorkerUrls(output);
   assert.ok(exactUrlInList(urls, "https://nyra.abc123.workers.dev"));
   assert.ok(urls.some(function (u) { return hostnameIs(u, "nyra.abc123.workers.dev"); }));
-  assert.ok(urls.includes("https://chat.example.com/hook"));
+  assert.ok(exactUrlInList(urls, "https://chat.example.com/hook"));
   assert.equal(urls[0], "https://nyra.abc123.workers.dev");
   assert.ok(!urls.includes("https://developers.cloudflare.com/workers/"));
 });
