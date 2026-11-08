@@ -248,24 +248,53 @@ export async function executeAgentTool(env, userId, name, rawArgs) {
 }
 
 export async function handleExplicitMemoryIntent(env, userId, text) {
-  const value = String(text || "").trim();
-  const remember = value.match(/^(?:please\s+)?(?:remember(?:\s+that)?|don'?t\s+forget\s+that|یادت\s+باشه|به\s+خاطر\s+بسپار|این(?:و| را)\s+یادت\s+بمونه)\s*[:،-]?\s*(.+)$/i);
-  if (remember && remember[1]) {
+  // Linear prefix matching — avoid large alternation regexes on unbounded chat text (ReDoS).
+  const value = String(text || "").trim().slice(0, 400);
+  if (!value) return null;
+
+  function stripPrefix(input, prefixes) {
+    const lower = input.toLowerCase();
+    for (let i = 0; i < prefixes.length; i++) {
+      const p = prefixes[i];
+      if (lower.startsWith(p)) {
+        let rest = input.slice(p.length).replace(/^[\s:،\-]+/, "").trim();
+        return rest || null;
+      }
+    }
+    // Optional leading "please "
+    if (lower.startsWith("please ")) {
+      return stripPrefix(input.slice(7).trim(), prefixes);
+    }
+    return null;
+  }
+
+  const rememberPrefixes = [
+    "remember that ", "remember ", "don't forget that ", "dont forget that ",
+    "یادت باشه ", "به خاطر بسپار ", "اینو یادت بمونه ", "این را یادت بمونه "
+  ];
+  const fact = stripPrefix(value, rememberPrefixes);
+  if (fact) {
     try {
-      const result = JSON.parse(await executeAgentTool(env, userId, "remember_fact", { fact: remember[1].slice(0, 300) }));
+      const result = JSON.parse(await executeAgentTool(env, userId, "remember_fact", { fact: fact.slice(0, 300) }));
       return result.saved ? { handled: true, text: "یادم می‌ماند: " + result.fact } : { handled: true, text: "نتوانستم این مورد را ذخیره کنم." };
     } catch (err) { return { handled: true, text: err.message === "Memory is disabled for this user" ? "حافظه خاموش است؛ آن را از تنظیمات روشن کن." : "ذخیرهٔ این مورد ناموفق بود. دوباره تلاش کن." }; }
   }
-  const forget = value.match(/^(?:please\s+)?(?:forget(?:\s+that)?|delete\s+from\s+memory|یادت\s+نباشه|فراموش\s+کن|از\s+حافظه\s+پاک\s+کن)\s*[:،-]?\s*(.+)$/i);
-  if (forget && forget[1]) {
+
+  const forgetPrefixes = [
+    "forget that ", "forget ", "delete from memory ",
+    "یادت نباشه ", "فراموش کن ", "از حافظه پاک کن "
+  ];
+  const query = stripPrefix(value, forgetPrefixes);
+  if (query) {
     try {
-      const result = JSON.parse(await executeAgentTool(env, userId, "forget_fact", { query: forget[1].slice(0, 120) }));
+      const result = JSON.parse(await executeAgentTool(env, userId, "forget_fact", { query: query.slice(0, 120) }));
       if (result.deleted) return { handled: true, text: "از حافظه پاک شد." };
       return { handled: true, text: result.matches ? "چند مورد پیدا شد. دقیقاً بگو کدام را پاک کنم." : "موردی با این مشخصات در حافظه نبود." };
-    } catch (err) { return { handled: true, text: "حذف از حافظه ناموفق بود. دوباره تلاش کن." }; }
+    } catch (err) { return { handled: true, text: "حذف از حافظه ناموفق بود." }; }
   }
   return null;
 }
+
 
 export function toolDefinitions(provider) {
   return AGENT_TOOLS.map(t => provider === "anthropic"
