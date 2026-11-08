@@ -25,11 +25,15 @@ export async function showSettingsMenu(env, chatId, messageId, userId) {
   lines.push("Active model: " + (activeConn ? escapeHtml(activeConn.label) + " (" + escapeHtml(activeConn.model) + ")" : "<i>none</i>"));
   lines.push("Memory: " + ((user && user.memory_mode) || "normal"));
   lines.push("Fallback: " + (fallbackOn ? "on" : "off"));
+  lines.push("Language: " + ((user && user.locale) || "en-US"));
   const rows = [];
   rows.push([{ text: "Choose Model", callback_data: "set:model" }]);
   rows.push([{ text: "Personalities", callback_data: "set:pers" }]);
   rows.push([{ text: "Memory", callback_data: "set:mem" }, { text: "Instructions" + (hasCI ? " ✓" : ""), callback_data: "set:ci" }]);
   rows.push([{ text: "Fallback: " + (fallbackOn ? "On" : "Off"), callback_data: "set:fallback" }]);
+  const loc = (user && user.locale) || "en-US";
+  const locLabel = loc.indexOf("fa") === 0 ? "فارسی" : "English";
+  rows.push([{ text: "Language: " + locLabel, callback_data: "set:lang:" + (loc.indexOf("fa") === 0 ? "en-US" : "fa-IR") }]);
   rows.push([{ text: "Usage", callback_data: "set:usage" }, { text: "Privacy", callback_data: "set:privacy" }]);
   if (admin) {
     rows.push([{ text: "🛠 Manage Models", callback_data: "myconn:list:set" }]);

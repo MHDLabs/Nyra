@@ -171,6 +171,13 @@ export async function handleCallbackQuery(env, ctx, query) {
     await answerCallback(env, query.id, "");
     const action = parts[1];
     if (action === "menu") { await showSettingsMenu(env, chatId, messageId, userId); return; }
+    if (action === "lang") {
+      const { setUserLocale } = await import("../db/locale.js");
+      const next = parts[2] === "fa-IR" || parts[2] === "fa" ? "fa-IR" : "en-US";
+      await setUserLocale(env, userId, next);
+      await showSettingsMenu(env, chatId, messageId, userId);
+      return;
+    }
     if (action === "model") { await showModelList(env, chatId, messageId, userId, 0); return; }
     if (action === "pers") { await showPersonalitiesForUser(env, chatId, messageId, userId); return; }
     if (action === "mem") { await showMemorySubmenu(env, chatId, messageId, userId); return; }
@@ -364,35 +371,24 @@ export async function handleCallbackQuery(env, ctx, query) {
     return;
   }
 
-    if (action === "maint") {
-      if (!isAdmin(env, userId)) { await answerCallback(env, query.id, "Access denied."); return; }
-      const { showAdminMaintenance } = await import("../commands.js");
-      if (parts[1] === "on") {
-        const { setMaintenanceMode } = await import("../db/maintenance.js");
-        await setMaintenanceMode(env, true, userId);
-        await answerCallback(env, query.id, "⚠️ Maintenance mode ENABLED");
-        await showAdminMaintenance(env, chatId, messageId);
-      } else if (parts[1] === "off") {
-        const { setMaintenanceMode } = await import("../db/maintenance.js");
-        await setMaintenanceMode(env, false, userId);
-        await answerCallback(env, query.id, "✅ Maintenance mode disabled");
-        await showAdminMaintenance(env, chatId, messageId);
-      } else {
-        await answerCallback(env, query.id, "");
-        await showAdminMaintenance(env, chatId, messageId);
-      }
-      return;
-    }
   if (namespace === "adm") {
     if (!isAdmin(env, userId)) { await answerCallback(env, query.id, "Unauthorized."); return; }
     await answerCallback(env, query.id, "");
-    const adminRateOk = await checkRateLimit(env, "admin:" + userId, RATE_LIMIT_ADMIN_PER_MIN, 60);
+    // Menu navigation is chatty; allow a higher burst than write actions.
+    const adminRateOk = await checkRateLimit(env, "admin-nav:" + userId, 60, 60);
     if (!adminRateOk) { if (messageId) await editMessage(env, chatId, messageId, "Rate limit reached."); return; }
     const section = parts[1];
     const action = parts[2];
     const target = parts[3];
     try {
-      if (section === "main") { await clearFlowState(env, userId); await showAdminMenu(env, chatId, messageId); }
+      if (section === "main" || section === "menu") { await clearFlowState(env, userId); await showAdminMenu(env, chatId, messageId); }
+      else if (section === "maint") {
+        const { showAdminMaintenance } = await import("../commands.js");
+        const { setMaintenanceMode } = await import("../db/maintenance.js");
+        if (action === "on") { await setMaintenanceMode(env, true, userId); }
+        else if (action === "off") { await setMaintenanceMode(env, false, userId); }
+        await showAdminMaintenance(env, chatId, messageId);
+      }
       else if (section === "users") { await showAdminUsers(env, chatId, messageId); }
       else if (section === "groups") { await showAdminGroups(env, chatId, messageId); }
       else if (section === "blocked") { await showAdminBlocked(env, chatId, messageId); }
