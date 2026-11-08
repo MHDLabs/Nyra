@@ -229,7 +229,10 @@ test("stripMarkdown produces readable text with no markup left", () => {
   assert.ok(out.indexOf("link") !== -1);
   assert.ok(out.indexOf("**") === -1, "no bold marker survives");
   assert.ok(out.indexOf("`") === -1, "no backtick survives");
-  assert.ok(out.indexOf("https://x.dev") === -1, "link target is dropped");
+  assert.ok(!/(?:https?:\/\/)?x\.dev\b/i.test(out), "link target is dropped");
+  assert.ok(!out.split(/\s+/).some(function (tok) {
+    try { return new URL(tok).hostname === "x.dev"; } catch (e) { return false; }
+  }), "no token parses as x.dev host");
 });
 
 test("mdv2ToPlain removes escapes so fallbacks have no visible backslashes", () => {
