@@ -14,6 +14,11 @@ import { handleAdminBroadcasts, handleCreateBroadcast, handleBroadcastAction, ha
 import { handleAdminFailedUpdates, handleReplayFailedUpdate } from "./dlq-api.js";
 import { handleUserMemory, handleSetMemoryMode, handleClearMemory, handlePersonalities, handleSetPersonality, handleCustomInstructions, handleAdminConnectionToggle } from "./preferences.js";
 import { handleI18n, handleSetLocale } from "./i18n-api.js";
+import {
+  handleAutomationsOverview, handleUpdateProactive, handleSetTimezone,
+  handleCreateSchedule, handleUpdateSchedule, handleDeleteSchedule,
+  handleReminderAction, handleSchedulePreview
+} from "./automations.js";
 import { jsonOk, jsonError } from "./respond.js";
 
 /** Read a JSON body without throwing on malformed input. */
@@ -321,6 +326,45 @@ export async function routeMiniAppAPI(env, ctx, request, pathname) {
       if (path === "/api/admin/settings" && request.method === "POST") {
         const body = await readBody(request);
         return await handleAdminUpdateSettings(env, userId, body);
+      }
+    }
+
+    // Automations: reminders overview, proactive settings, personal schedules
+    if (path === "/api/automations" && request.method === "GET") {
+      return await handleAutomationsOverview(env, userId);
+    }
+    if (path === "/api/automations/proactive" && request.method === "POST") {
+      const body = await readBody(request);
+      return await handleUpdateProactive(env, userId, body);
+    }
+    if (path === "/api/automations/timezone" && request.method === "POST") {
+      const body = await readBody(request);
+      return await handleSetTimezone(env, userId, body);
+    }
+    if (path === "/api/automations/schedules" && request.method === "POST") {
+      const body = await readBody(request);
+      return await handleCreateSchedule(env, userId, body);
+    }
+    if (path === "/api/automations/schedules/preview" && request.method === "POST") {
+      const body = await readBody(request);
+      return await handleSchedulePreview(env, userId, body);
+    }
+    if (path.indexOf("/api/automations/schedules/") === 0) {
+      const sid = path.split("/")[4] || "";
+      if (request.method === "POST" || request.method === "PATCH" || request.method === "PUT") {
+        const body = await readBody(request);
+        return await handleUpdateSchedule(env, userId, sid, body);
+      }
+      if (request.method === "DELETE") {
+        return await handleDeleteSchedule(env, userId, sid);
+      }
+    }
+    if (path.indexOf("/api/automations/reminders/") === 0) {
+      const parts = path.split("/");
+      const rid = parts[4] || "";
+      const action = parts[5] || "";
+      if (request.method === "POST" && action) {
+        return await handleReminderAction(env, userId, rid, action);
       }
     }
 

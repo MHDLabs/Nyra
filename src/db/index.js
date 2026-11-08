@@ -73,3 +73,11 @@ export {
   releaseReminderForRetry, failReminderPermanently, settleReminderDelivery,
   setUserTimezone, getUserTimezone
 } from "./reminders.js";
+
+export {
+  listSchedules, createSchedule, updateSchedule, deleteSchedule, getScheduleById,
+  countUserSchedules, claimDueSchedules, settleScheduleDelivery, releaseScheduleForRetry,
+  computeNextRunAt, parseLocalTime, defaultTemplate,
+  SCHEDULE_KINDS, GENERATION_MODES, MAX_SCHEDULES_PER_USER
+} from "./schedules.js";
+

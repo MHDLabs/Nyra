@@ -298,6 +298,17 @@ const CORE_MIGRATIONS = [
       "CREATE TABLE IF NOT EXISTS proactive_delivery_attempts (id INTEGER PRIMARY KEY AUTOINCREMENT, telegram_id INTEGER NOT NULL, episode_key TEXT NOT NULL, attempt INTEGER NOT NULL, status TEXT NOT NULL, error TEXT, created_at INTEGER NOT NULL, UNIQUE(telegram_id, episode_key, attempt))",
       "CREATE INDEX IF NOT EXISTS idx_proactive_attempts_user ON proactive_delivery_attempts(telegram_id, created_at DESC)"
     ]
+  },
+  {
+    id: 13,
+    label: "add personal message schedules",
+    statements: [
+      "CREATE TABLE IF NOT EXISTS schedules (id INTEGER PRIMARY KEY AUTOINCREMENT, telegram_id INTEGER NOT NULL, chat_id INTEGER, kind TEXT NOT NULL, title TEXT NOT NULL, message_text TEXT, generation_mode TEXT NOT NULL DEFAULT 'template', recurrence TEXT NOT NULL, local_time TEXT NOT NULL, timezone TEXT NOT NULL, days_of_week TEXT, enabled INTEGER NOT NULL DEFAULT 1, next_run_at INTEGER, last_run_at INTEGER, last_status TEXT, claim_token TEXT, claimed_at INTEGER, attempts INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
+      "CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(enabled, next_run_at, id)",
+      "CREATE INDEX IF NOT EXISTS idx_schedules_user ON schedules(telegram_id, enabled, next_run_at)",
+      "CREATE TABLE IF NOT EXISTS schedule_delivery_attempts (id INTEGER PRIMARY KEY AUTOINCREMENT, schedule_id INTEGER NOT NULL, occurrence_key TEXT NOT NULL, attempt INTEGER NOT NULL, status TEXT NOT NULL, error TEXT, created_at INTEGER NOT NULL, UNIQUE(schedule_id, occurrence_key, attempt))",
+      "CREATE INDEX IF NOT EXISTS idx_schedule_attempts ON schedule_delivery_attempts(schedule_id, created_at DESC)"
+    ]
   }
 ];
 
