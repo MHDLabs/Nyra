@@ -1,4 +1,4 @@
-// Nyra — commands: simplified /start /help /admin with onboarding.
+// Nyra — commands: /start /help /admin plus reminder surface.
 import { isAdmin, escapeHtml } from "./utils.js";
 import { sendMessage, buildInlineKeyboard, editMessage } from "./telegram.js";
 import { getUser, upsertUser } from "./db.js";
@@ -8,6 +8,16 @@ import { isMaintenanceMode } from "./db/maintenance.js";
 import { getMasterKey } from "./crypto.js";
 import { getConfiguredReactions, getAllowedReactions } from "./reactions.js";
 import { showSettingsMenu, showPersonalitiesForUser } from "./menus.js";
+import {
+  handleRemindCommand,
+  handleRemindersCommand,
+  handleReminderDetailCommand,
+  handleEditReminderCommand,
+  handleCancelReminderCommand,
+  handleDoneReminderCommand,
+  handleTimezoneCommand
+} from "./reminders/commands.js";
+import { detectLang } from "./reminders/parse.js";
 
 async function handleStartCommand(env, chatId, userId, from, isGroup) {
   if (isGroup) {
@@ -83,23 +93,56 @@ export async function handleUserCommand(env, ctx, command, args, message, from, 
     }
   }
 
-  // Only three commands supported
-  if (command === "start") {
+  // Normalize command (strip leading slash if present)
+  const cmd = String(command || "").replace(/^\//, "").toLowerCase();
+
+  if (cmd === "start") {
     await handleStartCommand(env, chatId, userId, from, isGroup);
-  } else if (command === "help") {
-    await handleHelpCommand(env, chatId, userId, isGroup);
-  } else if (command === "admin") {
-    await handleAdminCommand(env, chatId, userId, isGroup);
-  } else {
-    // Legacy command moved to Mini App
-    const user = await getUser(env, userId);
-    const locale = user?.locale || "en-US";
-    const miniappUrl = env.MINIAPP_URL || "https://nyra.example.com";
-    const keyboard = buildInlineKeyboard([[
-      { text: "Open Mini App", web_app: { url: miniappUrl } }
-    ]]);
-    await sendMessage(env, chatId, t(locale, "commands.legacy.moved"), { reply_markup: keyboard });
+    return;
   }
+  if (cmd === "help") {
+    await handleHelpCommand(env, chatId, userId, isGroup);
+    return;
+  }
+  if (cmd === "admin") {
+    await handleAdminCommand(env, chatId, userId, isGroup);
+    return;
+  }
+
+  // Reminder surface — private chats only (reminders are personal)
+  const reminderCommands = new Set([
+    "remind", "reminders", "reminder",
+    "editreminder", "cancelreminder", "donereminder",
+    "timezone", "tz"
+  ]);
+  if (reminderCommands.has(cmd)) {
+    if (isGroup) {
+      const user = await getUser(env, userId);
+      const locale = user?.locale || "en-US";
+      await sendMessage(env, chatId, t(locale, "commands.reminders.private_only") ||
+        "Reminder commands work in private chat with Nyra.");
+      return;
+    }
+    const detected = detectLang(String(args || "") + " " + (message.text || ""));
+    const userRow = await getUser(env, userId);
+    const lang = detected || ((userRow?.locale || "en").startsWith("fa") ? "fa" : "en");
+    if (cmd === "remind") return await handleRemindCommand(env, chatId, userId, args, lang);
+    if (cmd === "reminders") return await handleRemindersCommand(env, chatId, userId, args, lang);
+    if (cmd === "reminder") return await handleReminderDetailCommand(env, chatId, userId, args, lang);
+    if (cmd === "editreminder") return await handleEditReminderCommand(env, chatId, userId, args, lang);
+    if (cmd === "cancelreminder") return await handleCancelReminderCommand(env, chatId, userId, args, lang);
+    if (cmd === "donereminder") return await handleDoneReminderCommand(env, chatId, userId, args, lang);
+    if (cmd === "timezone" || cmd === "tz") return await handleTimezoneCommand(env, chatId, userId, args, lang);
+  }
+
+  // Everything else: point to Mini App
+  const user = await getUser(env, userId);
+  const locale = user?.locale || "en-US";
+  const miniappUrl = env.MINIAPP_URL || "https://nyra.example.com";
+  const keyboard = buildInlineKeyboard([[
+    { text: "Open Mini App", web_app: { url: miniappUrl } }
+  ]]);
+  await sendMessage(env, chatId, t(locale, "commands.legacy.moved"), { reply_markup: keyboard });
 }
 
 export async function showAdminMenu(env, chatId, messageId) {

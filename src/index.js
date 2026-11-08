@@ -12,6 +12,7 @@ import { routeMiniAppAPI } from "./miniapp.js";
 import { logFailedUpdate, cleanupOldFailedUpdates } from "./dlq.js";
 import { pruneOldTranscripts } from "./voice/stt.js";
 import { deliverDueReminders } from "./reminders/deliver.js";
+import { deliverProactiveCheckins } from "./proactive.js";
 import { handleWebhook, handleSetup, handleStatus, processMessage, handleCallbackQuery } from "./handlers/index.js";
 
 // A queue message's ordering group. Two updates only need to stay serialized
@@ -137,8 +138,10 @@ export default {
     // `pruneStaleTranscripts`); this is the safety net for rows whose thread was
     // never visited again.
     ctx.waitUntil(pruneOldTranscripts(env, 7 * 24 * 3600));
-    // Deliver due reminders
+    // Deliver due reminders (5-minute Cron precision — not second-level)
     ctx.waitUntil(deliverDueReminders(env, Math.floor(Date.now() / 1000)));
+    // Proactive inactivity check-ins (opt-in; one per inactivity episode)
+    ctx.waitUntil(deliverProactiveCheckins(env, Math.floor(Date.now() / 1000)));
     // Clean up old failed updates (30 day retention)
     ctx.waitUntil(cleanupOldFailedUpdates(env, 30));
   },
