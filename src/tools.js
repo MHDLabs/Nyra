@@ -1,6 +1,6 @@
 // Registered, bounded agent tools. Model arguments are parsed and validated
 // here; page content is always returned as untrusted quoted data.
-import { fetchWithTimeout, truncate, containsPhrase, now } from "./utils.js";
+import { fetchWithTimeout, truncate, containsPhrase, now, sanitizeMemoryFact } from "./utils.js";
 
 const MAX_RESULT = 7000;
 const SEARCH_TIMEOUT_MS = 8000;
@@ -159,7 +159,9 @@ async function webFetch(_env, args) {
 
 async function remember(env, userId, args) {
   const { parseMemoryData, serializeMemoryData } = await import("./memory.js");
-  const clean = bounded(args.fact, 300);
+  // Normalize early so validation, duplicate detection, storage and verification
+  // all use the same whitespace-collapsed form that serializeMemoryData applies.
+  const clean = sanitizeMemoryFact(bounded(args.fact, 300));
   if (!clean || clean.length < 2) throw new Error("Memory fact is too short");
   const row = await env.DB.prepare("SELECT memory_data, memory_mode FROM users WHERE telegram_id = ?").bind(userId).first();
   if (!row) throw new Error("User profile not found");

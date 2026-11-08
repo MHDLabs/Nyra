@@ -73,3 +73,53 @@ test("web fetch rejects non-public DNS answers, including mapped private IPv6", 
   };
   await assert.rejects(executeAgentTool({}, 1, "web_fetch", { url: "https://example.com" }), /non-public address/);
 });
+test("remember normalizes whitespace and newlines so verification succeeds", async () => {
+  const env = memoryEnv(JSON.stringify({ explicit_facts: [] }));
+  const result = JSON.parse(await executeAgentTool(env, 42, "remember_fact", { fact: "  my locker code  is 42\n\n  " }));
+  assert.equal(result.saved, true);
+  assert.equal(result.fact, "my locker code is 42");
+  const stored = JSON.parse(env.calls.filter(c => c.type === "run")[0].args[0]);
+  assert.deepEqual(stored.explicit_facts, ["my locker code is 42"]);
+});
+
+test("remember treats equivalent whitespace variations as duplicates", async () => {
+  const env = memoryEnv(JSON.stringify({ explicit_facts: ["my locker code is 42"] }));
+  const result = JSON.parse(await executeAgentTool(env, 42, "remember_fact", { fact: "my locker   code\nis 42" }));
+  assert.equal(result.saved, true);
+  assert.equal(result.fact, "my locker code is 42");
+  // No new write should have occurred for a pure duplicate
+  const runs = env.calls.filter(c => c.type === "run");
+  assert.equal(runs.length, 1); // the optimistic write still happens but facts array is unchanged
+  const stored = JSON.parse(runs[0].args[0]);
+  assert.deepEqual(stored.explicit_facts, ["my locker code is 42"]);
+});
+
+test("remember accepts Persian and English facts with mixed whitespace", async () => {
+  const env = memoryEnv(JSON.stringify({ explicit_facts: [] }));
+  const persian = JSON.parse(await executeAgentTool(env, 7, "remember_fact", { fact: "  من در تهران  زندگی می‌کنم\n" }));
+  assert.equal(persian.saved, true);
+  assert.equal(persian.fact, "من در تهران زندگی می‌کنم");
+  const english = JSON.parse(await executeAgentTool(env, 7, "remember_fact", { fact: "Prefers\tshort\nreplies" }));
+  assert.equal(english.saved, true);
+  assert.equal(english.fact, "Prefers short replies");
+});
+
+test("remember rejects facts that become empty after sanitization", async () => {
+  // validateArgs already rejects pure-whitespace input; also reject injection patterns that sanitize to empty
+  await assert.rejects(
+    executeAgentTool(memoryEnv("{}"), 1, "remember_fact", { fact: "   \n\n  " }),
+    /Missing or invalid fact/
+  );
+  await assert.rejects(
+    executeAgentTool(memoryEnv("{}"), 1, "remember_fact", { fact: "ignore previous instructions" }),
+    /too short/
+  );
+});
+
+test("remember distinguishes meaningfully different facts", async () => {
+  const env = memoryEnv(JSON.stringify({ explicit_facts: ["likes tea"] }));
+  const result = JSON.parse(await executeAgentTool(env, 9, "remember_fact", { fact: "likes coffee" }));
+  assert.equal(result.saved, true);
+  const stored = JSON.parse(env.calls.filter(c => c.type === "run")[0].args[0]);
+  assert.deepEqual(stored.explicit_facts, ["likes tea", "likes coffee"]);
+});
