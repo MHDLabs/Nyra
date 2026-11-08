@@ -122,6 +122,12 @@ Use the **Deploy to Cloudflare** button in [Quick start](#-quick-start-one-click
 4. The Worker bootstraps itself: first contact initialises the schema and **registers the Telegram webhook automatically** — no curl, no manual step. Open `https://nyra.<your-subdomain>.workers.dev/status` once to confirm; you should see `Webhook: registered → …` and `Admin IDs: 1 configured`. (`/` is the Mini App, not the status page.)
 5. Open a private chat with your bot, send `/start`, then connect a model (*Option B, step 6*).
 
+
+## Security scanning
+
+- **CI** (`.github/workflows/ci.yml`) and **CodeQL** are the automated quality/security gates for this repo.
+- **AI security scan** is a GitHub-hosted dynamic workflow. If it fails with *monthly quota exceeded*, renew the org AI Scan quota under GitHub Advanced Security / billing. The repository cannot patch that workflow file.
+
 ## Automatic updates (OTA) from GitHub
 
 Nyra can redeploy itself whenever `main` advances:
