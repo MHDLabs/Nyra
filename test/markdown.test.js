@@ -181,7 +181,23 @@ test("tables become one aligned pre block", () => {
   const out = markdownToMdv2("| a | bb |\n|---|---|\n| 111 | 2 |");
   assert.ok(out.startsWith("```\n"));
   assert.ok(out.endsWith("```"));
-  assert.ok(out.indexOf("|") !== -1, "cells stay pipe-separated inside pre");
+  assert.ok(out.indexOf("┌") !== -1 && out.indexOf("┐") !== -1, "box-drawing frame");
+  assert.ok(out.indexOf("a") !== -1 && out.indexOf("111") !== -1, "cell text preserved");
+  assertBalanced(out);
+});
+
+test("tables without outer pipes still convert", () => {
+  const out = markdownToMdv2("Name | Age\n--- | ---\nAli | 20");
+  assert.ok(out.indexOf("```") !== -1);
+  assert.ok(out.indexOf("Ali") !== -1);
+  assert.ok(out.indexOf("20") !== -1);
+  assertBalanced(out);
+});
+
+test("tables without separator row still convert when consecutive", () => {
+  const out = markdownToMdv2("| A | B |\n| 1 | 2 |\n| 3 | 4 |");
+  assert.ok(out.indexOf("┌") !== -1);
+  assert.ok(out.indexOf("1") !== -1 && out.indexOf("4") !== -1);
   assertBalanced(out);
 });
 
@@ -325,7 +341,10 @@ test("safeFormat reports chunking and never returns an over-long preview", () =>
 });
 
 test("formatTable, formatList and formatCodeBlock emit valid MarkdownV2", () => {
-  assert.equal(formatTable([["a", "b"], ["c", "d"]]), "```\na | b\nc | d\n```");
+  const table = formatTable([["a", "b"], ["c", "d"]]);
+  assert.ok(table.indexOf("```") !== -1 && table.indexOf("┌") !== -1);
+  assert.ok(table.indexOf("a") !== -1 && table.indexOf("d") !== -1);
+  assertBalanced(table);
   assert.equal(formatList(["x. y"]), "• x\\. y");
   assert.equal(formatList(["x"], true), "1\\. x");
   assert.equal(formatCodeBlock("a(b)", "js"), "```js\na(b)\n```");

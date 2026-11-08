@@ -14,22 +14,18 @@ import { markdownToMdv2, stripMarkdown, splitMarkdownV2, mdv2ToPlain, escapeNorm
 /** Length of the longest string Telegram accepts in one message. */
 export const TELEGRAM_TEXT_LIMIT = MAX_TELEGRAM_LENGTH;
 
-/** Markdown table → one aligned `pre` block (MarkdownV2 has no table entity). */
+/** Markdown table → monospace box-drawing `pre` block (Telegram has no table entity). */
 export function formatTable(rows) {
   if (!rows || rows.length === 0) return "";
-  const widths = [];
-  for (const row of rows) {
-    for (let i = 0; i < row.length; i++) widths[i] = Math.max(widths[i] || 0, String(row[i] || "").length);
-  }
-  const lines = rows.map(function (row) {
-    const cells = [];
-    for (let i = 0; i < widths.length; i++) cells.push(String(row[i] || "").padEnd(widths[i], " "));
-    return cells.join(" | ").replace(/\s+$/, "");
-  });
-  return "```\n" + escapeCode(lines.join("\n")) + "\n```";
+  // Reuse the Markdown converter so chat and programmatic tables look identical.
+  const header = "| " + rows[0].map(function (c) { return String(c || ""); }).join(" | ") + " |";
+  const sep = "| " + rows[0].map(function () { return "---"; }).join(" | ") + " |";
+  const body = rows.slice(1).map(function (row) {
+    return "| " + row.map(function (c) { return String(c || ""); }).join(" | ") + " |";
+  }).join("\n");
+  return markdownToMdv2([header, sep, body].filter(Boolean).join("\n"));
 }
 
-/** Bulleted or numbered list, converted so literal dots/dashes stay literal. */
 export function formatList(items, numbered = false) {
   if (!items || items.length === 0) return "";
   return items.map(function (item, i) {

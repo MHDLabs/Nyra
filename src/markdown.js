@@ -245,28 +245,90 @@ const RULE_RE = /^\s{0,3}(?:(?:[-*_])\s*){3,}$/;
 const QUOTE_RE = /^\s{0,3}>\s?(.*)$/;
 const BULLET_RE = /^(\s*)([-*+])\s+(.*)$/;
 const ORDERED_RE = /^(\s*)(\d{1,9})[.)]\s+(.*)$/;
-const TABLE_ROW_RE = /^\s*\|(.+)\|\s*$/;
-const TABLE_SEP_RE = /^\s*\|?[\s:|-]+\|?\s*$/;
 
 function splitTableRow(line) {
-  let body = line.trim();
+  let body = String(line || "").trim();
+  if (!body) return [];
   if (body[0] === "|") body = body.slice(1);
-  if (body[body.length - 1] === "|") body = body.slice(0, -1);
+  if (body.length && body[body.length - 1] === "|") body = body.slice(0, -1);
   return body.split("|").map(function (cell) { return cell.trim(); });
 }
 
-// Render collected table rows as one aligned `pre` block. MarkdownV2 has no
-// table entity, and letting pipe characters through escaped reads as noise.
+/** True when a line looks like a GFM table row (pipes separating >=2 cells). */
+function isTableRowLine(line) {
+  const t = String(line || "").trim();
+  if (!t || t.indexOf("|") === -1) return false;
+  if (isTableSepLine(t)) return false;
+  // Reject pure horizontal rules that only use dashes.
+  if (/^[-*_]{3,}$/.test(t)) return false;
+  const cells = splitTableRow(t);
+  return cells.length >= 2;
+}
+
+/** GFM separator row: | --- | :---: | ---: | */
+function isTableSepLine(line) {
+  const t = String(line || "").trim();
+  if (!t || t.indexOf("-") === -1) return false;
+  // Must be only pipes, colons, dashes and spaces.
+  if (!/^[\s|:-]+$/.test(t)) return false;
+  // At least one run of 3+ dashes.
+  if (!/-{3,}/.test(t)) return false;
+  // Either has a pipe, or is a dashed rule under a previous row (handled by caller).
+  return t.indexOf("|") !== -1 || /^:?-{3,}:?$/.test(t);
+}
+
+/**
+ * Render table rows as a monospace box-drawing block.
+ * Telegram has no native table entity (MarkdownV2 or HTML); a balanced `pre`
+ * block with aligned columns is the modern, reliable presentation.
+ */
 function emitTable(rows) {
-  const widths = [];
-  for (const row of rows) {
-    for (let i = 0; i < row.length; i++) widths[i] = Math.max(widths[i] || 0, row[i].length);
-  }
-  const lines = rows.map(function (row) {
-    const cells = [];
-    for (let i = 0; i < widths.length; i++) cells.push((row[i] || "").padEnd(widths[i], " "));
-    return cells.join(" | ").replace(/\s+$/, "");
+  if (!rows || rows.length === 0) return "";
+  // Normalize column count across rows.
+  let cols = 0;
+  for (const row of rows) cols = Math.max(cols, row.length);
+  if (cols === 0) return "";
+  const norm = rows.map(function (row) {
+    const r = row.slice();
+    while (r.length < cols) r.push("");
+    return r.map(function (c) { return String(c == null ? "" : c).replace(/[\r\n]+/g, " ").trim(); });
   });
+  const widths = [];
+  for (let c = 0; c < cols; c++) {
+    let w = 1;
+    for (const row of norm) w = Math.max(w, Array.from(row[c]).length);
+    // Cap extreme columns so a single long cell does not explode the message.
+    widths[c] = Math.min(w, 28);
+  }
+  function padCell(text, width) {
+    const chars = Array.from(text);
+    if (chars.length > width) return chars.slice(0, Math.max(0, width - 1)).join("") + "…";
+    let s = text;
+    while (Array.from(s).length < width) s += " ";
+    return s;
+  }
+  function hLine(left, mid, right, fill) {
+    let s = left;
+    for (let c = 0; c < cols; c++) {
+      s += fill.repeat(widths[c] + 2);
+      s += c === cols - 1 ? right : mid;
+    }
+    return s;
+  }
+  function dataLine(row) {
+    let s = "│";
+    for (let c = 0; c < cols; c++) {
+      s += " " + padCell(row[c], widths[c]) + " │";
+    }
+    return s;
+  }
+  const lines = [];
+  lines.push(hLine("┌", "┬", "┐", "─"));
+  for (let r = 0; r < norm.length; r++) {
+    lines.push(dataLine(norm[r]));
+    if (r === 0 && norm.length > 1) lines.push(hLine("├", "┼", "┤", "─"));
+  }
+  lines.push(hLine("└", "┴", "┘", "─"));
   return "```\n" + escapeCode(lines.join("\n")) + "\n```";
 }
 
@@ -305,16 +367,23 @@ export function markdownToMdv2(value) {
       continue;
     }
 
-    // Table: a pipe row followed by a separator row.
-    if (TABLE_ROW_RE.test(line) && i + 1 < lines.length && TABLE_SEP_RE.test(lines[i + 1])) {
-      const rows = [splitTableRow(line)];
-      i += 2;
-      while (i < lines.length && TABLE_ROW_RE.test(lines[i])) {
-        rows.push(splitTableRow(lines[i]));
-        i++;
+    // Table: GFM header + separator, or 2+ consecutive pipe rows (models often
+    // omit the separator). Renders as one atomic monospace block.
+    if (isTableRowLine(line)) {
+      const next = i + 1 < lines.length ? lines[i + 1] : "";
+      const hasSep = isTableSepLine(next);
+      const nextIsRow = isTableRowLine(next);
+      if (hasSep || nextIsRow) {
+        const rows = [splitTableRow(line)];
+        i += 1;
+        if (hasSep) i += 1; // skip separator
+        while (i < lines.length && isTableRowLine(lines[i])) {
+          rows.push(splitTableRow(lines[i]));
+          i++;
+        }
+        out.push(emitTable(rows));
+        continue;
       }
-      out.push(emitTable(rows));
-      continue;
     }
 
     if (RULE_RE.test(line) && line.trim() !== "") { out.push("\\—\\—\\—"); i++; continue; }
