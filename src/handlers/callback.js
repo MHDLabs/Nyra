@@ -12,6 +12,7 @@ import { startAddConnectionFlow, startEditConnectionFlow, flowPromptLabel, flowP
 import { showAdminMenu, showAdminUsers, showAdminGroups, showAdminBlocked, showAdminStats, showAdminStatus, showAdminReactions } from "../commands.js";
 import { setConfiguredReactions, clearConfiguredReactions } from "../reactions.js";
 import { handleOnboardingCallback } from "./onboarding.js";
+import { handleReminderCallback } from "../reminders/commands.js";
 
 export async function handleCallbackQuery(env, ctx, query) {
   const data = query.data || "";
@@ -435,6 +436,14 @@ export async function handleCallbackQuery(env, ctx, query) {
       if (messageId) await editMessage(env, chatId, messageId, "Action failed.");
     }
     return;
+  }
+
+  // Reminder callbacks: time pickers, timezone, cancel/done/detail actions.
+  // handleReminderCallback answers the callback itself and returns true when
+  // the namespace was claimed, so we must not fall through to the generic ack.
+  if (namespace === "rmd") {
+    const handled = await handleReminderCallback(env, query, parts);
+    if (handled) return;
   }
 
   await answerCallback(env, query.id, "");

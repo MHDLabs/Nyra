@@ -25,7 +25,7 @@ export {
 } from "./identity.js";
 
 export {
-  getUser, getUserStrict, upsertUser, getChat, recordGroupChatAndCheckAccess, isUserBlocked,
+  getUser, getUserStrict, upsertUser, touchLastInbound, getChat, recordGroupChatAndCheckAccess, isUserBlocked,
   saveThreadMessage, getThreadContext, isGroupTrigger, determineThreadId,
   getFlowState, setFlowState, clearFlowState
 } from "./users.js";

@@ -13,6 +13,8 @@ import { parseCommand } from "./command-parse.js";
 import { handleOnboardingMessage, getOnboardingState } from "./onboarding.js";
 import { isMaintenanceMode } from "../db/maintenance.js";
 import { t } from "../i18n/index.js";
+import { handleReminderClarification } from "../reminders/commands.js";
+import { touchLastInbound } from "../db/users.js";
 
 export async function processMessage(env, ctx, message) {
   const from = message.from;
@@ -27,6 +29,12 @@ export async function processMessage(env, ctx, message) {
   }
 
   if (await isUserBlocked(env, from.id)) return;
+
+  // Private inbound activity advances the proactive inactivity clock.
+  // Group traffic, bot messages, and blocked users never reset it.
+  if (!isGroup) {
+    ctx.waitUntil(touchLastInbound(env, from.id).catch(function () {}));
+  }
 
   if (!isGroup) {
     // Check onboarding state first (takes priority over flows)
@@ -82,6 +90,10 @@ export async function processMessage(env, ctx, message) {
           await clearFlowState(env, from.id);
           await sendMessage(env, chat.id, "✅ Chat " + chatIdNum + " added and enabled.\nTitle: " + escapeHtml(chatInfo.result.title || "(no title)"), { parse_mode: "HTML" });
         } catch (err) { console.error("admin_group_add failed:", err.message); await sendMessage(env, chat.id, "Failed to add chat."); }
+        return;
+      } else if (flowState.flowType === "reminder_clarify") {
+        // Time/timezone clarification replies for /remind — must not fall into AI.
+        await handleReminderClarification(env, message, from, chat, flowState);
         return;
       } else if (flowState.flowType === "custom_instructions" || flowState.flowType === "personality_edit") {
         await handleFlowMessage(env, ctx, message, from, chat, flowState);

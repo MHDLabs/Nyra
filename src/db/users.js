@@ -41,6 +41,25 @@ export async function upsertUser(env, from) {
   return await getUser(env, from.id);
 }
 
+/**
+ * Record a genuine private inbound user interaction for proactive inactivity
+ * tracking. Unlike last_seen_at this is not throttled — every eligible message
+ * advances the inactivity clock. Outgoing bot messages must never call this.
+ */
+export async function touchLastInbound(env, userId) {
+  if (!userId) return;
+  const ts = now();
+  try {
+    // Clear the episode key so a new inactivity period can begin after the
+    // user talks again. A previous check-in must not block a future episode.
+    await env.DB.prepare(
+      "UPDATE users SET last_inbound_at = ?, proactive_episode_key = NULL, updated_at = ? WHERE telegram_id = ?"
+    ).bind(ts, ts, userId).run();
+  } catch (err) {
+    console.error("touchLastInbound failed:", err.message);
+  }
+}
+
 export async function getChat(env, chatId) {
   try { return await env.DB.prepare("SELECT * FROM chats WHERE chat_id = ?").bind(chatId).first(); }
   catch (err) { return null; }

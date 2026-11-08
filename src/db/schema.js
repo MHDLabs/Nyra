@@ -101,6 +101,15 @@ export async function ensureSchema(env) {
     // Selected routing profile (routing profiles are defined by the routing
     // layer; this column only stores the user's choice).
     ["users", "active_profile_id", "TEXT"],
+    // Reliable inbound activity (not throttled) and proactive check-in settings.
+    // Proactive is opt-in; all defaults keep the feature off until the user enables it.
+    ["users", "last_inbound_at", "INTEGER"],
+    ["users", "proactive_enabled", "INTEGER NOT NULL DEFAULT 0"],
+    ["users", "proactive_threshold_hours", "INTEGER NOT NULL DEFAULT 24"],
+    ["users", "proactive_quiet_start", "INTEGER"],
+    ["users", "proactive_quiet_end", "INTEGER"],
+    ["users", "proactive_last_sent_at", "INTEGER"],
+    ["users", "proactive_episode_key", "TEXT"],
     // Admin-disabled groups are distinguished from groups that were merely
     // never enabled (the old default). Migration 10 enables the latter only.
     ["chats", "disabled_by_admin", "INTEGER DEFAULT 0"]
@@ -269,6 +278,25 @@ const CORE_MIGRATIONS = [
     label: "mark pre-existing users as onboarding-complete",
     statements: [
       "UPDATE users SET onboarding_completed = 1, onboarding_state = NULL, updated_at = CAST(strftime('%s','now') AS INTEGER) WHERE COALESCE(onboarding_completed, 0) = 0"
+    ]
+  },
+  {
+    // Reliable inbound activity + proactive check-in settings.
+    // last_inbound_at is updated on every qualifying private user message
+    // (not throttled like last_seen_at). Proactive is opt-in and off by default.
+    id: 12,
+    label: "add last_inbound_at and proactive check-in settings",
+    statements: [
+      "ALTER TABLE users ADD COLUMN last_inbound_at INTEGER",
+      "ALTER TABLE users ADD COLUMN proactive_enabled INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE users ADD COLUMN proactive_threshold_hours INTEGER NOT NULL DEFAULT 24",
+      "ALTER TABLE users ADD COLUMN proactive_quiet_start INTEGER",
+      "ALTER TABLE users ADD COLUMN proactive_quiet_end INTEGER",
+      "ALTER TABLE users ADD COLUMN proactive_last_sent_at INTEGER",
+      "ALTER TABLE users ADD COLUMN proactive_episode_key TEXT",
+      "CREATE INDEX IF NOT EXISTS idx_users_proactive_due ON users(proactive_enabled, last_inbound_at, proactive_last_sent_at)",
+      "CREATE TABLE IF NOT EXISTS proactive_delivery_attempts (id INTEGER PRIMARY KEY AUTOINCREMENT, telegram_id INTEGER NOT NULL, episode_key TEXT NOT NULL, attempt INTEGER NOT NULL, status TEXT NOT NULL, error TEXT, created_at INTEGER NOT NULL, UNIQUE(telegram_id, episode_key, attempt))",
+      "CREATE INDEX IF NOT EXISTS idx_proactive_attempts_user ON proactive_delivery_attempts(telegram_id, created_at DESC)"
     ]
   }
 ];
