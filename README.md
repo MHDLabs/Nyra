@@ -84,6 +84,10 @@ src/
 └── miniapp.js      → re-exports miniapp/
 
 public/             the Mini App itself (served directly by Cloudflare, no build)
+
+> Mini App glass styling is an original adaptation of the visual language from
+> [`@onlymoein/liquidglass`](https://github.com/onlymoein/liquidglass) (MIT).
+> Nyra does not bundle the React package; tokens and surface treatment are ported to vanilla CSS.
 scripts/            postdeploy probe + the mechanical module splitter
   postdeploy.mjs    post-deploy status probe
   split-module.mjs  the refactoring tool that produced the directories above
