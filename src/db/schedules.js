@@ -68,39 +68,70 @@ export function computeNextRunAt(localTime, timezone, daysOfWeek, fromSec) {
     ? new Set(daysOfWeek.map(Number).filter(function (d) { return d >= 0 && d <= 6; }))
     : null;
 
-  for (let dayOffset = 0; dayOffset < 14; dayOffset++) {
-    const probe = new Date((from + dayOffset * 86400) * 1000);
-    // Build candidate local date parts in the target zone.
-    const fmt = new Intl.DateTimeFormat("en-US", {
-      timeZone: timezone,
-      year: "numeric", month: "2-digit", day: "2-digit",
-      hour: "2-digit", minute: "2-digit", second: "2-digit",
-      hour12: false, weekday: "short"
-    });
-    // Walk minute-by-minute near the target local time is expensive; instead
-    // construct a UTC guess from the zoned parts of `probe` and adjust.
-    const parts = {};
-    fmt.formatToParts(probe).forEach(function (p) { parts[p.type] = p.value; });
-    const y = parseInt(parts.year, 10);
-    const mo = parseInt(parts.month, 10);
-    const d = parseInt(parts.day, 10);
-    const weekdayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-    const dow = weekdayMap[parts.weekday];
-    if (daySet && !daySet.has(dow)) continue;
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hour12: false, weekday: "short"
+  });
+  const weekdayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 
-    // Approximate: treat local wall time as if UTC then shift by zone offset.
-    const asUtc = Date.UTC(y, mo - 1, d, parsed.hour, parsed.minute, 0) / 1000;
-    // Measure offset of this zone at that civil date.
-    const again = new Date(asUtc * 1000);
-    const parts2 = {};
-    fmt.formatToParts(again).forEach(function (p) { parts2[p.type] = p.value; });
-    const localAsUtc = Date.UTC(
-      parseInt(parts2.year, 10), parseInt(parts2.month, 10) - 1, parseInt(parts2.day, 10),
-      parseInt(parts2.hour, 10) % 24, parseInt(parts2.minute, 10), 0
-    ) / 1000;
-    const offset = localAsUtc - asUtc;
-    const candidate = asUtc - offset;
-    if (candidate >= from) return Math.floor(candidate);
+  function partsAt(sec) {
+    const parts = {};
+    dtf.formatToParts(new Date(sec * 1000)).forEach(function (p) { parts[p.type] = p.value; });
+    return {
+      year: parseInt(parts.year, 10),
+      month: parseInt(parts.month, 10),
+      day: parseInt(parts.day, 10),
+      hour: parseInt(parts.hour, 10) % 24,
+      minute: parseInt(parts.minute, 10),
+      second: parseInt(parts.second, 10),
+      dow: weekdayMap[parts.weekday]
+    };
+  }
+
+  // Find UTC seconds whose zoned wall clock equals target H:M on the same civil day as probeSec's date.
+  function utcForLocalOnDay(probeSec) {
+    const p0 = partsAt(probeSec);
+    // Search a 50h window centered near probe to cover offset extremes.
+    let lo = probeSec - 36 * 3600;
+    let hi = probeSec + 36 * 3600;
+    let found = null;
+    // Binary search for the first second where local H:M >= target on that civil date.
+    while (lo <= hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      const p = partsAt(mid);
+      const sameDay = p.year === p0.year && p.month === p0.month && p.day === p0.day;
+      const mins = p.hour * 60 + p.minute;
+      const targetMins = parsed.hour * 60 + parsed.minute;
+      if (!sameDay) {
+        if (p.year < p0.year || (p.year === p0.year && (p.month < p0.month || (p.month === p0.month && p.day < p0.day)))) lo = mid + 1;
+        else hi = mid - 1;
+        continue;
+      }
+      if (mins > targetMins || (mins === targetMins && p.second > 0)) { hi = mid - 1; }
+      else if (mins < targetMins) { lo = mid + 1; }
+      else {
+        found = mid - p.second; // snap to :00
+        hi = mid - 1; // look for earlier second in ambiguous overlap
+      }
+    }
+    if (found == null) return null;
+    // Verify wall clock matches (non-existent local times yield null).
+    const v = partsAt(found);
+    if (v.year !== p0.year || v.month !== p0.month || v.day !== p0.day) return null;
+    if (v.hour !== parsed.hour || v.minute !== parsed.minute) return null;
+    return found;
+  }
+
+  for (let dayOffset = 0; dayOffset < 21; dayOffset++) {
+    const probe = from + dayOffset * 86400;
+    const p = partsAt(probe);
+    if (daySet && !daySet.has(p.dow)) continue;
+    // Noon UTC-ish probe on that local day for stability
+    const noonGuess = probe - ((p.hour * 60 + p.minute) * 60) + 12 * 3600;
+    const candidate = utcForLocalOnDay(noonGuess);
+    if (candidate != null && candidate >= from) return candidate;
   }
   return null;
 }
