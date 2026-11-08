@@ -36,7 +36,7 @@ function miniAppKeyboard(env, locale) {
   return buildInlineKeyboard([[{ text: t(locale, "commands.miniapp.open") || "Open Mini App", web_app: { url: origin + "/" } }]]);
 }
 
-async function handleStartCommand(env, chatId, userId, from, isGroup) {
+async function handleStartCommand(env, chatId, userId, from, isGroup, startPayload) {
   if (isGroup) {
     const user = await getUser(env, userId);
     const locale = user?.locale || "en-US";
@@ -62,6 +62,14 @@ async function handleStartCommand(env, chatId, userId, from, isGroup) {
         : ("Active model: <b>" + escapeHtml(resolved.connection.label) + "</b>"));
     }
   } catch (err) {}
+
+  // Deep-link payload from /start <payload> (referral, campaign, etc.)
+  const payload = String(startPayload || "").trim().slice(0, 64);
+  if (payload) {
+    msg += "\n\n" + (locale.startsWith("fa")
+      ? ("<i>لینک: </i><code>" + escapeHtml(payload) + "</code>")
+      : ("<i>Link: </i><code>" + escapeHtml(payload) + "</code>"));
+  }
 
   const keyboard = buildInlineKeyboard([
     [{ text: locale.startsWith("fa") ? "⚙️ تنظیمات" : "⚙️ Settings", callback_data: "set:menu" }],
@@ -312,7 +320,7 @@ export async function handleUserCommand(env, ctx, command, args, message, from, 
   }
 
   if (cmd === "start") {
-    await handleStartCommand(env, chatId, userId, from, isGroup);
+    await handleStartCommand(env, chatId, userId, from, isGroup, args);
     return;
   }
   if (cmd === "help") {

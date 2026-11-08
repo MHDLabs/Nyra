@@ -143,8 +143,13 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
     streamOptions.stallTimeoutMs = FAST_STALL_TIMEOUT_MS;
   }
   const replyToId = isGroup ? message.message_id : undefined;
+  // Forum topics: keep replies inside the same topic when Telegram provides one.
+  const topicId = message.message_thread_id != null ? message.message_thread_id : undefined;
 
-  const placeholderResult = await sendMessageSafeResult(env, chatId, STREAM_PLACEHOLDER, { reply_to_message_id: replyToId });
+  const placeholderResult = await sendMessageSafeResult(env, chatId, STREAM_PLACEHOLDER, {
+    reply_to_message_id: replyToId,
+    message_thread_id: topicId
+  });
   if (!placeholderResult || !placeholderResult.ok || !placeholderResult.result || typeof placeholderResult.result.message_id !== "number") {
     // No placeholder means the whole edit-in-place strategy is unavailable, but
     // the turn must still terminate with something the user can see. The
@@ -292,6 +297,7 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
       const opts = {};
       if (first.parseMode) opts.parse_mode = first.parseMode;
       if (replyToId) opts.reply_to_message_id = replyToId;
+      if (topicId != null) opts.message_thread_id = topicId;
       const sentFirst = await sendMessageReturn(env, chatId, first.text, opts);
       if (sentFirst && sentFirst.ok && sentFirst.result && typeof sentFirst.result.message_id === "number") {
         finalMsgId = sentFirst.result.message_id;
@@ -300,6 +306,7 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
     for (let i = 1; i < chunks.length; i++) {
       const opts = {};
       if (chunks[i].parseMode) opts.parse_mode = chunks[i].parseMode;
+      if (topicId != null) opts.message_thread_id = topicId;
       await sendMessageReturn(env, chatId, chunks[i].text, opts);
     }
     await saveThreadMessage(env, chatId, threadId, finalMsgId, null, "assistant", replyText);
@@ -316,6 +323,7 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
         for (let i = 0; i < plain.length; i++) {
           const opts = {};
           if (i === 0 && replyToId) opts.reply_to_message_id = replyToId;
+          if (topicId != null) opts.message_thread_id = topicId;
           const sentNew = await sendMessageReturn(env, chatId, plain[i].text, opts);
           if (i === 0 && sentNew && sentNew.ok && sentNew.result && typeof sentNew.result.message_id === "number") {
             finalMsgId = sentNew.result.message_id;

@@ -299,11 +299,14 @@ export async function sendMessageReturn(env, chatId, text, options) {
     if (opts.parse_mode) payload.parse_mode = opts.parse_mode;
     if (opts.reply_markup && i === chunks.length - 1) payload.reply_markup = opts.reply_markup;
     if (opts.reply_to_message_id && i === 0) payload.reply_to_message_id = opts.reply_to_message_id;
+    // Forum topics / threads (supergroups with topics enabled)
+    if (opts.message_thread_id != null && i === 0) payload.message_thread_id = opts.message_thread_id;
     let result = await tg(env, "sendMessage", payload);
     if (isParseError(result) && payload.parse_mode) {
       // A refused entity must not cost the user the message. Drop the markup and
       // strip the escape backslashes so the text arrives readable rather than
-      // with visible "\." sequences.
+      // with visible "\." sequences. Prefer HTML outbound; MarkdownV2 is stripped
+      // to plain text here as a last-resort fallback.
       payload.text = isMarkdownV2(payload.parse_mode) ? mdv2ToPlain(payload.text) : payload.text;
       if (payload.text.length > MAX_TELEGRAM_LENGTH) payload.text = payload.text.slice(0, MAX_TELEGRAM_LENGTH);
       delete payload.parse_mode;
@@ -367,16 +370,31 @@ export async function sendMessageSafeResult(env, chatId, text, options) {
   return await sendMessageReturn(env, chatId, text, retryOpts);
 }
 
-export async function answerCallback(env, callbackId, text) {
-  try { await tg(env, "answerCallbackQuery", { callback_query_id: callbackId, text: text || "" }); }
+/**
+ * Answer a callback query (clear the spinner on the inline button).
+ * @param {object} env
+ * @param {string} callbackId
+ * @param {string} [text] Optional toast text (max 200 chars)
+ * @param {{ show_alert?: boolean, cache_time?: number, url?: string }} [options]
+ */
+export async function answerCallback(env, callbackId, text, options) {
+  const opts = options || {};
+  const payload = { callback_query_id: callbackId };
+  if (text) payload.text = String(text).slice(0, 200);
+  if (opts.show_alert) payload.show_alert = true;
+  if (opts.cache_time != null) payload.cache_time = opts.cache_time;
+  if (opts.url) payload.url = opts.url;
+  try { await tg(env, "answerCallbackQuery", payload); }
   catch (err) { console.error("answerCallback failed:", err.message); }
 }
 
-export async function editMessage(env, chatId, messageId, text, replyMarkup, parseMode) {
+export async function editMessage(env, chatId, messageId, text, replyMarkup, parseMode, options) {
+  const extra = options || {};
   if (!messageId) {
     const opts = {};
     if (replyMarkup) opts.reply_markup = replyMarkup;
     if (parseMode) opts.parse_mode = parseMode;
+    if (extra.message_thread_id != null) opts.message_thread_id = extra.message_thread_id;
     return await sendMessageReturn(env, chatId, text, opts);
   }
   const payload = {

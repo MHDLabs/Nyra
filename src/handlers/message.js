@@ -20,7 +20,9 @@ export async function processMessage(env, ctx, message) {
   const from = message.from;
   const chat = message.chat;
   if (!from || from.is_bot) return;
-  const text = (message.text || "").trim();
+  // Prefer text; fall back to caption so commands on media captions work
+  // (Telegram delivers /cmd in caption + caption_entities for photos/docs).
+  const text = (message.text || message.caption || "").trim();
   const isGroup = chat.type === "group" || chat.type === "supergroup";
 
   if (isGroup) {
@@ -133,7 +135,8 @@ export async function processMessage(env, ctx, message) {
 
   if (text.startsWith("/")) {
     const identity = await getBotIdentity(env);
-    const parsed = parseCommand(text, identity);
+    // Pass the full message so bot_command entities (and caption_entities) are used.
+    const parsed = parseCommand(message, identity);
     if (!parsed) return;
     await handleUserCommand(env, ctx, parsed.command, parsed.args, message, from, chat);
     return;
