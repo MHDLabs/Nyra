@@ -50,13 +50,22 @@ export async function touchLastInbound(env, userId) {
   if (!userId) return;
   const ts = now();
   try {
-    // Clear the episode key so a new inactivity period can begin after the
-    // user talks again. A previous check-in must not block a future episode.
+    // Ensure a users row exists (brand-new chats may not have been upserted yet).
+    // Clear the episode key so a new inactivity period can begin after the user talks again.
     await env.DB.prepare(
-      "UPDATE users SET last_inbound_at = ?, proactive_episode_key = NULL, updated_at = ? WHERE telegram_id = ?"
-    ).bind(ts, ts, userId).run();
+      "INSERT INTO users (telegram_id, first_name, last_name, username, language_code, personality_id, memory_mode, memory_data, usage_stats, fallback_enabled, msg_counter, active_connection_id, created_at, last_seen_at, updated_at, last_inbound_at) " +
+      "VALUES (?, '', '', '', '', 'default', 'normal', '{}', '{}', 1, 0, NULL, ?, ?, ?, ?) " +
+      "ON CONFLICT(telegram_id) DO UPDATE SET last_inbound_at = excluded.last_inbound_at, proactive_episode_key = NULL, updated_at = excluded.updated_at"
+    ).bind(userId, ts, ts, ts, ts).run();
   } catch (err) {
-    console.error("touchLastInbound failed:", err.message);
+    // Fallback for schemas missing last_inbound_at during rolling migrate.
+    try {
+      await env.DB.prepare(
+        "UPDATE users SET last_inbound_at = ?, proactive_episode_key = NULL, updated_at = ? WHERE telegram_id = ?"
+      ).bind(ts, ts, userId).run();
+    } catch (err2) {
+      console.error("touchLastInbound failed:", err2.message);
+    }
   }
 }
 
