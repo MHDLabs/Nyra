@@ -28,6 +28,70 @@ export function buildStyleRulesPrompt(locale) {
   return normalizeLocale(locale) === "fa-IR" ? PERSIAN_STYLE_RULES_PROMPT : "";
 }
 
+
+/**
+ * Exact wall-clock context for every model turn. Prefer the user's IANA
+ * timezone when known so "today / tomorrow / this evening" match their life.
+ */
+export function buildClockPrompt(user) {
+  const tz = (user && typeof user.timezone === "string" && user.timezone.trim()) ? user.timezone.trim() : "UTC";
+  const nowDate = new Date();
+  let formatted;
+  try {
+    formatted = new Intl.DateTimeFormat("en-GB", {
+      timeZone: tz,
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+      timeZoneName: "short"
+    }).format(nowDate);
+  } catch (err) {
+    formatted = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "UTC",
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+      timeZoneName: "short"
+    }).format(nowDate);
+  }
+  const iso = nowDate.toISOString();
+  return (
+    "Current date and time: " + formatted + " (timezone: " + tz + ", UTC: " + iso + ").\n" +
+    "Always use this clock for relative time (today, tomorrow, this week), deadlines, schedules, and any time-sensitive answer. " +
+    "Do not invent a different date or claim you cannot know the current time."
+  );
+}
+
+function formatHistoryTimestamp(createdAt, timezone) {
+  if (createdAt == null) return "";
+  const sec = typeof createdAt === "number" ? createdAt : parseInt(createdAt, 10);
+  if (!Number.isFinite(sec) || sec <= 0) return "";
+  const d = new Date(sec * 1000);
+  const tz = timezone || "UTC";
+  try {
+    return new Intl.DateTimeFormat("en-GB", {
+      timeZone: tz,
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    }).format(d);
+  } catch (err) {
+    return d.toISOString().slice(0, 16).replace("T", " ");
+  }
+}
+
 export function parseMemoryData(raw) {
   if (!raw) return {};
   try {
@@ -107,6 +171,7 @@ export function formatMemoryForUser(raw, mode, locale) {
 
 function buildSystemPrompt(personality, user, chat, mode) {
   const parts = [];
+  parts.push(buildClockPrompt(user));
   parts.push("You are Nyra, a personal AI assistant. You are conversational, natural, and helpful. You remember useful information about the user and adapt to their preferences. You are not a generic AI, bot, or provider-specific assistant. Your name is Nyra.\n\n"
     + "Your capabilities, stated accurately:\n"
     + "- You run as a Telegram bot. You receive messages from users and reply in the same chat, in private chats and in groups.\n"
@@ -162,15 +227,19 @@ export function buildContextMessages(personality, user, chat, recentContext, cur
   const systemPrompt = buildSystemPrompt(personality, user, chat, mode);
   const messages = [{ role: "system", content: systemPrompt }];
   const labelSpeakers = !!(user && user.is_group);
+  const tz = (user && user.timezone) || "UTC";
+  // Always include the rolling private/group history (up to MAX_CONTEXT_MESSAGES).
   for (let i = 0; i < recentContext.length; i++) {
     const item = recentContext[i];
     let content = item.content;
+    const stamp = formatHistoryTimestamp(item.created_at, tz);
     // In groups, prefix each user turn with the speaker's name so the model can
     // tell participants apart instead of merging everyone into one "user".
     if (labelSpeakers && item.role === "user" && item.user_id !== undefined && item.user_id !== null) {
       const speaker = item.user_name || String(item.user_id);
       content = "[" + speaker + "]: " + content;
     }
+    if (stamp) content = "[" + stamp + "] " + content;
     if (item.role === "user" || item.role === "assistant") messages.push({ role: item.role, content: content });
   }
   // `currentText` is either a plain string (back-compatible) or { text, images }
@@ -262,7 +331,7 @@ export async function consolidateMemory(env, user, recentContext, exchange) {
   const mode = user.memory_mode || "normal";
   const modeInstructions = mode === "minimal"
     ? "Only update preferred_name and explicit_facts. Do not add interests, tools, projects, or communication_style. Keep it minimal."
-    : "Update preferred_name, communication_style, interests (max 8), tools (max 8), projects (max 3), and explicit_facts (max 12). Remove outdated, trivial, or duplicate information.";
+    : "Prioritize durable personal details: preferred_name, interests (max 10 — hobbies, topics they care about), tools (max 8), projects (max 4), communication_style, and explicit_facts (max 14 — important life facts, preferences, commitments). Prefer specific lasting facts over one-off chit-chat. Remove outdated, trivial, or duplicate information.";
   const groupRule = isGroup
     ? "\nThis is a GROUP chat with multiple people. Lines marked CURRENT_USER are the person this memory describes; lines marked OTHER(...) are different people. Store facts ONLY about CURRENT_USER. Never store facts said by OTHER participants, and never merge two people's details."
     : "";

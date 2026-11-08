@@ -11,7 +11,8 @@ export const MAX_TELEGRAM_LENGTH = 4096;
 // messages (≈10 exchanges) gives the reply enough short-term memory without
 // crowding out the system prompt, personality and long-term memory blocks.
 export const MAX_CONTEXT_MESSAGES = 20;
-export const MEMORY_UPDATE_INTERVAL = 10;
+// Consolidate long-term memory (interests, facts, projects) every N user messages.
+export const MEMORY_UPDATE_INTERVAL = 20;
 export const MEMORY_MAX_CHARS = 2500;
 export const CONTEXT_TTL = 7200;
 export const RATE_LIMIT_USER_PER_MIN = 10;
