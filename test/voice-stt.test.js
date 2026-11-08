@@ -179,7 +179,7 @@ test("transcribes once and serves the cached transcript afterwards", async () =>
     if (u.indexOf("api.telegram.org/file/") !== -1) {
       return { ok: true, arrayBuffer: async () => new ArrayBuffer(16) };
     }
-    if (u.indexOf("api.groq.com") !== -1) {
+    if (hostIs(u, "api.groq.com")) {
       groqCalls++;
       return { ok: true, status: 200, text: async () => JSON.stringify({ text: "سلام دنیا" }) };
     }
