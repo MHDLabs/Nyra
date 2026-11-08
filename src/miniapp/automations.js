@@ -102,6 +102,10 @@ export async function handleCreateSchedule(env, userId, body) {
     days = body.days_of_week.map(Number).filter(function (d) { return Number.isInteger(d) && d >= 0 && d <= 6; });
     if (!days.length) days = null;
   }
+  if (kind === "weekly" && !days) {
+    // Default weekly to Monday rather than silently becoming daily.
+    days = [1];
+  }
   const count = await countUserSchedules(env, userId);
   if (count >= MAX_SCHEDULES_PER_USER) return jsonError(400, "Schedule limit reached");
 

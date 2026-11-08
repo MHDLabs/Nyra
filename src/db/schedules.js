@@ -142,8 +142,13 @@ export async function getScheduleById(env, id, telegramId) {
 
 export async function createSchedule(env, data) {
   const ts = now();
-  const next = computeNextRunAt(data.local_time, data.timezone, data.days_of_week, ts);
+  let days = data.days_of_week;
+  if (data.kind === "weekly" && (!Array.isArray(days) || !days.length)) {
+    days = [1]; // Monday — never treat weekly as unconstrained daily
+  }
+  const next = computeNextRunAt(data.local_time, data.timezone, days, ts);
   if (!next) return { ok: false, reason: "bad_schedule" };
+  data = Object.assign({}, data, { days_of_week: days });
   const days = Array.isArray(data.days_of_week) && data.days_of_week.length
     ? data.days_of_week.join(",")
     : null;
