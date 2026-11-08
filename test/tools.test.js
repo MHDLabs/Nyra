@@ -20,7 +20,7 @@ test("tool definitions preserve OpenAI and Anthropic native formats", () => {
 test("registered tools reject unknown names and malformed/unexpected args", async () => {
   await assert.rejects(executeAgentTool({}, 1, "shell", {}), /not permitted/);
   await assert.rejects(executeAgentTool({}, 1, "web_search", { query: "news", extra: true }), /Unexpected argument/);
-  await assert.rejects(executeAgentTool({}, 1, "web_search", { query: "news" }), /TAVILY_API_KEY/);
+  await assert.rejects(executeAgentTool({}, 1, "web_search", { query: "   " }), /Missing or invalid query|empty/i);
 });
 
 test("remember writes one user's persistent memory and checks D1 success", async () => {

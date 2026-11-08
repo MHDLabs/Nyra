@@ -1,9 +1,9 @@
 // Registered, bounded agent tools. Model arguments are parsed and validated
 // here; page content is always returned as untrusted quoted data.
 import { fetchWithTimeout, truncate, containsPhrase, now, sanitizeMemoryFact } from "./utils.js";
+import { searchWeb, isWebSearchAvailable } from "./websearch.js";
 
 const MAX_RESULT = 7000;
-const SEARCH_TIMEOUT_MS = 8000;
 const FETCH_TIMEOUT_MS = 9000;
 
 function bounded(value, max) {
@@ -77,29 +77,16 @@ async function validatePublicUrl(raw) {
   return url;
 }
 
-async function webSearch(env, args) {
-  const query = bounded(args.query, 300);
-  if (!query) throw new Error("Search query is empty");
-  const key = String(env.TAVILY_API_KEY || "").trim();
-  if (!key) throw new Error("Live web search is not configured (TAVILY_API_KEY is missing)");
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);
-  let response;
-  try {
-    response = await fetch("https://api.tavily.com/search", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ api_key: key, query, max_results: 5, search_depth: "basic", include_answer: false }),
-      redirect: "error", cache: "no-store", signal: controller.signal
-    });
-    if (!response.ok) throw new Error(response.status === 429 ? "Search provider rate limit reached" : "Search provider returned HTTP " + response.status);
-    const raw = await response.text();
-    if (raw.length > 100000) throw new Error("Search provider response is too large");
-    const data = JSON.parse(raw);
-    const results = (Array.isArray(data.results) ? data.results : []).slice(0, 5).map(r => ({
-      title: bounded(r.title, 200), url: bounded(r.url, 1000), snippet: bounded(r.content, 700), source: "Tavily"
-    })).filter(r => r.url && r.title);
-    return JSON.stringify({ query, results });
-  } finally { clearTimeout(timer); }
+async function webSearch(_env, args) {
+  // Zero-key built-in search (DuckDuckGo + Bing HTML). No TAVILY / third-party API key.
+  const data = await searchWeb(args.query);
+  const results = (data.results || []).map(r => ({
+    title: bounded(r.title, 200),
+    url: bounded(r.url, 1000),
+    snippet: bounded(r.snippet, 700),
+    source: bounded(r.source, 40) || "web"
+  }));
+  return JSON.stringify({ query: data.query, results, engines: data.engines || [] });
 }
 
 function decodeHtmlEntities(text) {
@@ -302,15 +289,14 @@ export function toolDefinitions(provider) {
     : ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters, strict: true } }));
 }
 
-export function isWebSearchConfigured(env) {
-  return Boolean(env && String(env.TAVILY_API_KEY || "").trim());
+/** Web search is always available (built-in, no API key). */
+export function isWebSearchConfigured(_env) {
+  return isWebSearchAvailable();
 }
 
-export function configuredToolDefinitions(provider, env) {
-  const tools = isWebSearchConfigured(env)
-    ? AGENT_TOOLS
-    : AGENT_TOOLS.filter(tool => tool.name !== "web_search");
-  return tools.map(tool => provider === "anthropic"
+export function configuredToolDefinitions(provider, _env) {
+  // Always expose web_search — zero-key built-in engines.
+  return AGENT_TOOLS.map(tool => provider === "anthropic"
     ? ({ name: tool.name, description: tool.description, input_schema: tool.parameters })
     : ({ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.parameters, strict: true } }));
 }
