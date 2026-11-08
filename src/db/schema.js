@@ -336,6 +336,18 @@ async function runPendingMigrations(env) {
       await env.DB.batch(batch);
       console.log("Applied schema migration " + m.id + ": " + m.label);
     } catch (err) {
+      const msg = String(err && err.message ? err.message : err).toLowerCase();
+      // Columns/tables may already exist if an earlier deploy applied them via
+      // the additive `alters` path before the numbered migration was recorded.
+      if (msg.indexOf("duplicate column") !== -1 || msg.indexOf("already exists") !== -1) {
+        try {
+          await env.DB.prepare("INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)").bind(m.id, now()).run();
+          console.log("Schema migration " + m.id + " recorded after benign conflict: " + m.label);
+          continue;
+        } catch (e2) {
+          console.error("Schema migration " + m.id + " conflict follow-up failed:", e2.message);
+        }
+      }
       console.error("Schema migration " + m.id + " failed:", err.message);
       throw err;
     }
