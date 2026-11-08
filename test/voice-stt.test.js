@@ -1,6 +1,22 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+
+function hostIs(url, host) {
+  try { return new URL(String(url)).hostname === host; } catch (e) {
+    return false;
+  }
+}
+function urlContainsPath(url, needle) {
+  const s = String(url);
+  try {
+    const u = new URL(s);
+    return (u.hostname + u.pathname).indexOf(needle) !== -1 || s.indexOf(needle) !== -1;
+  } catch (e) {
+    return s.indexOf(needle) !== -1;
+  }
+}
+
   isVoiceMessage, isVoiceTranscribable, getSttKey, transcribeVoice,
   withTranscript, pruneStaleTranscripts, pruneOldTranscripts, getTranscript
 } from "../src/voice/stt.js";
@@ -99,7 +115,7 @@ function stubNetwork(opts) {
       if (o.downloadFails) return { ok: false, status: 404 };
       return { ok: true, arrayBuffer: async () => new ArrayBuffer(64) };
     }
-    if (String(url).indexOf("api.groq.com") !== -1) {
+    if (hostIs(url, "api.groq.com")) {
       calls.groq++;
       if (o.groqStatus && o.groqStatus !== 200) {
         return { ok: false, status: o.groqStatus, text: async () => "bad request" };
