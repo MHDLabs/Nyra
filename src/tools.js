@@ -102,15 +102,31 @@ async function webSearch(env, args) {
   } finally { clearTimeout(timer); }
 }
 
+function decodeHtmlEntities(text) {
+  // Single-pass entity decode so replacements are not re-scanned (avoids double-unescape).
+  const named = {
+    amp: "&", lt: "<", gt: ">", quot: """, apos: "'", nbsp: " "
+  };
+  return String(text).replace(/&(#\d+|#x[\da-f]+|[a-z]+);/gi, function (match, body) {
+    const b = String(body);
+    if (b.charAt(0) === "#") {
+      const code = b.charAt(1) === "x" || b.charAt(1) === "X"
+        ? parseInt(b.slice(2), 16)
+        : Number(b.slice(1));
+      if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) return match;
+      try { return String.fromCodePoint(code); } catch (e) { return match; }
+    }
+    const key = b.toLowerCase();
+    return Object.prototype.hasOwnProperty.call(named, key) ? named[key] : match;
+  });
+}
+
 function readableText(html) {
-  return html.replace(/<!--[\s\S]*?-->/g, " ")
+  const stripped = html.replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/<(script|style|noscript|svg|nav|footer|header|form|iframe)[^>]*>[\s\S]*?<\/\1\s*>/gi, " ")
     .replace(/<(br|\/p|\/div|\/article|\/section|\/li|\/h[1-6])\b[^>]*>/gi, "\n")
-    .replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<").replace(/&gt;/gi, ">")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
-    .replace(/&#x([\da-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)))
-    .replace(/&quot;/gi, '"').replace(/&#39;|&apos;/gi, "'")
+    .replace(/<[^>]+>/g, " ");
+  return decodeHtmlEntities(stripped)
     .replace(/[ \t\r]+/g, " ").replace(/\n\s*\n+/g, "\n\n").trim();
 }
 
