@@ -108,11 +108,12 @@ export async function saveThreadMessage(env, chatId, threadId, messageId, userId
   } catch (err) { console.error("saveThreadMessage failed:", err.message); }
 }
 
-export async function getThreadContext(env, chatId, threadId) {
+export async function getThreadContext(env, chatId, threadId, limit) {
+  const lim = (typeof limit === "number" && limit > 0) ? limit : MAX_CONTEXT_MESSAGES;
   try {
     const result = await env.DB.prepare(
-      "SELECT tm.role, tm.content, tm.user_id, COALESCE(NULLIF(u.first_name, ''), NULLIF(u.username, ''), CAST(tm.user_id AS TEXT)) AS user_name FROM thread_messages tm LEFT JOIN users u ON u.telegram_id = tm.user_id WHERE tm.chat_id = ? AND tm.thread_id = ? ORDER BY tm.created_at DESC, tm.message_id DESC LIMIT ?"
-    ).bind(chatId, threadId, MAX_CONTEXT_MESSAGES).all();
+      "SELECT tm.role, tm.content, tm.user_id, tm.created_at, COALESCE(NULLIF(u.first_name, ''), NULLIF(u.username, ''), CAST(tm.user_id AS TEXT)) AS user_name FROM thread_messages tm LEFT JOIN users u ON u.telegram_id = tm.user_id WHERE tm.chat_id = ? AND tm.thread_id = ? ORDER BY tm.created_at DESC, tm.message_id DESC LIMIT ?"
+    ).bind(chatId, threadId, lim).all();
     const rows = result.results || [];
     return rows.reverse();
   } catch (err) { return []; }

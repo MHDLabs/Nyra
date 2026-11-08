@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseMemoryData, serializeMemoryData } from "../src/memory.js";
-import { MEMORY_MAX_CHARS } from "../src/config.js";
+import { parseMemoryData, serializeMemoryData, buildClockPrompt, buildContextMessages } from "../src/memory.js";
+import { MEMORY_MAX_CHARS, MEMORY_UPDATE_INTERVAL, MAX_CONTEXT_MESSAGES } from "../src/config.js";
 
 test("parseMemoryData tolerates invalid input", () => {
   assert.deepEqual(parseMemoryData(null), {});
@@ -45,4 +45,38 @@ test("serialized memory never exceeds MEMORY_MAX_CHARS", () => {
   assert.ok(s.length <= MEMORY_MAX_CHARS, `serialized length ${s.length} > ${MEMORY_MAX_CHARS}`);
   const back = parseMemoryData(s);
   assert.equal(typeof back, "object");
+});
+
+
+test("memory consolidates every 20 messages", () => {
+  assert.equal(MEMORY_UPDATE_INTERVAL, 20);
+  assert.equal(MAX_CONTEXT_MESSAGES, 20);
+});
+
+test("buildClockPrompt always includes current date and timezone", () => {
+  const text = buildClockPrompt({ timezone: "UTC" });
+  assert.match(text, /Current date and time:/);
+  assert.match(text, /timezone: UTC/);
+  assert.match(text, /UTC: \d{4}-\d{2}-\d{2}T/);
+  assert.match(text, /Always use this clock/);
+});
+
+test("buildContextMessages includes rolling history and clock in system", () => {
+  const recent = [
+    { role: "user", content: "hi", created_at: 1700000000, user_id: 1, user_name: "A" },
+    { role: "assistant", content: "hello", created_at: 1700000060 }
+  ];
+  const messages = buildContextMessages(
+    { id: "default", prompt: "Be helpful." },
+    { telegram_id: 1, timezone: "UTC", locale: "en-US" },
+    null,
+    recent,
+    "how are you?",
+    "normal"
+  );
+  assert.equal(messages[0].role, "system");
+  assert.match(messages[0].content, /Current date and time:/);
+  assert.ok(messages.some((m) => m.role === "user" && String(m.content).indexOf("hi") !== -1));
+  assert.ok(messages.some((m) => m.role === "assistant" && String(m.content).indexOf("hello") !== -1));
+  assert.equal(messages[messages.length - 1].content, "how are you?");
 });
