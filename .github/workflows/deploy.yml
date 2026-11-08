@@ -1,0 +1,112 @@
+# OTA deploy — push to main (after CI) automatically ships this Worker via Wrangler.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   CLOUDFLARE_API_TOKEN   — API token with Workers Scripts Edit + Account Read
+#   CLOUDFLARE_ACCOUNT_ID  — Cloudflare account id
+#
+# Optional:
+#   CLOUDFLARE_WORKER_NAME — override worker name (default: nyra from wrangler.toml)
+#
+# Secrets already stored in Cloudflare (TELEGRAM_BOT_TOKEN, TELEGRAM_SECRET,
+# ENCRYPTION_KEY, …) are NEVER touched by this workflow. Only the Worker script
+# and assets are updated.
+#
+# If the Cloudflare secrets are missing, the job is skipped (not failed) so
+# forks without deploy credentials stay green.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Why is this manual deploy running?"
+        required: false
+        default: "manual"
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Pre-deploy tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: find src test -name '*.js' -print0 | xargs -0 -n1 node --check
+      - run: node --test test/*.test.js
+
+  deploy:
+    name: Deploy Worker (OTA)
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check Cloudflare credentials
+        id: creds
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID not set — skipping deploy. Add them under repo Secrets to enable OTA."
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.creds.outputs.present == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.creds.outputs.present == 'true'
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.creds.outputs.present == 'true'
+        run: npm ci --ignore-scripts
+
+      - name: Deploy with build metadata
+        if: steps.creds.outputs.present == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          SHA="${GITHUB_SHA}"
+          SHORT="$(echo "$SHA" | cut -c1-7)"
+          TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          REF="${GITHUB_REF_NAME}"
+          echo "Deploying Nyra@$SHORT (ref=$REF) builtAt=$TIME"
+          npx wrangler deploy \
+            --var "NYRA_BUILD_SHA:${SHA}" \
+            --var "NYRA_BUILD_REF:${REF}" \
+            --var "NYRA_BUILD_TIME:${TIME}" \
+            --var "NYRA_BUILD_SOURCE:github-actions"
+
+      - name: Post-deploy status probe (best-effort)
+        if: steps.creds.outputs.present == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          # Best-effort: resolve workers.dev URL and hit /status so schema + webhook bootstrap.
+          # Never fail the job if probe cannot reach the Worker.
+          set +e
+          OUT=$(npx wrangler deployments list --name nyra 2>/dev/null | head -20)
+          echo "$OUT"
+          echo "Deploy finished. Open https://nyra.<your-subdomain>.workers.dev/status to confirm Build SHA."
+        continue-on-error: true

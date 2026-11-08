@@ -122,6 +122,23 @@ Use the **Deploy to Cloudflare** button in [Quick start](#-quick-start-one-click
 4. The Worker bootstraps itself: first contact initialises the schema and **registers the Telegram webhook automatically** — no curl, no manual step. Open `https://nyra.<your-subdomain>.workers.dev/status` once to confirm; you should see `Webhook: registered → …` and `Admin IDs: 1 configured`. (`/` is the Mini App, not the status page.)
 5. Open a private chat with your bot, send `/start`, then connect a model (*Option B, step 6*).
 
+## Automatic updates (OTA) from GitHub
+
+Nyra can redeploy itself whenever `main` advances:
+
+1. In the GitHub repo: **Settings → Secrets and variables → Actions**
+2. Add:
+   - `CLOUDFLARE_API_TOKEN` — token with *Workers Scripts Edit* + account read
+   - `CLOUDFLARE_ACCOUNT_ID` — your Cloudflare account id
+3. Push (or merge) to `main`. The **Deploy** workflow runs tests, then `wrangler deploy`.
+4. Existing Cloudflare **secrets** (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_SECRET`, `ENCRYPTION_KEY`, …) are left untouched.
+5. Open `/status` — you should see `Build: <sha>` and `Updates: up to date with MHDLabs/Nyra@main`.
+
+Manual run: **Actions → Deploy → Run workflow**.
+
+If the secrets are missing, deploy is **skipped** (CI stays green). Each Cloudflare account that hosts a Nyra Worker needs its own pair of secrets for OTA on that account.
+
+
 Notes:
 - The built-in cron trigger re-verifies the webhook registration every few minutes, so it self-heals if Telegram-side registration is ever lost.
 - Upgrading an existing deployment? Keep any real `database_id` / KV `id` in `wrangler.toml`, and keep the exact `TELEGRAM_SECRET` / `ENCRYPTION_KEY` you already use — changing `ENCRYPTION_KEY` makes previously stored API keys unreadable, and changing `TELEGRAM_SECRET` requires re-registering the webhook.
