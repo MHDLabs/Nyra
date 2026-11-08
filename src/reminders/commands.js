@@ -306,9 +306,10 @@ export async function handleReminderDetailCommand(env, chatId, userId, args, lan
  * nothing that will ever fire again. Those are cancelled and recreated instead.
  */
 export async function handleEditReminderCommand(env, chatId, userId, args, lang) {
-  const raw = String(args || "").trim();
-  const m = /^(\d+)\s+([\s\S]+)$/.exec(normalizeDigits(raw));
-  if (!m || !/([A-Za-z\u0600-\u06FF])/.test(m[2])) {
+  // Bound input and avoid a greedy ([\s\S]+) group that can ReDoS on space-heavy args.
+  const raw = String(args || "").trim().slice(0, 600);
+  const m = /^(\d{1,18})\s+(\S[\s\S]{0,500})$/.exec(normalizeDigits(raw));
+  if (!m || !/[A-Za-z\u0600-\u06FF]/.test(m[2])) {
     await sendMessage(env, chatId, t(lang, "استفاده: <code>/editreminder &lt;id&gt; فردا ساعت ۱۰ جلسه</code>", "Usage: <code>/editreminder &lt;id&gt; tomorrow at 10 meeting</code>"), { parse_mode: "HTML" });
     return "usage";
   }
