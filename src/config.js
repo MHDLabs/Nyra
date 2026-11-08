@@ -1,5 +1,10 @@
 // Nyra — configuration: shared constants, prompt rules, default personalities.
 
+// Temporary switch: when true the Mini App (HTML + /api/* + Telegram menu button)
+// is fully offline. Chat commands remain the only control surface. Flip to false
+// and redeploy to restore the Mini App.
+export const MINIAPP_DISABLED = true;
+
 export const TELEGRAM_API = "https://api.telegram.org";
 export const MAX_TELEGRAM_LENGTH = 4096;
 // Recent turns handed to the model as conversation context. 20 user+assistant

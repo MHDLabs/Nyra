@@ -5,6 +5,7 @@ import { checkMemoryRate } from "../utils.js";
 import { ensureWebhook, ensureMenuButton, tg } from "../telegram.js";
 import { maybeInitSchema } from "../db.js";
 import { getBuildInfo, checkUpstreamUpdate, UPSTREAM_REPO, UPSTREAM_BRANCH } from "../version.js";
+import { MINIAPP_DISABLED } from "../config.js";
 import { getMasterKey, getWebhookSecret } from "../crypto.js";
 
 export async function handleStatus(request, env, adminIds) {
@@ -89,7 +90,7 @@ export async function handleStatus(request, env, adminIds) {
     "Menu button: " + menuLine,
     "Admin IDs:   " + adminLine,
     "Queue:       " + (env.NYRA_QUEUE ? "bound (NYRA_QUEUE)" : "MISSING — check the queues config in wrangler.toml"),
-    "Mini App:    " + origin + "/ (served from the ASSETS binding)",
+    "Mini App:    " + (MINIAPP_DISABLED ? "DISABLED (maintenance) — use chat commands" : origin + "/ (served from the ASSETS binding)"),
     "Build:       " + buildLine,
     "Updates:     " + updateLine,
     "",

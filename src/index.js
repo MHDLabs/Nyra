@@ -9,6 +9,7 @@ import { getMasterKey, validateSecrets } from "./crypto.js";
 import { ensureSchema, maybeInitSchema } from "./db.js";
 import { ensureWebhook, ensureMenuButton } from "./telegram.js";
 import { routeMiniAppAPI } from "./miniapp.js";
+import { MINIAPP_DISABLED } from "./config.js";
 import { logFailedUpdate, cleanupOldFailedUpdates } from "./dlq.js";
 import { pruneOldTranscripts } from "./voice/stt.js";
 import { deliverDueReminders } from "./reminders/deliver.js";
@@ -105,6 +106,28 @@ export default {
     // the webhook bootstraps even when only the Mini App (/api/*) is used and
     // /status is never opened. KV-gated inside ensureWebhook; never blocks.
     ctx.waitUntil(ensureWebhook(env, url.origin).catch(function () {}));
+
+    // Mini App offline (temporary maintenance): block API + static shell.
+    if (MINIAPP_DISABLED) {
+      const path = url.pathname;
+      if (path.startsWith("/api/")) {
+        return new Response(JSON.stringify({
+          error: "maintenance",
+          message: "Mini App is temporarily offline. Use Telegram chat commands (/settings, /admin, /help)."
+        }), { status: 503, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } });
+      }
+      if (path === "/" || path === "/index.html" || path.startsWith("/app.") || path.startsWith("/styles") || path.endsWith(".css") || path.endsWith(".js") || path.endsWith(".svg") || path.endsWith(".png") || path.endsWith(".ico")) {
+        const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Nyra — Maintenance</title>
+<style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;background:#0b1220;color:#e8eefc;padding:24px;text-align:center}
+card{max-width:420px}h1{font-size:1.35rem;margin:0 0 8px}p{opacity:.85;line-height:1.5;margin:0 0 12px}code{background:#1a2438;padding:2px 6px;border-radius:6px}</style></head>
+<body><div><h1>Mini App temporarily offline</h1>
+<p>Nyra chat bot is running. Use Telegram commands:</p>
+<p><code>/start</code> · <code>/help</code> · <code>/settings</code> · <code>/admin</code></p>
+<p style="opacity:.6;font-size:.9rem">مینی‌اپ موقتاً غیرفعال است. از دستورات داخل چت استفاده کنید.</p>
+</div></body></html>`;
+        return new Response(html, { status: 503, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+      }
+    }
 
     // Mini App API endpoints
     if (url.pathname.startsWith("/api/")) {

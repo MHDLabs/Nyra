@@ -1,5 +1,5 @@
 // Nyra — Telegram Bot API layer: calls, send/edit/delete, keyboards, typing heartbeat.
-import { TELEGRAM_API, MAX_TELEGRAM_LENGTH, TELEGRAM_TIMEOUT_MS, TELEGRAM_RETRY_MAX, TELEGRAM_RETRY_WAIT_CAP_MS, TYPING_HEARTBEAT_MS, WEBHOOK_RECHECK_MS, WEBHOOK_ATTEMPT_GUARD_MS } from "./config.js";
+import { TELEGRAM_API, MAX_TELEGRAM_LENGTH, TELEGRAM_TIMEOUT_MS, TELEGRAM_RETRY_MAX, TELEGRAM_RETRY_WAIT_CAP_MS, TYPING_HEARTBEAT_MS, WEBHOOK_RECHECK_MS, WEBHOOK_ATTEMPT_GUARD_MS, MINIAPP_DISABLED } from "./config.js";
 import { truncate, sleep, splitForTelegram, fetchWithTimeout } from "./utils.js";
 import { getWebhookSecret } from "./crypto.js";
 import { mdv2ToPlain } from "./markdown.js";
@@ -161,6 +161,26 @@ export async function ensureWebhook(env, origin) {
 export async function ensureMenuButton(env, origin) {
   try {
     if (!env.TELEGRAM_BOT_TOKEN) return { ok: false, status: "no_token" };
+    // Maintenance: remove the web_app menu button so users are not sent to an offline Mini App.
+    if (MINIAPP_DISABLED) {
+      let state = null;
+      try {
+        const raw = await env.KV.get(MENU_BUTTON_STATE_KEY);
+        state = raw ? JSON.parse(raw) : null;
+      } catch (err) { state = null; }
+      if (state && state.mode === "disabled" && state.setAt && Date.now() - state.setAt < WEBHOOK_RECHECK_MS) {
+        return { ok: true, status: "disabled" };
+      }
+      const result = await tg(env, "setChatMenuButton", {
+        menu_button: { type: "commands" }
+      });
+      if (result && result.ok) {
+        try { await env.KV.put(MENU_BUTTON_STATE_KEY, JSON.stringify({ mode: "disabled", url: null, setAt: Date.now() })); }
+        catch (err) {}
+        return { ok: true, status: "disabled" };
+      }
+      return { ok: false, status: "error", detail: (result && result.description) || "clear menu button failed" };
+    }
     const target = origin ? origin.replace(/\/+$/, "") : null;
     if (!target) return { ok: false, status: "awaiting_first_request" };
     let state = null;
@@ -169,14 +189,14 @@ export async function ensureMenuButton(env, origin) {
       state = raw ? JSON.parse(raw) : null;
     } catch (err) { state = null; }
     const nowMs = Date.now();
-    if (state && state.url === target && state.setAt && nowMs - state.setAt < WEBHOOK_RECHECK_MS) {
+    if (state && state.mode !== "disabled" && state.url === target && state.setAt && nowMs - state.setAt < WEBHOOK_RECHECK_MS) {
       return { ok: true, status: "cached" };
     }
     const result = await tg(env, "setChatMenuButton", {
       menu_button: { type: "web_app", text: MENU_BUTTON_TEXT, web_app: { url: target } }
     });
     if (result && result.ok) {
-      try { await env.KV.put(MENU_BUTTON_STATE_KEY, JSON.stringify({ url: target, setAt: nowMs })); }
+      try { await env.KV.put(MENU_BUTTON_STATE_KEY, JSON.stringify({ mode: "web_app", url: target, setAt: nowMs })); }
       catch (err) {}
       console.log("Mini App menu button registered: " + target);
       return { ok: true, status: "registered" };

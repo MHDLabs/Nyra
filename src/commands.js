@@ -1,6 +1,6 @@
 // Nyra — commands: full in-chat control (settings, memory, admin) + reminders.
 // Mini App remains available, but nothing requires it.
-import { RATE_LIMIT_ADMIN_PER_MIN, MAX_PERSONALITIES, MAX_PERSONALITY_PROMPT, MAX_PERSONALITY_DESC, ONBOARDING_MAX_NAME_LENGTH } from "./config.js";
+import { RATE_LIMIT_ADMIN_PER_MIN, MAX_PERSONALITIES, MAX_PERSONALITY_PROMPT, MAX_PERSONALITY_DESC, ONBOARDING_MAX_NAME_LENGTH, MINIAPP_DISABLED } from "./config.js";
 import { now, escapeHtml, generateShortId, isAdmin, checkRateLimit } from "./utils.js";
 import { getMasterKey } from "./crypto.js";
 import { sendMessage, editMessage, buildInlineKeyboard } from "./telegram.js";
@@ -30,6 +30,7 @@ function publicOrigin(env) {
 }
 
 function miniAppKeyboard(env, locale) {
+  if (MINIAPP_DISABLED) return undefined;
   const origin = publicOrigin(env);
   if (!origin) return undefined;
   return buildInlineKeyboard([[{ text: t(locale, "commands.miniapp.open") || "Open Mini App", web_app: { url: origin + "/" } }]]);
