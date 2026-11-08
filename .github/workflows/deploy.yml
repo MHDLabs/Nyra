@@ -102,11 +102,13 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_WORKER_NAME: ${{ secrets.CLOUDFLARE_WORKER_NAME }}
         run: |
           # Best-effort: resolve workers.dev URL and hit /status so schema + webhook bootstrap.
           # Never fail the job if probe cannot reach the Worker.
           set +e
-          OUT=$(npx wrangler deployments list --name nyra 2>/dev/null | head -20)
+          WORKER_NAME="${CLOUDFLARE_WORKER_NAME:-nyra}"
+          OUT=$(npx wrangler deployments list --name "$WORKER_NAME" 2>/dev/null | head -20)
           echo "$OUT"
-          echo "Deploy finished. Open https://nyra.<your-subdomain>.workers.dev/status to confirm Build SHA."
+          echo "Deploy finished for worker=$WORKER_NAME. Open /status to confirm Build SHA."
         continue-on-error: true
