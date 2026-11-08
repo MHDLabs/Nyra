@@ -20,15 +20,15 @@ const HEURISTIC = {
   network_error: { action: "retry_same", reason: "network hiccup" },
   server_error: { action: "retry_same", reason: "upstream 5xx" },
   provider_overloaded: { action: "next_token", reason: "provider overloaded" },
-  rate_limited: { action: "next_token", reason: "rate limited" },
+  rate_limited: { action: "retry_same", reason: "provider rate limit — retry before rotating" },
   quota_exceeded: { action: "next_token", reason: "quota exhausted" },
   daily_quota_exceeded: { action: "next_token", reason: "daily quota exhausted" },
   invalid_key: { action: "next_token", reason: "invalid key" },
   forbidden: { action: "next_token", reason: "access denied for this key" },
   model_not_found: { action: "next_model", reason: "model unavailable" },
   invalid_configuration: { action: "next_model", reason: "model rejected request" },
-  empty_response: { action: "next_model", reason: "empty completion" },
-  unexpected_format: { action: "next_model", reason: "malformed completion" },
+  empty_response: { action: "retry_same", reason: "empty completion — retry before switching model" },
+  unexpected_format: { action: "retry_same", reason: "malformed completion — retry before switching model" },
   invalid_base_url: { action: "stop", reason: "bad base url" },
   no_connection: { action: "stop", reason: "no connection" },
   unknown: { action: "next_token", reason: "unclassified" }
@@ -64,7 +64,15 @@ export function heuristicVerdict(input) {
   // no models left becomes a retry (only meaningful for transient classes).
   if (action === "next_token" && triedAllTokens) action = triedAllModels ? "retry_same" : "next_model";
   if (action === "next_model" && triedAllModels) action = triedAllTokens ? "stop" : "next_token";
-  if (action === "retry_same" && base.action === "retry_same" && input && input.attempt && input.attempt >= 2) action = triedAllTokens ? "stop" : "next_token";
+  if (action === "retry_same" && base.action === "retry_same" && input && input.attempt && input.attempt >= 2) {
+    const cat = input.category || "";
+    if (cat === "empty_response" || cat === "unexpected_format") {
+      action = triedAllModels ? "stop" : "next_model";
+    } else {
+      // timeout / rate_limited / network: rotate token after local retries
+      action = triedAllTokens ? (triedAllModels ? "stop" : "next_model") : "next_token";
+    }
+  }
   return { action: action, reason: base.reason, source: "heuristic" };
 }
 
