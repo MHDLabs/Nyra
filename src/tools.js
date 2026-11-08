@@ -104,9 +104,7 @@ async function webSearch(env, args) {
 
 function decodeHtmlEntities(text) {
   // Single-pass entity decode so replacements are not re-scanned (avoids double-unescape).
-  const named = {
-    amp: "&", lt: "<", gt: ">", quot: """, apos: "'", nbsp: " "
-  };
+  const named = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", nbsp: " " };
   return String(text).replace(/&(#\d+|#x[\da-f]+|[a-z]+);/gi, function (match, body) {
     const b = String(body);
     if (b.charAt(0) === "#") {
