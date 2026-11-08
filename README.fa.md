@@ -253,3 +253,13 @@ npm test
 [MIT](LICENSE) © MHDLabs
 
 </div>
+
+## به‌روزرسانی خودکار (OTA) از GitHub
+
+با تنظیم این Secrets در مخزن GitHub، هر push روی `main` به‌صورت خودکار Worker را deploy می‌کند:
+
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
+
+سکرت‌های Cloudflare (توکن تلگرام و …) تغییر نمی‌کنند. وضعیت نسخه را در `/status` ببینید (`Build` و `Updates`).
+
