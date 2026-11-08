@@ -18,7 +18,9 @@ export const RATE_LIMIT_SETUP_PER_MIN = 5;
 export const RATE_LIMIT_CONN_TEST_PER_MIN = 10;
 export const AI_PRIMARY_ATTEMPT_TIMEOUT_MS = 30000;
 export const AI_MAX_PRIMARY_ATTEMPTS = 3;
-export const AI_RETRY_DELAYS_MS = [500, 1000];
+// Retries for transient provider faults (empty body, 429, timeout) on any connection.
+export const AI_MAX_RETRYABLE_ATTEMPTS = 3;
+export const AI_RETRY_DELAYS_MS = [1000, 2000];
 export const AI_STREAM_STALL_TIMEOUT_MS = 30000;
 export const AI_STREAM_TOTAL_BUDGET_MS = 180000;
 export const AI_TEST_TIMEOUT_MS = 8000;
@@ -102,8 +104,8 @@ export const SETTING_SHARED_SERVICE_ENABLED = "shared_service_enabled";
 export const SETTING_SHARED_REQUEST_LIMIT = "shared_daily_request_limit";
 export const SETTING_SHARED_TOKEN_LIMIT = "shared_daily_token_limit";
 // 0 means "no limit". Quotas are counted per user per UTC day.
-export const DEFAULT_SHARED_REQUEST_LIMIT = 0;
-export const DEFAULT_SHARED_TOKEN_LIMIT = 0;
+export const DEFAULT_SHARED_REQUEST_LIMIT = 100;
+export const DEFAULT_SHARED_TOKEN_LIMIT = 250000;
 
 // --- Tasks & Reminders -----------------------------------------------------
 // Scheduling reuses the existing `*/5 * * * *` cron trigger, so a reminder can

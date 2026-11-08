@@ -3,7 +3,7 @@
 // that, their ordered connections), walks the plan, and reports terminal
 // failure as a `{ type: "error" }` event rather than throwing, so a partial
 // answer already delivered to the user is never lost.
-import { AI_PRIMARY_ATTEMPT_TIMEOUT_MS, AI_MAX_PRIMARY_ATTEMPTS, AI_RETRY_DELAYS_MS, AI_STREAM_STALL_TIMEOUT_MS, AI_STREAM_TOTAL_BUDGET_MS, UNHEALTHY_FAILURE_THRESHOLD, ADMIN_NOTIFY_THROTTLE_TTL } from "../config.js";
+import { AI_PRIMARY_ATTEMPT_TIMEOUT_MS, AI_MAX_PRIMARY_ATTEMPTS, AI_MAX_RETRYABLE_ATTEMPTS, AI_RETRY_DELAYS_MS, AI_STREAM_STALL_TIMEOUT_MS, AI_STREAM_TOTAL_BUDGET_MS, UNHEALTHY_FAILURE_THRESHOLD, ADMIN_NOTIFY_THROTTLE_TTL } from "../config.js";
 import { truncate, escapeHtml, sleep, getAdminIds } from "../utils.js";
 import { decryptCredential } from "../crypto.js";
 import { sendMessage } from "../telegram.js";
@@ -234,7 +234,7 @@ export async function* tryStreamWithFallback(env, user, messages, options) {
     const budgetRemaining = totalBudgetMs - (Date.now() - budgetStart);
     if (budgetRemaining < 3000) break;
 
-    const maxAttemptsForConn = isPrimary ? AI_MAX_PRIMARY_ATTEMPTS : 1;
+    const maxAttemptsForConn = isPrimary ? AI_MAX_PRIMARY_ATTEMPTS : AI_MAX_RETRYABLE_ATTEMPTS;
 
     for (let attempt = 0; attempt < maxAttemptsForConn; attempt++) {
       const remaining = totalBudgetMs - (Date.now() - budgetStart);
@@ -278,9 +278,13 @@ export async function* tryStreamWithFallback(env, user, messages, options) {
         yield { type: "error", category: lastCategory, error: lastError, connection: lastConn, attempts: totalAttempts, fallbackUsed: !isPrimary, partial: true };
         return;
       }
-      // Non-retryable means do not repeat this same connection. It does not
-      // mean stop the entire chain: the error brain below may rotate to a
-      // different token/model/connection (for example, forbidden → next_token).
+      // Retry empty / timeout / provider 429 on the same connection up to maxAttempts.
+      // Non-retryable (invalid key, billing quota, etc.) leaves this connection immediately.
+      if (!isRetryableCategory(lastCategory)) break;
+      // Cap Retry-After wait so a single 429 cannot burn the whole budget.
+      if (lastError && lastError.retryAfterSeconds) {
+        lastError.retryAfterSeconds = Math.min(lastError.retryAfterSeconds, 15);
+      }
     }
 
     if (!isRetryableCategory(lastCategory) && !fallbackEnabled) break;
@@ -318,7 +322,7 @@ export async function* streamViaRoute(env, user, bundle, messages, options, tota
     if ((conn.consecutive_failures || 0) >= UNHEALTHY_FAILURE_THRESHOLD) continue;
     if (totalBudgetMs - (Date.now() - budgetStart) < 3000) break;
 
-    const maxAttemptsForConn = isPrimary ? AI_MAX_PRIMARY_ATTEMPTS : 1;
+    const maxAttemptsForConn = AI_MAX_RETRYABLE_ATTEMPTS;
     let advanceToModel = null;
 
     for (let attempt = 0; attempt < maxAttemptsForConn; attempt++) {

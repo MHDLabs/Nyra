@@ -12,8 +12,8 @@ test("heuristicVerdict: transient errors retry the same endpoint", () => {
   assert.equal(heuristicVerdict({ category: "server_error" }).action, "retry_same");
 });
 
-test("heuristicVerdict: key/quota errors rotate the token", () => {
-  assert.equal(heuristicVerdict({ category: "rate_limited" }).action, "next_token");
+test("heuristicVerdict: key/quota errors rotate the token (except provider rate limit which retries first)", () => {
+  assert.equal(heuristicVerdict({ category: "rate_limited" }).action, "retry_same");
   assert.equal(heuristicVerdict({ category: "quota_exceeded" }).action, "next_token");
   assert.equal(heuristicVerdict({ category: "daily_quota_exceeded" }).action, "next_token");
   assert.equal(heuristicVerdict({ category: "invalid_key" }).action, "next_token");
@@ -21,11 +21,14 @@ test("heuristicVerdict: key/quota errors rotate the token", () => {
   assert.equal(heuristicVerdict({ category: "provider_overloaded" }).action, "next_token");
 });
 
+test("heuristicVerdict: empty/malformed completions retry before switching model", () => {
+  assert.equal(heuristicVerdict({ category: "empty_response" }).action, "retry_same");
+  assert.equal(heuristicVerdict({ category: "unexpected_format" }).action, "retry_same");
+});
+
 test("heuristicVerdict: model errors switch the model", () => {
   assert.equal(heuristicVerdict({ category: "model_not_found" }).action, "next_model");
   assert.equal(heuristicVerdict({ category: "invalid_configuration" }).action, "next_model");
-  assert.equal(heuristicVerdict({ category: "empty_response" }).action, "next_model");
-  assert.equal(heuristicVerdict({ category: "unexpected_format" }).action, "next_model");
 });
 
 test("heuristicVerdict: fatal errors stop", () => {
@@ -42,8 +45,9 @@ test("heuristicVerdict: unknown category defaults to token rotation", () => {
 });
 
 test("heuristicVerdict degrades token rotation when no tokens remain", () => {
-  assert.equal(heuristicVerdict({ category: "rate_limited", tokensRemaining: 0 }).action, "next_model");
-  assert.equal(heuristicVerdict({ category: "rate_limited", tokensRemaining: 0, modelsRemaining: 0 }).action, "retry_same");
+  // rate_limited prefers retry_same; with no tokens left and attempts exhausted, escalates
+  assert.equal(heuristicVerdict({ category: "rate_limited", tokensRemaining: 0 }).action, "retry_same");
+  assert.equal(heuristicVerdict({ category: "rate_limited", tokensRemaining: 0, modelsRemaining: 0, attempt: 3 }).action, "stop");
 });
 
 test("heuristicVerdict degrades model switch when no models remain", () => {
@@ -53,7 +57,9 @@ test("heuristicVerdict degrades model switch when no models remain", () => {
 
 test("heuristicVerdict gives up on repeated transient retries", () => {
   assert.equal(heuristicVerdict({ category: "timeout", attempt: 2 }).action, "next_token");
-  assert.equal(heuristicVerdict({ category: "timeout", attempt: 2, tokensRemaining: 0 }).action, "stop");
+  assert.equal(heuristicVerdict({ category: "timeout", attempt: 2, tokensRemaining: 0 }).action, "next_model");
+  assert.equal(heuristicVerdict({ category: "timeout", attempt: 2, tokensRemaining: 0, modelsRemaining: 0 }).action, "stop");
+  assert.equal(heuristicVerdict({ category: "empty_response", attempt: 2 }).action, "next_model");
 });
 
 test("brainInputFromError maps error fields and context", () => {
