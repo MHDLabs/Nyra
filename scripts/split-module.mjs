@@ -155,7 +155,8 @@ const SHARED = new Set(spec.shared || []);
 const EXPORTED = new Set([...PUBLIC, ...SHARED]);
 mkdirSync(spec.outDir, { recursive: true });
 
-const uses = (text, name) => new RegExp("\\b" + name.replace(/\$/g, "\\$") + "\\b").test(text);
+const escapeRegExp = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const uses = (text, name) => new RegExp("\\b" + escapeRegExp(name) + "\\b").test(text);
 // A sibling import is only legal if the target module actually exports the
 // binding. Without this check a symbol omitted from `shared`/`public` compiles
 // fine in isolation and then blows up at import time with
