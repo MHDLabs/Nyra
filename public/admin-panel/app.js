@@ -37,6 +37,10 @@
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
+      if (res.status === 401 && path !== "/admin-api/login" && path !== "/admin-api/me") {
+        appView.hidden = true;
+        loginView.hidden = false;
+      }
       const err = new Error(data.error || res.statusText || "request_failed");
       err.status = res.status;
       err.data = data;
@@ -95,11 +99,18 @@
     document.querySelectorAll("#user-list .list-item").forEach((n) => n.classList.remove("active"));
     if (el) el.classList.add("active");
     userDetail.innerHTML = "<p class='muted center'>در حال بارگذاری...</p>";
-    const data = await api("/admin-api/users/" + id);
+    let data;
+    try {
+      data = await api("/admin-api/users/" + id);
+    } catch (err) {
+      userDetail.innerHTML = "<p class='error center'>خطا در بارگذاری کاربر</p>";
+      return;
+    }
     const u = data.user;
     const conn = data.connection;
     const memory = data.memory || {};
-    const msgs = await api("/admin-api/users/" + id + "/messages?limit=80");
+    let msgs = { messages: [] };
+    try { msgs = await api("/admin-api/users/" + id + "/messages?limit=80"); } catch (e) {}
     userDetail.innerHTML =
       '<div class="detail-grid">' +
       '<div style="display:flex;gap:14px;align-items:center">' +
@@ -140,8 +151,12 @@
     chatBox.scrollTop = chatBox.scrollHeight;
 
     $("btn-block").onclick = async function () {
-      await api("/admin-api/users/" + id, { method: "PATCH", body: { blocked: !data.blocked } });
-      openUser(id, el);
+      try {
+        await api("/admin-api/users/" + id, { method: "PATCH", body: { blocked: !data.blocked } });
+        openUser(id, el);
+      } catch (err) {
+        alert(err.status === 400 ? "نمی‌توان ادمین را مسدود کرد" : (err.message || "خطا"));
+      }
     };
     $("btn-msg").onclick = function () {
       activateTab("broadcast");
@@ -221,7 +236,10 @@
       await showApp();
     } catch (err) {
       loginError.hidden = false;
-      loginError.textContent = err.status === 401 ? "رمز اشتباه است" : (err.message || "خطا");
+      if (err.status === 401) loginError.textContent = "رمز اشتباه است";
+      else if (err.status === 429) loginError.textContent = "تلاش زیاد — کمی صبر کنید";
+      else if (err.status === 503) loginError.textContent = "پنل پیکربندی نشده یا KV در دسترس نیست";
+      else loginError.textContent = err.message || "خطا";
     }
   });
 

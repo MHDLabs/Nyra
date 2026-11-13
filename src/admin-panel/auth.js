@@ -70,8 +70,9 @@ export function sessionCookieHeader(token, maxAge, secure) {
     (secure === false ? "" : "; Secure");
 }
 
-export function clearSessionCookieHeader() {
-  return COOKIE_NAME + "=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0";
+export function clearSessionCookieHeader(secure) {
+  return COOKIE_NAME + "=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0" +
+    (secure === false ? "" : "; Secure");
 }
 
 export function verifyPassword(env, password) {

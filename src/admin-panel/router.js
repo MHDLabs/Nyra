@@ -11,7 +11,7 @@ import {
   listPrivateChatUsers, listGroupChats, listChatMessages, logChatMessage
 } from "../db/chat-logs.js";
 import { blockUser, unblockUser } from "../db/users.js";
-import { checkMemoryRate } from "../utils.js";
+import { checkMemoryRate, isAdmin } from "../utils.js";
 
 function panelHtmlResponse(html) {
   return new Response(html, {
@@ -79,7 +79,8 @@ export async function routeAdminPanel(env, ctx, request, pathname) {
   if (path === "/admin-api/logout" && request.method === "POST") {
     const token = readSessionCookie(request);
     await destroySession(env, token);
-    return json(200, { ok: true }, { "set-cookie": clearSessionCookieHeader() });
+    const secure = url.protocol === "https:";
+    return json(200, { ok: true }, { "set-cookie": clearSessionCookieHeader(secure) });
   }
 
   if (path === "/admin-api/status" && request.method === "GET") {
@@ -155,16 +156,22 @@ export async function routeAdminPanel(env, ctx, request, pathname) {
     if (body.proactive_enabled !== undefined) setCol("proactive_enabled", body.proactive_enabled ? 1 : 0);
     if (body.proactive_threshold_hours !== undefined) setCol("proactive_threshold_hours", Math.min(Math.max(Number(body.proactive_threshold_hours) || 24, 1), 168));
     if (body.custom_instructions !== undefined) setCol("custom_instructions", body.custom_instructions ? String(body.custom_instructions).slice(0, 2000) : null);
-    if (sets.length) {
-      sets.push("updated_at = ?");
-      binds.push(now());
-      binds.push(id);
-      await env.DB.prepare("UPDATE users SET " + sets.join(", ") + " WHERE telegram_id = ?").bind(...binds).run();
-    }
-    if (body.blocked === true) {
-      await blockUser(env, id, 0, "admin panel");
-    } else if (body.blocked === false) {
-      await unblockUser(env, id);
+    try {
+      if (sets.length) {
+        sets.push("updated_at = ?");
+        binds.push(now());
+        binds.push(id);
+        await env.DB.prepare("UPDATE users SET " + sets.join(", ") + " WHERE telegram_id = ?").bind(...binds).run();
+      }
+      if (body.blocked === true) {
+        if (isAdmin(env, id)) return json(400, { error: "cannot_block_admin" });
+        await blockUser(env, id, 0, "admin panel");
+      } else if (body.blocked === false) {
+        await unblockUser(env, id);
+      }
+    } catch (e) {
+      console.error("admin PATCH user failed:", e.message);
+      return json(500, { error: "update_failed" });
     }
     return json(200, { ok: true });
   }
@@ -251,42 +258,47 @@ export async function routeAdminPanel(env, ctx, request, pathname) {
     const text = String(body && body.text ? body.text : "").trim();
     if (!text || text.length > 4000) return json(400, { error: "invalid_text" });
 
-    if (body.all === true) {
-      // shortcut: sync fan-out capped at 50 for free-plan CPU; upgrade: reuse broadcast.js jobs
-      const res = await env.DB.prepare(
-        "SELECT telegram_id FROM users WHERE telegram_id NOT IN (SELECT telegram_id FROM blocked_users) LIMIT 50"
-      ).all();
-      const ids = (res.results || []).map(function (r) { return r.telegram_id; });
-      let sent = 0, failed = 0;
-      for (let i = 0; i < ids.length; i++) {
-        const r = await sendMessageReturn(env, ids[i], text, { parse_mode: body.parse_mode || undefined });
-        if (r && r.ok) {
-          sent++;
-          ctx.waitUntil(logChatMessage(env, {
-            chat_id: ids[i], chat_type: "private", message_id: r.result && r.result.message_id,
-            user_id: null, role: "assistant", content: text, created_at: now()
-          }));
-        } else {
-          failed++;
-          if (r && r.parameters && r.parameters.retry_after) {
-            await new Promise(function (resolve) { setTimeout(resolve, Math.min(Number(r.parameters.retry_after) || 1, 5) * 1000); });
+    try {
+      if (body.all === true) {
+        // shortcut: sync fan-out capped at 50 for free-plan CPU; upgrade: reuse broadcast.js jobs
+        const res = await env.DB.prepare(
+          "SELECT telegram_id FROM users WHERE telegram_id NOT IN (SELECT telegram_id FROM blocked_users) LIMIT 50"
+        ).all();
+        const ids = (res.results || []).map(function (r) { return r.telegram_id; });
+        let sent = 0, failed = 0;
+        for (let i = 0; i < ids.length; i++) {
+          const r = await sendMessageReturn(env, ids[i], text, { parse_mode: body.parse_mode || undefined });
+          if (r && r.ok) {
+            sent++;
+            ctx.waitUntil(logChatMessage(env, {
+              chat_id: ids[i], chat_type: "private", message_id: r.result && r.result.message_id,
+              user_id: null, role: "assistant", content: text, created_at: now()
+            }));
+          } else {
+            failed++;
+            if (r && r.parameters && r.parameters.retry_after) {
+              await new Promise(function (resolve) { setTimeout(resolve, Math.min(Number(r.parameters.retry_after) || 1, 5) * 1000); });
+            }
           }
         }
+        return json(200, { ok: true, sent: sent, failed: failed, total: ids.length, capped: true });
       }
-      return json(200, { ok: true, sent: sent, failed: failed, total: ids.length, capped: true });
-    }
 
-    const target = body.telegram_id != null ? Number(body.telegram_id)
-      : body.chat_id != null ? Number(body.chat_id) : NaN;
-    if (!Number.isFinite(target)) return json(400, { error: "missing_target" });
-    const r = await sendMessageReturn(env, target, text, { parse_mode: body.parse_mode || undefined });
-    if (!r || !r.ok) return json(502, { error: "send_failed", detail: r && r.description });
-    const chatType = body.chat_type === "group" || body.chat_type === "supergroup" ? body.chat_type : "private";
-    await logChatMessage(env, {
-      chat_id: target, chat_type: chatType, message_id: r.result && r.result.message_id,
-      user_id: null, role: "assistant", content: text, created_at: now()
-    });
-    return json(200, { ok: true, message_id: r.result && r.result.message_id });
+      const target = body.telegram_id != null ? Number(body.telegram_id)
+        : body.chat_id != null ? Number(body.chat_id) : NaN;
+      if (!Number.isFinite(target)) return json(400, { error: "missing_target" });
+      const r = await sendMessageReturn(env, target, text, { parse_mode: body.parse_mode || undefined });
+      if (!r || !r.ok) return json(502, { error: "send_failed", detail: r && r.description });
+      const chatType = body.chat_type === "group" || body.chat_type === "supergroup" ? body.chat_type : "private";
+      await logChatMessage(env, {
+        chat_id: target, chat_type: chatType, message_id: r.result && r.result.message_id,
+        user_id: null, role: "assistant", content: text, created_at: now()
+      });
+      return json(200, { ok: true, message_id: r.result && r.result.message_id });
+    } catch (e) {
+      console.error("admin send failed:", e.message);
+      return json(500, { error: "send_failed" });
+    }
   }
 
   // GET /admin-api/stats
