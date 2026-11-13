@@ -16,9 +16,28 @@ import { streamProviderResponse } from "./stream.js";
 import { executeAgentTool, configuredToolDefinitions, isWebSearchConfigured } from "../tools.js";
 
 export async function generateWithConnection(env, connection, messages, options, timeoutMs) {
+  const timeout = timeoutMs || AI_PRIMARY_ATTEMPT_TIMEOUT_MS;
+  if (connection.provider === "workers-ai" || connection.provider === "cloudflare") {
+    if (!env.AI || typeof env.AI.run !== "function") throw new Error("Workers AI binding unavailable");
+    const model = connection.model || "@cf/meta/llama-3.1-8b-instruct";
+    const promptMessages = messages.map(function (m) {
+      return { role: m.role === "assistant" ? "assistant" : m.role === "system" ? "system" : "user", content: typeof m.content === "string" ? m.content : JSON.stringify(m.content) };
+    });
+    let timer;
+    try {
+      const result = await Promise.race([
+        env.AI.run(model, { messages: promptMessages, max_tokens: (options && options.max_tokens) || 2048 }),
+        new Promise(function (_, reject) { timer = setTimeout(function () { reject(new Error("Workers AI timed out")); }, Math.min(timeout, 25000)); })
+      ]);
+      const text = (result && (result.response || result.result || result.text)) || (typeof result === "string" ? result : "");
+      if (!text || !String(text).trim()) throw new Error("Workers AI returned empty response");
+      return { text: String(text), toolCalls: [], usage: null };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
   const ownerId = connection.telegram_id !== undefined && connection.telegram_id !== null ? connection.telegram_id : 0;
   const apiKey = await decryptCredential(env, ownerId, connection.encrypted_key, connection.key_iv);
-  const timeout = timeoutMs || AI_PRIMARY_ATTEMPT_TIMEOUT_MS;
   if (connection.provider === "anthropic") return await generateAnthropic(connection, apiKey, messages, options, timeout);
   return await generateOpenAICompatible(connection, apiKey, messages, options, timeout);
 }
@@ -31,7 +50,9 @@ export async function generateAgentWithConnection(env, user, connection, message
     unsupported[0] = { ...unsupported[0], content: String(unsupported[0].content) + "\n\nThis reasoning model is not sent native tools on this request. Do not claim to browse, fetch pages, or modify memory; explain the limitation briefly when relevant." };
     return await generateWithConnection(env, connection, unsupported, options, Math.min((options && options.totalBudgetMs) || 30000, 30000));
   }
-  const definitions = configuredToolDefinitions(provider, env);
+  const definitions = (connection.supports_tools === 0)
+    ? []
+    : configuredToolDefinitions(provider, env, { allowReact: !!(user && user.is_group) });
   const conversation = messages.map(message => ({ ...message }));
   // When live search is unavailable the model must be told so explicitly. Left
   // to itself it will happily answer "let me search…" and then produce a reply
@@ -90,7 +111,7 @@ export async function generateAgentWithConnection(env, user, connection, message
             if (!memoryIntentAllowed) throw new Error("Memory changes require an explicit user request");
             if (user && user.is_group) throw new Error("Personal memory tools are unavailable in group chats");
           }
-          content = await executeAgentTool(env, user.telegram_id, call.name, call.input);
+          content = await executeAgentTool(env, user.telegram_id, call.name, call.input, { chatId: user && user._toolChatId, messageId: user && user._toolMessageId });
         }
         catch (err) { content = JSON.stringify({ error: String(err.message || "Tool failed").slice(0, 240) }); }
         toolResults.push({ type: "tool_result", tool_use_id: call.id, content });
@@ -109,7 +130,7 @@ export async function generateAgentWithConnection(env, user, connection, message
             if (!memoryIntentAllowed) throw new Error("Memory changes require an explicit user request");
             if (user && user.is_group) throw new Error("Personal memory tools are unavailable in group chats");
           }
-          content = await executeAgentTool(env, user.telegram_id, name, args);
+          content = await executeAgentTool(env, user.telegram_id, name, args, { chatId: user && user._toolChatId, messageId: user && user._toolMessageId });
         }
         catch (err) { content = JSON.stringify({ error: String(err.message || "Tool failed").slice(0, 240) }); }
         conversation.push({ role: "tool", tool_call_id: String(call.id || "").slice(0, 100), content });

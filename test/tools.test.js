@@ -14,7 +14,7 @@ function memoryEnv(memory, changes = 1) {
 test("tool definitions preserve OpenAI and Anthropic native formats", () => {
   assert.equal(toolDefinitions("openai-compatible")[0].type, "function");
   assert.equal(toolDefinitions("anthropic")[0].input_schema.type, "object");
-  assert.equal(toolDefinitions("anthropic").length, 4);
+  assert.equal(toolDefinitions("anthropic").length, 5);
 });
 
 test("registered tools reject unknown names and malformed/unexpected args", async () => {

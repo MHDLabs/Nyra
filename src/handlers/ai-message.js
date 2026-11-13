@@ -98,6 +98,8 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
   // Mark the resolved object as group/private so the prompt builder and the
   // memory consolidator know whether to attribute messages to specific speakers.
   user.is_group = isGroup;
+  user._toolChatId = chatId;
+  user._toolMessageId = message.message_id;
 
   // Shared-service gate. A global connection belongs to the operator, so the
   // caller's daily allowance is consumed (and refused) here, server side,

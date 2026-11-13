@@ -545,11 +545,20 @@ export function isGroupChat(chat) {
  * busy group, which was an earlier reported bug. A chat that forbids reactions
  * (`available_reactions` present but empty) is skipped as well.
  */
-export function shouldReact(message, chat) {
+export function shouldReact(message, chat, identity) {
   if (!isGroupChat(chat)) return false;
   if (chat && typeof chat === "object" && Array.isArray(chat.available_reactions) && chat.available_reactions.length === 0) return false;
   const text = extractMessageText(message);
-  if (!text) return false;
-  if (text.length < 3) return false; // Nothing meaningful to classify
-  return containsNyraWord(text);
+  if (!text && !(message && message.reply_to_message)) return false;
+  // Same addressing rules as group triggers: name, @bot, or reply to Nyra.
+  if (message && message.reply_to_message && message.reply_to_message.from && identity && identity.id
+      && message.reply_to_message.from.id === identity.id) return true;
+  if (text && containsNyraWord(text)) return true;
+  if (text && identity && identity.username) {
+    try {
+      const re = new RegExp("@" + String(identity.username).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      if (re.test(text)) return true;
+    } catch (e) {}
+  }
+  return false;
 }

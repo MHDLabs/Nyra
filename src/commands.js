@@ -495,19 +495,33 @@ export async function showAdminMenu(env, chatId, messageId) {
 export async function showAdminUsers(env, chatId, messageId) {
   let rows = [];
   try {
-    const result = await env.DB.prepare("SELECT telegram_id, first_name, username, last_seen_at, memory_mode FROM users WHERE telegram_id NOT IN (SELECT telegram_id FROM blocked_users) ORDER BY last_seen_at DESC LIMIT 20").all();
+    const result = await env.DB.prepare(
+      "SELECT telegram_id, first_name, username, last_seen_at, memory_mode FROM users " +
+      "WHERE telegram_id NOT IN (SELECT telegram_id FROM blocked_users) " +
+      "ORDER BY COALESCE(last_seen_at, 0) DESC LIMIT 15"
+    ).all();
     rows = result.results || [];
-  } catch (err) {}
-  const lines = ["<b>Recent Users</b>", ""];
+  } catch (err) {
+    console.error("showAdminUsers query failed:", err && err.message ? err.message : err);
+  }
+  const lines = ["<b>👥 Recent Users</b>", ""];
   const buttons = [];
   for (let i = 0; i < rows.length; i++) {
     const u = rows[i];
-    lines.push(escapeHtml(u.first_name || "User") + (u.username ? " @" + escapeHtml(u.username) : "") + " (" + u.telegram_id + ") — " + (u.memory_mode || "normal"));
-    buttons.push([{ text: "Block " + (u.first_name || u.telegram_id).toString().slice(0, 15), callback_data: "adm:user:block:" + u.telegram_id }]);
+    const name = escapeHtml(u.first_name || "User");
+    const uname = u.username ? " @" + escapeHtml(u.username) : "";
+    lines.push(name + uname + " <code>" + u.telegram_id + "</code> — " + escapeHtml(u.memory_mode || "normal"));
+    buttons.push([{ text: "🚫 " + String(u.first_name || u.telegram_id).slice(0, 12), callback_data: "adm:user:block:" + u.telegram_id }]);
   }
   if (rows.length === 0) lines.push("No users.");
   buttons.push([{ text: "Back", callback_data: "adm:main" }]);
-  await editMessage(env, chatId, messageId, lines.join("\n"), buildInlineKeyboard(buttons), "HTML");
+  const text = lines.join("\n");
+  const kb = buildInlineKeyboard(buttons);
+  if (messageId) {
+    const edited = await editMessage(env, chatId, messageId, text, kb, "HTML");
+    if (edited && edited.ok) return;
+  }
+  await sendMessage(env, chatId, text, { parse_mode: "HTML", reply_markup: kb });
 }
 
 export async function showAdminGroups(env, chatId, messageId) {

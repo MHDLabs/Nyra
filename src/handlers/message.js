@@ -183,11 +183,10 @@ export async function processMessage(env, ctx, message) {
   if (!hasContent) return;
 
   if (isGroup) {
-    if (shouldReact(message, chat)) {
+    const identity = await getBotIdentity(env);
+    if (shouldReact(message, chat, identity)) {
       trySetReaction(env, ctx, chat, message.message_id, extractMessageText(message), from.id);
     }
-    
-    const identity = await getBotIdentity(env);
     const triggerCfg = await getTriggerConfig(env);
     const trigger = isGroupTrigger(message, identity, triggerCfg);
     if (!trigger.trigger) return;

@@ -16,6 +16,25 @@ let migrationsSettled = false;
 // never user input.
 const RETIRED_PERSONALITY_SQL = RETIRED_PERSONALITY_IDS.map(function (id) { return "'" + id + "'"; }).join(",");
 
+async function seedWorkersAiCatalog(env) {
+  const models = [
+    { id: "wai-llama-3.1-8b", model: "@cf/meta/llama-3.1-8b-instruct", label: "Workers AI · Llama 3.1 8B" },
+    { id: "wai-llama-3.3-70b", model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast", label: "Workers AI · Llama 3.3 70B Fast" },
+    { id: "wai-gemma-2-9b", model: "@cf/google/gemma-2-9b-it", label: "Workers AI · Gemma 2 9B" },
+    { id: "wai-qwen-1.5-7b", model: "@cf/qwen/qwen1.5-7b-chat-awq", label: "Workers AI · Qwen 1.5 7B" }
+  ];
+  const ts = Math.floor(Date.now() / 1000);
+  for (let i = 0; i < models.length; i++) {
+    const m = models[i];
+    try {
+      await env.DB.prepare(
+        "INSERT OR IGNORE INTO ai_connections (connection_id, telegram_id, label, provider, base_url, model, encrypted_key, key_iv, encryption_version, enabled, is_global, is_default, supports_tools, supports_vision, description, display_order, created_at, updated_at) " +
+        "VALUES (?, 0, ?, 'workers-ai', NULL, ?, 'workers-ai', 'workers-ai', 2, 0, 1, 0, 0, 0, 'Cloudflare Workers AI (free tier)', ?, ?, ?)"
+      ).bind(m.id, m.label, m.model, 200 + i, ts, ts).run();
+    } catch (e) { console.error("seed workers-ai", m.id, e.message); }
+  }
+}
+
 export async function ensureSchema(env) {
   if (schemaReady) {
     // Base tables already exist in this isolate, but the database itself may
@@ -85,6 +104,7 @@ export async function ensureSchema(env) {
     // sends (and the current message's images) are attached to the request as
     // OpenAI-style image_url data URLs; otherwise images are described as text.
     ["ai_connections", "supports_vision", "INTEGER DEFAULT 0"],
+    ["ai_connections", "supports_tools", "INTEGER DEFAULT 1"],
     // IANA timezone of the user (e.g. "Asia/Tehran"). Reminder instants are
     // always stored as UTC seconds; this column only preserves the user's
     // wall-clock context so recurrences and confirmations can be rendered and
@@ -133,6 +153,7 @@ export async function ensureSchema(env) {
     throw new Error("Schema initialization failed: " + schemaErrors.join("; "));
   }
   await runPendingMigrations(env);
+  await seedWorkersAiCatalog(env);
   const ts = now();
   for (let i = 0; i < DEFAULT_PERSONALITIES.length; i++) {
     const p = DEFAULT_PERSONALITIES[i];
