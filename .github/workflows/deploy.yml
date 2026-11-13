@@ -1,4 +1,4 @@
-# OTA deploy — push to main (after CI) automatically ships this Worker via Wrangler.
+# OTA deploy — push to main (after tests) automatically ships this Worker via Wrangler.
 #
 # Required repository secrets (Settings → Secrets and variables → Actions):
 #   CLOUDFLARE_API_TOKEN   — API token with Workers Scripts Edit + Account Read
@@ -37,16 +37,18 @@ jobs:
   test:
     name: Pre-deploy tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-      - run: npm ci --ignore-scripts
-      - run: find src test -name '*.js' -print0 | xargs -0 -n1 node --check
-      - run: node --test test/*.test.js
+      # Unit tests import only Node builtins + project source — no npm install needed.
+      # (wrangler/sharp optional deps previously hung npm ci with "Exit handler never called".)
+      - name: Syntax check
+        run: find src test -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Unit tests
+        run: node --test test/*.test.js
 
   deploy:
     name: Deploy Worker (OTA)
@@ -76,9 +78,12 @@ jobs:
           node-version: "22"
           cache: npm
 
-      - name: Install dependencies
+      - name: Install Wrangler only
         if: steps.creds.outputs.present == 'true'
-        run: npm ci --ignore-scripts
+        run: |
+          # Prefer lockfile when healthy; fall back to direct wrangler install.
+          npm ci --ignore-scripts --no-audit --no-fund \
+            || npm install --no-save --ignore-scripts --no-audit --no-fund wrangler@4
 
       - name: Deploy with build metadata
         if: steps.creds.outputs.present == 'true'
@@ -104,8 +109,6 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_WORKER_NAME: ${{ secrets.CLOUDFLARE_WORKER_NAME }}
         run: |
-          # Best-effort: resolve workers.dev URL and hit /status so schema + webhook bootstrap.
-          # Never fail the job if probe cannot reach the Worker.
           set +e
           WORKER_NAME="${CLOUDFLARE_WORKER_NAME:-nyra}"
           OUT=$(npx wrangler deployments list --name "$WORKER_NAME" 2>/dev/null | head -20)
