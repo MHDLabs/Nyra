@@ -93,6 +93,9 @@ max_batch_size = 10
 # runs same-chat messages in order and different chats in parallel, so a larger
 # batch buys no throughput — it only adds latency for the first message.
 max_batch_timeout = 1
+# One concurrent consumer: prevents two batches for the same chat from
+# interleaving (Queues has no per-chat group key on this plan).
+max_concurrency = 1
 dead_letter_queue = "nyra-updates-dlq"
 
 # Dead-letter queue for permanently failed updates (after 3 retries)
