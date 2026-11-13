@@ -4,6 +4,14 @@ import { truncate, sleep, splitForTelegram, fetchWithTimeout } from "./utils.js"
 import { getWebhookSecret } from "./crypto.js";
 import { mdv2ToPlain } from "./markdown.js";
 
+/** Leading RLM for Persian UI text (Telegram does not auto-RTL HTML). */
+export function applyRtlMark(text, enabled) {
+  if (!enabled || text == null) return text;
+  const s = String(text);
+  if (!s || s.charAt(0) === "\u200F") return s;
+  return "\u200F" + s;
+}
+
 export async function tg(env, method, payload, attempt) {
   const currentAttempt = attempt || 0;
   const url = TELEGRAM_API + "/bot" + env.TELEGRAM_BOT_TOKEN + "/" + method;

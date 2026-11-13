@@ -5,7 +5,7 @@ import { isGuestModeEnabled } from "../db/settings.js";
 // it runs inside the queue consumer, never inside the webhook request.
 import { MAX_TELEGRAM_LENGTH, MEMORY_UPDATE_INTERVAL, RATE_LIMIT_USER_PER_MIN, RATE_LIMIT_USER_PER_HOUR, RATE_LIMIT_CHAT_PER_HOUR, UNHEALTHY_FAILURE_THRESHOLD, UNHEALTHY_WARN_TTL, STREAM_EDIT_THROTTLE_MS, STREAM_PLACEHOLDER, FAST_STREAM_BUDGET_MS, FAST_STALL_TIMEOUT_MS } from "../config.js";
 import { now, escapeHtml, buildUserContent, checkRateLimit } from "../utils.js";
-import { sendMessageReturn, sendMessage, sendMessageSafeResult, editMessage, deleteMessage, startTypingHeartbeat, pickImageFile, downloadTelegramFile } from "../telegram.js";
+import { sendMessageReturn, sendMessage, sendMessageSafeResult, editMessage, deleteMessage, startTypingHeartbeat, pickImageFile, downloadTelegramFile, sendRichMessageSafe } from "../telegram.js";
 import { getUser, upsertUser, getChat, saveThreadMessage, getThreadContext, updateUsageStatsAsync, resolveUserActiveConnection, trackConnectionUsage, reserveSharedRequest, releaseSharedRequest, recordSharedTokenUsage, sharedQuotaMessage } from "../db.js";
 import { logChatMessage, detectMediaType } from "../db/chat-logs.js";
 import { normalizeError, humanizeError, shouldNotifyAdmin, tryAgentWithFallback, notifyAdminOnError } from "../ai.js";
@@ -352,6 +352,21 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
     }));
   } else {
     const part = chunks[0];
+    // Private chats: prefer Rich Message when available (prettier structured output).
+    if (!isGroup && !guestMode) {
+      const rich = await sendRichMessageSafe(env, chatId, replyText, { reply_to_message_id: replyToId });
+      if (rich && rich.ok) {
+        await deleteMessage(env, chatId, placeholderMsgId);
+        const mid = rich.result && rich.result.message_id;
+        if (mid) finalMsgId = mid;
+        await saveThreadMessage(env, chatId, threadId, finalMsgId, null, "assistant", replyText);
+        ctx.waitUntil(logChatMessage(env, {
+          chat_id: chatId, chat_type: "private", message_id: finalMsgId,
+          user_id: null, role: "assistant", content: replyText, created_at: now()
+        }));
+        return;
+      }
+    }
     const finalEdit = await editMessage(env, chatId, placeholderMsgId, part.text, undefined, part.parseMode);
     if (!finalEdit || !finalEdit.ok) {
       const desc = String(finalEdit ? finalEdit.description : "").toLowerCase();

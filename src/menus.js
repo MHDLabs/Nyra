@@ -21,30 +21,46 @@ export async function showSettingsMenu(env, chatId, messageId, userId) {
   const fallbackOn = !user || user.fallback_enabled !== 0;
   const hasCI = user && user.custom_instructions && user.custom_instructions.length > 0;
   const admin = isAdmin(env, userId);
-  const lines = ["<b>Settings</b>", ""];
-  lines.push("Active model: " + (activeConn ? escapeHtml(activeConn.label) + " (" + escapeHtml(activeConn.model) + ")" : "<i>none</i>"));
-  lines.push("Memory: " + ((user && user.memory_mode) || "normal"));
-  lines.push("Fallback: " + (fallbackOn ? "on" : "off"));
-  lines.push("Language: " + ((user && user.locale) || "en-US"));
-  const rows = [];
-  rows.push([{ text: "Choose Model", callback_data: "set:model" }]);
-  rows.push([{ text: "Personalities", callback_data: "set:pers" }]);
-  rows.push([{ text: "Memory", callback_data: "set:mem" }, { text: "Instructions" + (hasCI ? " ✓" : ""), callback_data: "set:ci" }]);
-  rows.push([{ text: "Fallback: " + (fallbackOn ? "On" : "Off"), callback_data: "set:fallback" }]);
   const loc = (user && user.locale) || "en-US";
-  const locLabel = loc.indexOf("fa") === 0 ? "فارسی" : "English";
-  rows.push([{ text: "Language: " + locLabel, callback_data: "set:lang:" + (loc.indexOf("fa") === 0 ? "en-US" : "fa-IR") }]);
-  rows.push([{ text: "Usage", callback_data: "set:usage" }, { text: "Privacy", callback_data: "set:privacy" }]);
+  const fa = String(loc).indexOf("fa") === 0;
+  const lines = fa
+    ? ["<b>⚙️ تنظیمات</b>", "",
+       "مدل فعال: " + (activeConn ? escapeHtml(activeConn.label) + " (" + escapeHtml(activeConn.model) + ")" : "<i>هیچ</i>"),
+       "حافظه: " + ((user && user.memory_mode) || "normal"),
+       "فالبک: " + (fallbackOn ? "روشن" : "خاموش"),
+       "زبان: فارسی"]
+    : ["<b>⚙️ Settings</b>", "",
+       "Active model: " + (activeConn ? escapeHtml(activeConn.label) + " (" + escapeHtml(activeConn.model) + ")" : "<i>none</i>"),
+       "Memory: " + ((user && user.memory_mode) || "normal"),
+       "Fallback: " + (fallbackOn ? "on" : "off"),
+       "Language: " + loc];
+  const rows = [];
+  rows.push([{ text: fa ? "🤖 انتخاب مدل" : "🤖 Choose Model", callback_data: "set:model" }]);
+  rows.push([{ text: fa ? "🎭 شخصیت‌ها" : "🎭 Personalities", callback_data: "set:pers" }]);
+  rows.push([
+    { text: fa ? "🧠 حافظه" : "🧠 Memory", callback_data: "set:mem" },
+    { text: (fa ? "✏️ دستورالعمل" : "✏️ Instructions") + (hasCI ? " ✓" : ""), callback_data: "set:ci" }
+  ]);
+  rows.push([{ text: (fa ? "فالبک: " : "Fallback: ") + (fallbackOn ? (fa ? "روشن" : "On") : (fa ? "خاموش" : "Off")), callback_data: "set:fallback" }]);
+  const locLabel = fa ? "فارسی" : "English";
+  rows.push([{ text: (fa ? "🌐 زبان: " : "🌐 Language: ") + locLabel, callback_data: "set:lang:" + (fa ? "en-US" : "fa-IR") }]);
+  rows.push([
+    { text: fa ? "📊 مصرف" : "📊 Usage", callback_data: "set:usage" },
+    { text: fa ? "🔒 حریم خصوصی" : "🔒 Privacy", callback_data: "set:privacy" }
+  ]);
   if (admin) {
-    rows.push([{ text: "🛠 Manage Models", callback_data: "myconn:list:set" }]);
-    rows.push([{ text: "🧭 Routes", callback_data: "route:list" }]);
+    rows.push([{ text: fa ? "🛠 مدیریت مدل‌ها" : "🛠 Manage Models", callback_data: "myconn:list:set" }]);
+    rows.push([{ text: fa ? "🧭 مسیرها" : "🧭 Routes", callback_data: "route:list" }]);
   } else {
     const personalOn = await isPersonalModelsAllowed(env);
-    if (personalOn) rows.push([{ text: "🔑 My Personal Models", callback_data: "mypersonal:menu" }]);
+    if (personalOn) rows.push([{ text: fa ? "🔑 مدل‌های شخصی" : "🔑 My Personal Models", callback_data: "mypersonal:menu" }]);
   }
-  rows.push([{ text: "Close", callback_data: "set:close" }]);
-  await editMessage(env, chatId, messageId, lines.join("\n"), buildInlineKeyboard(rows), "HTML");
+  rows.push([{ text: fa ? "بستن" : "Close", callback_data: "set:close" }]);
+  const text = (fa ? "\u200F" : "") + lines.join("\n");
+  await editMessage(env, chatId, messageId, text, buildInlineKeyboard(rows), "HTML");
 }
+
+
 
 export async function showModelList(env, chatId, messageId, userId, page) {
   const user = await getUser(env, userId);
