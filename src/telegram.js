@@ -25,6 +25,11 @@ export async function tg(env, method, payload, attempt) {
     }
     return data;
   } catch (err) {
+    // Network/timeout: one retry (same budget as 429). Avoids dropping sends on a single blip.
+    if (currentAttempt < TELEGRAM_RETRY_MAX) {
+      await sleep(400);
+      return await tg(env, method, payload, currentAttempt + 1);
+    }
     console.error("Telegram fetch failed [" + method + "]:", err.message);
     return { ok: false, description: err.message };
   }

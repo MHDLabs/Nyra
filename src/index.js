@@ -50,8 +50,9 @@ async function markHandled(env, updateId) {
   try { await env.KV.put("qdone:" + updateId, "1", { expirationTtl: QUEUE_DONE_TTL }); } catch (e) {}
 }
 
-// One conversation's messages, in order. Failures never stop the chain: a
-// retried update must not stall the messages queued behind it in the same chat.
+// One conversation's messages, in order. On failure, retry this message and
+// re-queue the rest of the same-chat batch without processing them — otherwise
+// msg2 can finish before a retried msg1 and the user sees answers out of order.
 async function processChain(env, ctx, messages) {
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
@@ -66,6 +67,8 @@ async function processChain(env, ctx, messages) {
     } catch (err) {
       console.error("Queued update processing failed:", err.message);
       safeRetry(msg);
+      for (let j = i + 1; j < messages.length; j++) safeRetry(messages[j]);
+      return;
     }
   }
 }

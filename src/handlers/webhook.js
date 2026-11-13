@@ -92,8 +92,28 @@ export async function handleWebhook(request, env, ctx) {
       }
       try {
         if (await isFastMessage(env, msgUpdate.from)) {
-          await safeProcessMessage(env, ctx, msgUpdate);
-          return okResponse();
+          // Best-effort per-user lock so two concurrent webhook AI turns for the
+          // same chat are not both processed inline out of order.
+          const lockKey = "fastlock:" + msgUpdate.from.id;
+          let locked = false;
+          if (env.KV) {
+            const held = await env.KV.get(lockKey);
+            if (!held) {
+              await env.KV.put(lockKey, "1", { expirationTtl: 90 });
+              locked = true;
+            }
+          }
+          if (locked || !env.KV) {
+            try {
+              await safeProcessMessage(env, ctx, msgUpdate);
+              return okResponse();
+            } finally {
+              if (locked && env.KV) {
+                try { await env.KV.delete(lockKey); } catch (e) {}
+              }
+            }
+          }
+          // Lock held: fall through to queue so order is preserved by processChain.
         }
       } catch (err) {
         console.error("fast path failed, using queue:", err.message);
