@@ -9,6 +9,7 @@ import { parseMemoryData, serializeMemoryData, formatMemoryForUser } from "./mem
 import { t } from "./i18n/index.js";
 import { startOnboarding, getOnboardingState } from "./handlers/onboarding.js";
 import { isMaintenanceMode } from "./db/maintenance.js";
+import { getTriggerConfig, setTriggerFlag, setTriggerWords } from "./db/settings.js";
 import { getConfiguredReactions, getAllowedReactions } from "./reactions.js";
 import { showNoConnectionMessage, showSettingsMenu, showPersonalitiesForUser, showUsage } from "./menus.js";
 import { createBroadcast, startBroadcast, listBroadcasts } from "./broadcast.js";
@@ -445,6 +446,23 @@ export async function handleUserCommand(env, ctx, command, args, message, from, 
     if (cmd === "timezone" || cmd === "tz") return await handleTimezoneCommand(env, chatId, userId, args, lang);
   }
 
+  if (cmd === "settriggers") {
+    if (!isAdmin(env, userId)) {
+      await sendMessage(env, chatId, "Admin only.");
+      return;
+    }
+    const list = String(args || "").trim();
+    if (!list) {
+      const cfg = await getTriggerConfig(env);
+      await sendMessage(env, chatId, "Current words: " + (cfg.words || []).join(", ") + "\nUsage: /settriggers نیرا,nyra,bot");
+      return;
+    }
+    await setTriggerWords(env, list, userId);
+    const cfg = await getTriggerConfig(env);
+    await sendMessage(env, chatId, "✅ Trigger words: " + (cfg.words || []).join(", "));
+    return;
+  }
+
   // Unknown command — silent in groups; private gets a short tip.
   if (isGroup) return;
   const user = await getUser(env, userId);
@@ -468,6 +486,7 @@ export async function showAdminMenu(env, chatId, messageId) {
     [{ text: fa ? "🚫 مسدودها" : "🚫 Blocked", callback_data: "adm:blocked" }, { text: fa ? "📊 آمار" : "📊 Stats", callback_data: "adm:stats" }],
     [{ text: fa ? "🤖 مدل‌ها" : "🤖 Models", callback_data: "adm:conns" }, { text: fa ? "💚 وضعیت" : "💚 Status", callback_data: "adm:status" }],
     [{ text: fa ? "😀 واکنش‌ها" : "😀 Reactions", callback_data: "adm:react" }, { text: fa ? "⚠️ نگهداری" : "⚠️ Maintenance", callback_data: "adm:maint" }],
+    [{ text: fa ? "🔔 تریگرها / مهمان" : "🔔 Triggers / Guest", callback_data: "adm:triggers" }],
     [{ text: fa ? "بستن" : "Close", callback_data: "adm:close" }]
   ];
   await editMessage(env, chatId, messageId, text, buildInlineKeyboard(rows), "HTML");
@@ -601,3 +620,38 @@ Use this during critical maintenance, outages, or emergencies.`;
   ];
   await editMessage(env, chatId, messageId, text, buildInlineKeyboard(rows), "HTML");
 }
+
+export async function showAdminTriggers(env, chatId, messageId) {
+  const cfg = await getTriggerConfig(env);
+  const user = chatId ? await getUser(env, chatId).catch(function () { return null; }) : null;
+  const fa = user && String(user.locale || "").indexOf("fa") === 0;
+  const on = fa ? "روشن" : "ON";
+  const off = fa ? "خاموش" : "OFF";
+  const text = fa
+    ? ("<b>🔔 تریگرهای گروه و حالت مهمان</b>\n\n"
+      + "• تریگر کلی: <b>" + (cfg.enabled ? on : off) + "</b>\n"
+      + "• پاسخ به ریپلای: <b>" + (cfg.reply ? on : off) + "</b>\n"
+      + "• منشن @" + "یوزرنیم: <b>" + (cfg.mention ? on : off) + "</b>\n"
+      + "• کلمات: <code>" + escapeHtml((cfg.words || []).join(", ")) + "</code>\n"
+      + "• Guest mode: <b>" + (cfg.guestMode ? on : off) + "</b>\n\n"
+      + "در Guest mode ابتدای هر پاسخ گروهی با تیتر انگلیسی <b>Guest mode</b> می‌آید.\n"
+      + "کلمات را با /settriggers کلمه1,کلمه2 تنظیم کنید.")
+    : ("<b>🔔 Group triggers & Guest mode</b>\n\n"
+      + "• Master: <b>" + (cfg.enabled ? on : off) + "</b>\n"
+      + "• Reply-to-bot: <b>" + (cfg.reply ? on : off) + "</b>\n"
+      + "• @mention: <b>" + (cfg.mention ? on : off) + "</b>\n"
+      + "• Words: <code>" + escapeHtml((cfg.words || []).join(", ")) + "</code>\n"
+      + "• Guest mode: <b>" + (cfg.guestMode ? on : off) + "</b>\n\n"
+      + "Guest mode prefixes group replies with bold <b>Guest mode</b>.\n"
+      + "Set words with /settriggers word1,word2");
+  const rows = [
+    [{ text: (cfg.enabled ? "✅" : "❌") + " Master", callback_data: "adm:trig:enabled" },
+     { text: (cfg.reply ? "✅" : "❌") + " Reply", callback_data: "adm:trig:reply" }],
+    [{ text: (cfg.mention ? "✅" : "❌") + " Mention", callback_data: "adm:trig:mention" },
+     { text: (cfg.guestMode ? "✅" : "❌") + " Guest", callback_data: "adm:trig:guest" }],
+    [{ text: fa ? "بازگشت" : "Back", callback_data: "adm:main" }]
+  ];
+  if (messageId) await editMessage(env, chatId, messageId, text, buildInlineKeyboard(rows), "HTML");
+  else await sendMessage(env, chatId, text, { parse_mode: "HTML", reply_markup: buildInlineKeyboard(rows) });
+}
+

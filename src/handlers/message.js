@@ -8,6 +8,7 @@ import { getBotIdentity, getChat, recordGroupChatAndCheckAccess, isUserBlocked, 
 import { handleFlowMessage } from "../flows.js";
 import { handleUserCommand } from "../commands.js";
 import { shouldReact, trySetReaction, extractMessageText, setConfiguredReactions, clearConfiguredReactions } from "../reactions.js";
+import { getTriggerConfig } from "../db/settings.js";
 import { handleAIMessage } from "./ai-message.js";
 import { parseCommand } from "./command-parse.js";
 import { handleOnboardingMessage, getOnboardingState } from "./onboarding.js";
@@ -187,7 +188,8 @@ export async function processMessage(env, ctx, message) {
     }
     
     const identity = await getBotIdentity(env);
-    const trigger = isGroupTrigger(message, identity);
+    const triggerCfg = await getTriggerConfig(env);
+    const trigger = isGroupTrigger(message, identity, triggerCfg);
     if (!trigger.trigger) return;
     const threadId = await determineThreadId(env, chat.id, message, identity, trigger.mode);
     await handleAIMessage(env, ctx, message, from, chat, true, threadId);

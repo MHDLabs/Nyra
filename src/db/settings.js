@@ -1,5 +1,6 @@
 // Global deployment settings (`app_settings` key/value toggles).
 import { now } from "../utils.js";
+import { NYRA_VARIANTS } from "../config.js";
 import {
   SETTING_SHARED_SERVICE_ENABLED, SETTING_SHARED_REQUEST_LIMIT, SETTING_SHARED_TOKEN_LIMIT,
   DEFAULT_SHARED_REQUEST_LIMIT, DEFAULT_SHARED_TOKEN_LIMIT
@@ -112,4 +113,41 @@ export async function setSharedServiceSettings(env, updatedBy, body) {
     if (!ok) return { ok: false, error: "failed to persist " + keys[i] };
   }
   return { ok: true, settings: await getSharedServiceSettings(env) };
+}
+
+
+// --- Group triggers & guest mode ------------------------------------------
+
+function parseWordList(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return NYRA_VARIANTS.slice();
+  const parts = s.split(/[,\n]+/).map(function (w) { return w.trim(); }).filter(Boolean);
+  return parts.length ? parts : NYRA_VARIANTS.slice();
+}
+
+/** Global group-trigger policy (admin-configurable). */
+export async function getTriggerConfig(env) {
+  const enabled = (await getSetting(env, "trigger_enabled", "1")) !== "0";
+  const reply = (await getSetting(env, "trigger_reply", "1")) !== "0";
+  const mention = (await getSetting(env, "trigger_mention", "1")) !== "0";
+  const words = parseWordList(await getSetting(env, "trigger_words", NYRA_VARIANTS.join(",")));
+  const guestMode = (await getSetting(env, "guest_mode", "0")) === "1" || (await getSetting(env, "guest_mode", "0")) === "true";
+  return { enabled: enabled, reply: reply, mention: mention, words: words, guestMode: guestMode };
+}
+
+export async function setTriggerFlag(env, key, on, updatedBy) {
+  const allowed = ["trigger_enabled", "trigger_reply", "trigger_mention", "guest_mode"];
+  if (allowed.indexOf(key) === -1) return false;
+  return await setSetting(env, key, on ? "1" : "0", updatedBy);
+}
+
+export async function setTriggerWords(env, words, updatedBy) {
+  const list = Array.isArray(words) ? words : parseWordList(words);
+  const cleaned = list.map(function (w) { return String(w).trim().slice(0, 32); }).filter(Boolean).slice(0, 20);
+  return await setSetting(env, "trigger_words", cleaned.join(","), updatedBy);
+}
+
+export async function isGuestModeEnabled(env) {
+  const cfg = await getTriggerConfig(env);
+  return !!cfg.guestMode;
 }

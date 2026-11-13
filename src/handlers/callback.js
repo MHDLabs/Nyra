@@ -395,6 +395,20 @@ export async function handleCallbackQuery(env, ctx, query) {
       else if (section === "stats") { await showAdminStats(env, chatId, messageId); }
       else if (section === "conns") { await showMyConnections(env, chatId, messageId, userId, "adm"); }
       else if (section === "status") { await showAdminStatus(env, chatId, messageId); }
+      else if (section === "triggers") {
+        const { showAdminTriggers } = await import("../commands.js");
+        await showAdminTriggers(env, chatId, messageId);
+      }
+      else if (section === "trig") {
+        const { showAdminTriggers } = await import("../commands.js");
+        const { setTriggerFlag, getTriggerConfig } = await import("../db/settings.js");
+        const cfg = await getTriggerConfig(env);
+        if (action === "enabled") await setTriggerFlag(env, "trigger_enabled", !cfg.enabled, userId);
+        else if (action === "reply") await setTriggerFlag(env, "trigger_reply", !cfg.reply, userId);
+        else if (action === "mention") await setTriggerFlag(env, "trigger_mention", !cfg.mention, userId);
+        else if (action === "guest") await setTriggerFlag(env, "guest_mode", !cfg.guestMode, userId);
+        await showAdminTriggers(env, chatId, messageId);
+      }
       else if (section === "react") {
         // Opening the section arms a flow so the admin's next plain message is
         // parsed as the allowlist; restoring defaults disarms it again.

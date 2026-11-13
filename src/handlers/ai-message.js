@@ -1,3 +1,4 @@
+import { isGuestModeEnabled } from "../db/settings.js";
 // The AI turn: rate limits, context assembly, the streaming reply loop with
 // throttled edit-in-place, reaction handling, memory consolidation and error
 // surfacing. This is the single most performance-sensitive path in the bot —
@@ -14,6 +15,23 @@ import { safeFormatChunks, plainText, plainTextChunks } from "../formatter.js";
 import { handleExplicitMemoryIntent } from "../tools.js";
 import { isVoiceTranscribable, transcribeVoice, withTranscript, pruneStaleTranscripts } from "../voice/stt.js";
 
+function applyGuestPrefix(text, guestMode, parseMode) {
+  if (!guestMode) return text;
+  const body = String(text || "");
+  if (body.indexOf("Guest mode") === 0 || body.indexOf("*Guest mode*") === 0 || body.indexOf("<b>Guest mode</b>") === 0) return body;
+  if (parseMode === "MarkdownV2") return "*Guest mode*\n\n" + body;
+  return "<b>Guest mode</b>\n\n" + body;
+}
+
+function prefixGuestChunks(chunks, guestMode) {
+  if (!guestMode || !chunks || !chunks.length) return chunks;
+  const first = chunks[0];
+  const pm = first.parseMode || "HTML";
+  first.text = applyGuestPrefix(first.text, true, pm);
+  if (!first.parseMode) first.parseMode = "HTML";
+  return chunks;
+}
+
 export async function handleAIMessage(env, ctx, message, from, chat, isGroup, threadId) {
   // The typing indicator is owned by this wrapper, not by the stream loop, so
   // it covers *every* slow phase (profile load, connection resolution, context
@@ -29,6 +47,8 @@ export async function handleAIMessage(env, ctx, message, from, chat, isGroup, th
 }
 
 async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, heartbeat) {
+  const guestMode = isGroup ? await isGuestModeEnabled(env) : false;
+  const guestPrefix = guestMode ? "<b>Guest mode</b>\n\n" : "";
   const userId = from.id;
   const chatId = chat.id;
   const rawText = (message.text || message.caption || "").trim();
@@ -257,12 +277,10 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
     } else {
       finalText = "⚠ " + humanizeError(category);
     }
-    const replaced = await editMessage(env, chatId, placeholderMsgId, finalText, undefined, undefined);
+    const replaced = await editMessage(env, chatId, placeholderMsgId, applyGuestPrefix(finalText, guestMode), undefined, undefined);
     if (!replaced || !replaced.ok) {
-      // The placeholder could not be edited (deleted by the user, or refused):
-      // send the text as a new message so the turn still terminates visibly.
       await deleteMessage(env, chatId, placeholderMsgId);
-      await sendMessage(env, chatId, finalText);
+      await sendMessage(env, chatId, applyGuestPrefix(finalText, guestMode, "HTML"), { parse_mode: "HTML" });
     }
     if (shouldNotifyAdmin(category)) {
       const connForAlert = finalConn || connection;
@@ -292,7 +310,8 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
   }
   
   const replyText = accumulated || "(empty response)";
-  const chunks = safeFormatChunks(replyText, "MarkdownV2");
+  let chunks = safeFormatChunks(replyText, "MarkdownV2");
+  chunks = prefixGuestChunks(chunks, guestMode);
 
   let finalMsgId = placeholderMsgId;
   if (chunks.length > 1) {

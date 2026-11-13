@@ -136,15 +136,30 @@ function isReplyToBot(message, identity) {
   return message.reply_to_message.from.id === identity.id;
 }
 
-export function isGroupTrigger(message, identity) {
+export function isGroupTrigger(message, identity, config) {
   if (!message) return { trigger: false, mode: null };
-  if (isReplyToBot(message, identity)) {
+  const cfg = config || { enabled: true, reply: true, mention: true, words: null };
+  if (cfg.enabled === false) return { trigger: false, mode: null };
+
+  if (cfg.reply !== false && isReplyToBot(message, identity)) {
     return { trigger: true, mode: "reply" };
   }
   const text = (message.text || message.caption || "");
   if (!text) return { trigger: false, mode: null };
-  if (containsNyraWord(text)) return { trigger: true, mode: "call" };
-  if (identity && identity.username) {
+
+  // Custom words (admin) or built-in Nyra variants
+  const words = Array.isArray(cfg.words) && cfg.words.length ? cfg.words : null;
+  if (words) {
+    const lower = text.toLowerCase();
+    for (let i = 0; i < words.length; i++) {
+      const w = String(words[i] || "").toLowerCase();
+      if (w && lower.indexOf(w) !== -1) return { trigger: true, mode: "call" };
+    }
+  } else if (containsNyraWord(text)) {
+    return { trigger: true, mode: "call" };
+  }
+
+  if (cfg.mention !== false && identity && identity.username) {
     const pattern = new RegExp("@" + escapeRegex(identity.username), "i");
     if (pattern.test(text)) return { trigger: true, mode: "call" };
   }
