@@ -50,7 +50,16 @@ export async function processMessage(env, ctx, message) {
         return;
       }
       // Commands during onboarding clear state and process command
-      if (text.startsWith("/")) {
+      // Reply-keyboard shortcuts (private chat menu under the input field).
+  if (!isGroup && text && !text.startsWith("/")) {
+    const mapped = mapReplyMenuText(text);
+    if (mapped) {
+      await handleUserCommand(env, ctx, mapped, "", message, from, chat);
+      return;
+    }
+  }
+
+  if (text.startsWith("/")) {
         await env.DB.prepare("UPDATE users SET onboarding_state = NULL, updated_at = ? WHERE telegram_id = ?")
           .bind(now(), from.id).run();
         // Continue to command processing below
@@ -64,7 +73,16 @@ export async function processMessage(env, ctx, message) {
     const flowState = await getFlowState(env, from.id);
     if (flowState) {
       if (/^\/cancel(@\w+)?$/i.test(text)) { await clearFlowState(env, from.id); await sendMessage(env, chat.id, "Cancelled."); return; }
-      if (text.startsWith("/")) { await clearFlowState(env, from.id); }
+      // Reply-keyboard shortcuts (private chat menu under the input field).
+  if (!isGroup && text && !text.startsWith("/")) {
+    const mapped = mapReplyMenuText(text);
+    if (mapped) {
+      await handleUserCommand(env, ctx, mapped, "", message, from, chat);
+      return;
+    }
+  }
+
+  if (text.startsWith("/")) { await clearFlowState(env, from.id); }
       else if (flowState.flowType === "reaction_config") {
         if (!isAdmin(env, from.id)) { await clearFlowState(env, from.id); return; }
         if (/^(default|reset|پیش\u200c?فرض)$/i.test(text.trim())) {
@@ -133,6 +151,15 @@ export async function processMessage(env, ctx, message) {
     }
   }
 
+  // Reply-keyboard shortcuts (private chat menu under the input field).
+  if (!isGroup && text && !text.startsWith("/")) {
+    const mapped = mapReplyMenuText(text);
+    if (mapped) {
+      await handleUserCommand(env, ctx, mapped, "", message, from, chat);
+      return;
+    }
+  }
+
   if (text.startsWith("/")) {
     const identity = await getBotIdentity(env);
     // Pass the full message so bot_command entities (and caption_entities) are used.
@@ -168,4 +195,14 @@ export async function processMessage(env, ctx, message) {
   }
 
   await handleAIMessage(env, ctx, message, from, chat, false, chat.id);
+}
+
+
+function mapReplyMenuText(text) {
+  const s = String(text || "").trim();
+  if (s === "⚙️ تنظیمات" || s === "⚙️ Settings") return "settings";
+  if (s === "🎭 شخصیت" || s === "🎭 Personality") return "personality";
+  if (s === "🧠 حافظه" || s === "🧠 Memory") return "memory";
+  if (s === "❓ راهنما" || s === "❓ Help") return "help";
+  return null;
 }

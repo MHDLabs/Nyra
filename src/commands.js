@@ -3,7 +3,7 @@
 import { RATE_LIMIT_ADMIN_PER_MIN, MAX_PERSONALITIES, MAX_PERSONALITY_PROMPT, MAX_PERSONALITY_DESC, ONBOARDING_MAX_NAME_LENGTH, MINIAPP_DISABLED } from "./config.js";
 import { now, escapeHtml, generateShortId, isAdmin, checkRateLimit } from "./utils.js";
 import { getMasterKey } from "./crypto.js";
-import { sendMessage, editMessage, buildInlineKeyboard } from "./telegram.js";
+import { sendMessage, editMessage, buildInlineKeyboard, buildMainReplyKeyboard } from "./telegram.js";
 import { getUser, upsertUser, resolveUserActiveConnection } from "./db.js";
 import { parseMemoryData, serializeMemoryData, formatMemoryForUser } from "./memory.js";
 import { t } from "./i18n/index.js";
@@ -71,70 +71,79 @@ async function handleStartCommand(env, chatId, userId, from, isGroup, startPaylo
       : ("<i>Link: </i><code>" + escapeHtml(payload) + "</code>"));
   }
 
-  const keyboard = buildInlineKeyboard([
-    [{ text: locale.startsWith("fa") ? "⚙️ تنظیمات" : "⚙️ Settings", callback_data: "set:menu" }],
-    [{ text: locale.startsWith("fa") ? "🎭 شخصیت" : "🎭 Personality", callback_data: "set:pers" }],
-    [{ text: locale.startsWith("fa") ? "🧠 حافظه" : "🧠 Memory", callback_data: "set:mem" }]
-  ]);
-  await sendMessage(env, chatId, msg, { parse_mode: "HTML", reply_markup: keyboard });
+  await sendMessage(env, chatId, msg, {
+    parse_mode: "HTML",
+    reply_markup: buildMainReplyKeyboard(locale)
+  });
 }
 
 async function handleHelpCommand(env, chatId, userId, isGroup) {
   const user = await getUser(env, userId);
   const locale = user?.locale || "en-US";
   const fa = locale.startsWith("fa");
+  if (isGroup) {
+    const lines = fa ? [
+      "<b>📋 دستورات گروه</b>",
+      "",
+      "/start — معرفی کوتاه",
+      "/help — همین راهنما",
+      "",
+      "🔒 تنظیمات، شخصیت، حافظه و یادآورها فقط در گفتگوی <b>خصوصی</b> با نیرا."
+    ] : [
+      "<b>📋 Group commands</b>",
+      "",
+      "/start — short intro",
+      "/help — this guide",
+      "",
+      "🔒 Settings, personality, memory and reminders only in a <b>private</b> chat with Nyra."
+    ];
+    await sendMessage(env, chatId, lines.join("\n"), { parse_mode: "HTML" });
+    return;
+  }
   const lines = fa ? [
-    "<b>دستورات</b>",
+    "<b>📋 دستورات</b>",
     "",
     "/start — سلام و منوی سریع",
     "/help — همین راهنما",
-    "/settings — تنظیمات",
-    "/personality — انتخاب شخصیت",
-    "/memory — مشاهده حافظه",
+    "/settings — ⚙️ تنظیمات",
+    "/personality — 🎭 انتخاب شخصیت",
+    "/memory — 🧠 مشاهده حافظه",
     "/forget [موضوع] — پاک کردن حافظه یا یک موضوع",
     "/remember <متن> — ذخیره در حافظه",
     "/setname <نام> — نام نمایشی",
     "/usage — آمار مصرف",
     "/newpersonality — شخصیت سفارشی",
     "",
-    "<b>یادآورها</b>",
+    "<b>⏰ یادآورها</b>",
     "/remind — یادآور جدید",
-    "/reminders — لیست یادآورها",
+    "/reminders — فهرست یادآورها",
     "/timezone — منطقه زمانی"
   ] : [
-    "<b>Commands</b>",
+    "<b>📋 Commands</b>",
     "",
-    "/start — Greeting & quick menu",
-    "/help — This message",
-    "/settings — Preferences",
-    "/personality — Choose personality",
-    "/memory — View memory",
-    "/forget [topic] — Clear memory or a topic",
-    "/remember &lt;fact&gt; — Store a fact",
-    "/setname &lt;name&gt; — Preferred name",
-    "/usage — Usage stats",
-    "/newpersonality — Create a personality",
+    "/start — greeting and quick menu",
+    "/help — this guide",
+    "/settings — ⚙️ Settings",
+    "/personality — 🎭 Personality",
+    "/memory — 🧠 Memory",
+    "/forget [topic] — clear memory or one topic",
+    "/remember <text> — save to memory",
+    "/setname <name> — display name",
+    "/usage — usage stats",
+    "/newpersonality — custom personality",
     "",
-    "<b>Reminders</b>",
-    "/remind — New reminder",
-    "/reminders — List reminders",
-    "/timezone — Time zone"
+    "<b>⏰ Reminders</b>",
+    "/remind — new reminder",
+    "/reminders — list reminders",
+    "/timezone — time zone"
   ];
-  if (isAdmin(env, userId)) {
-    lines.push("");
-    lines.push(fa ? "<b>مدیریت</b>" : "<b>Admin</b>");
-    lines.push("/admin — " + (fa ? "پنل مدیریت" : "Admin panel"));
-    lines.push("/stats — " + (fa ? "آمار سیستم" : "System stats"));
-    lines.push("/broadcast — " + (fa ? "پیام همگانی" : "Broadcast"));
-  }
-  if (!isGroup) {
-    lines.push("");
-    lines.push(fa
-      ? "مینی‌اپ اختیاری است؛ همه کارها از همین چت هم قابل انجام است."
-      : "The Mini App is optional — everything works from this chat.");
-  }
-  await sendMessage(env, chatId, lines.join("\n"), { parse_mode: "HTML" });
+  await sendMessage(env, chatId, lines.join("\n"), {
+    parse_mode: "HTML",
+    reply_markup: buildMainReplyKeyboard(locale)
+  });
 }
+
+
 
 async function handleAdminCommand(env, chatId, userId, isGroup) {
   const user = await getUser(env, userId);
@@ -302,11 +311,36 @@ async function handleBroadcastCommand(env, ctx, from, chat, args) {
   }
 }
 
+// Commands that are meaningful in groups. Everything else is private-only
+// or ignored so Nyra does not answer other bots' /commands in shared chats.
+
+async function privateOnlyNotice(env, chatId, userId) {
+  const user = await getUser(env, userId);
+  const locale = (user && user.locale) || "en-US";
+  const fa = String(locale).indexOf("fa") === 0;
+  await sendMessage(env, chatId, fa
+    ? "🔒 این دستور فقط در گفتگوی خصوصی با نیرا در دسترس است. در چت شخصی /settings را بزنید."
+    : "🔒 This command works in a private chat with Nyra. Open a DM and use /settings.");
+}
+
+const GROUP_COMMANDS = new Set(["start", "help"]);
+const PRIVATE_ONLY_COMMANDS = new Set([
+  "settings", "personality", "memory", "forget", "remember", "setname",
+  "usage", "newpersonality", "admin", "stats", "broadcast",
+  "remind", "reminders", "reminder", "editreminder", "cancelreminder",
+  "donereminder", "timezone", "tz"
+]);
+
 export async function handleUserCommand(env, ctx, command, args, message, from, chat) {
   const userId = from.id;
   const chatId = chat.id;
   const isGroup = chat.type === "group" || chat.type === "supergroup";
   const cmd = String(command || "").replace(/^\//, "").toLowerCase();
+
+  // Groups: ignore foreign/unknown commands entirely (no "not found" noise).
+  if (isGroup && !GROUP_COMMANDS.has(cmd) && !PRIVATE_ONLY_COMMANDS.has(cmd)) {
+    return;
+  }
 
   // Maintenance: still allow admin commands
   if (cmd !== "admin" && cmd !== "stats" && cmd !== "broadcast") {
@@ -332,19 +366,19 @@ export async function handleUserCommand(env, ctx, command, args, message, from, 
     return;
   }
   if (cmd === "settings") {
-    if (isGroup) { await sendMessage(env, chatId, "Please use /settings in private chat."); return; }
+    if (isGroup) { await privateOnlyNotice(env, chatId, userId); return; }
     await upsertUser(env, from);
     await showSettingsMenu(env, chatId, null, userId);
     return;
   }
   if (cmd === "personality") {
-    if (isGroup) { await sendMessage(env, chatId, "Please use /personality in private chat."); return; }
+    if (isGroup) { await privateOnlyNotice(env, chatId, userId); return; }
     await upsertUser(env, from);
     await showPersonalitiesForUser(env, chatId, null, userId);
     return;
   }
   if (cmd === "memory") {
-    if (isGroup) { await sendMessage(env, chatId, "Please use /memory in private chat."); return; }
+    if (isGroup) { await privateOnlyNotice(env, chatId, userId); return; }
     await upsertUser(env, from);
     await handleMemoryCommand(env, chatId, userId);
     return;
@@ -365,13 +399,13 @@ export async function handleUserCommand(env, ctx, command, args, message, from, 
     return;
   }
   if (cmd === "usage") {
-    if (isGroup) { await sendMessage(env, chatId, "Please use /usage in private chat."); return; }
+    if (isGroup) { await privateOnlyNotice(env, chatId, userId); return; }
     await upsertUser(env, from);
     await handleUsageCommand(env, chatId, userId);
     return;
   }
   if (cmd === "newpersonality") {
-    if (isGroup) { await sendMessage(env, chatId, "Please use /newpersonality in private chat."); return; }
+    if (isGroup) { await privateOnlyNotice(env, chatId, userId); return; }
     await upsertUser(env, from);
     await handleNewPersonalityCommand(env, chatId, userId, args);
     return;
@@ -411,12 +445,13 @@ export async function handleUserCommand(env, ctx, command, args, message, from, 
     if (cmd === "timezone" || cmd === "tz") return await handleTimezoneCommand(env, chatId, userId, args, lang);
   }
 
-  // Unknown command
+  // Unknown command — silent in groups; private gets a short tip.
+  if (isGroup) return;
   const user = await getUser(env, userId);
   const locale = user?.locale || "en-US";
   await sendMessage(env, chatId, locale.startsWith("fa")
-    ? "دستور ناشناخته. /help را ببینید."
-    : "Unknown command. Try /help.");
+    ? "❓ دستور ناشناخته. /help را ببینید."
+    : "❓ Unknown command. Try /help.");
 }
 
 

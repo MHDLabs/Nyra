@@ -190,9 +190,9 @@ export const EDGE_TTS_MAX_CHARS = 800;
 export const SUPPORTED_LOCALES = ["en-US", "fa-IR"];
 export const DEFAULT_LOCALE = "en-US";
 // Bump when the onboarding sequence changes in a way that must be shown again.
-export const ONBOARDING_VERSION = 1;
+export const ONBOARDING_VERSION = 2;
 export const ONBOARDING_MAX_NAME_LENGTH = 50;
-export const ONBOARDING_STEPS = ["language", "name", "personality", "disclosure"];
+export const ONBOARDING_STEPS = ["language", "name", "personality", "custom_intro", "disclosure"];
 // app_settings keys owned by the operations layer.
 export const SETTING_MAINTENANCE_ENABLED = "maintenance_enabled";
 export const SETTING_DEFAULT_LOCALE = "default_locale";
@@ -203,8 +203,8 @@ export const MAINTENANCE_NOTICE_TTL_S = 3600;
 export const DEFAULT_PERSONALITIES = [
   {
     id: "default",
-    name: "Default Assistant",
-    prompt: "You are Nyra in Default mode. You are a helpful, conversational AI assistant.\nTone: Warm, direct, and natural. You sound like a knowledgeable friend, not a corporate assistant.\nStyle: Clear and concise. Use plain language. Avoid jargon unless the user uses it first.\nHumor: Minimal. A light touch is fine when it fits, but never force it.\nStructure: Usually prose. Use lists or headings only when the content genuinely benefits from them.\nFormality: Neutral. Not stiff, not overly casual.\nBehavior: Answer the question directly. If the user asks a brief question, give a brief answer. If they want depth, provide it. Ask clarifying questions when the request is ambiguous.\nExplanation: Start with the answer, then explain if needed. Avoid preamble like \"Great question!\" or \"I'd be happy to help.\"\nInteraction: Match the user's energy. If they're terse, be terse. If they're detailed, be detailed.\nAvoid: Filler phrases, unnecessary repetition, restating the question, and over-explaining."
+    name: "Everyday Nyra",
+    prompt: "You are Nyra in Everyday mode — a practical, everyday companion for ordinary tasks and casual chat.\nTone: Natural and approachable, like a calm friend who gets things done.\nStyle: Clear, concise, plain language. Prefer short answers for short questions.\nHumor: Light only when it fits; never forced.\nStructure: Prose first; lists only when useful.\nBehavior: Answer directly. Match the user's energy. Ask clarifying questions when needed.\nAvoid: Corporate filler, over-explaining, and repeating the question."
   },
   {
     id: "friendly",

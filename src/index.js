@@ -7,7 +7,7 @@
 import { parseAdminIds } from "./utils.js";
 import { getMasterKey, validateSecrets } from "./crypto.js";
 import { ensureSchema, maybeInitSchema } from "./db.js";
-import { ensureWebhook, ensureMenuButton } from "./telegram.js";
+import { ensureWebhook, ensureMenuButton, ensureBotCommands } from "./telegram.js";
 import { routeMiniAppAPI } from "./miniapp.js";
 import { routeAdminPanel } from "./admin-panel/router.js";
 import { MINIAPP_DISABLED } from "./config.js";
@@ -176,6 +176,7 @@ card{max-width:420px}h1{font-size:1.35rem;margin:0 0 8px}p{opacity:.85;line-heig
     // Proactive inactivity check-ins (opt-in; one per inactivity episode)
     ctx.waitUntil(deliverProactiveCheckins(env, Math.floor(Date.now() / 1000)));
     ctx.waitUntil(deliverDueSchedules(env, Math.floor(Date.now() / 1000)));
+    ctx.waitUntil(ensureBotCommands(env));
     // Clean up old failed updates (30 day retention)
     ctx.waitUntil(cleanupOldFailedUpdates(env, 30));
   },

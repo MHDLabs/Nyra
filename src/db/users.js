@@ -22,7 +22,7 @@ export async function upsertUser(env, from) {
   const existing = await getUser(env, from.id);
   if (!existing) {
     try {
-      await env.DB.prepare("INSERT INTO users (telegram_id, first_name, last_name, username, language_code, personality_id, memory_mode, memory_data, usage_stats, fallback_enabled, msg_counter, active_connection_id, created_at, last_seen_at, updated_at) VALUES (?, ?, ?, ?, ?, 'default', 'normal', '{}', '{}', 1, 0, NULL, ?, ?, ?) ON CONFLICT(telegram_id) DO NOTHING")
+      await env.DB.prepare("INSERT INTO users (telegram_id, first_name, last_name, username, language_code, personality_id, memory_mode, memory_data, usage_stats, fallback_enabled, msg_counter, active_connection_id, created_at, last_seen_at, updated_at) VALUES (?, ?, ?, ?, ?, 'romantic', 'normal', '{}', '{}', 1, 0, NULL, ?, ?, ?) ON CONFLICT(telegram_id) DO NOTHING")
         .bind(from.id, from.first_name || "", from.last_name || "", from.username || "", from.language_code || "", ts, ts, ts).run();
     } catch (err) { console.error("upsertUser insert failed:", err.message); }
     return await getUser(env, from.id);
@@ -54,7 +54,7 @@ export async function touchLastInbound(env, userId) {
     // Clear the episode key so a new inactivity period can begin after the user talks again.
     await env.DB.prepare(
       "INSERT INTO users (telegram_id, first_name, last_name, username, language_code, personality_id, memory_mode, memory_data, usage_stats, fallback_enabled, msg_counter, active_connection_id, created_at, last_seen_at, updated_at, last_inbound_at) " +
-      "VALUES (?, '', '', '', '', 'default', 'normal', '{}', '{}', 1, 0, NULL, ?, ?, ?, ?) " +
+      "VALUES (?, '', '', '', '', 'romantic', 'normal', '{}', '{}', 1, 0, NULL, ?, ?, ?, ?) " +
       "ON CONFLICT(telegram_id) DO UPDATE SET last_inbound_at = excluded.last_inbound_at, proactive_episode_key = NULL, updated_at = excluded.updated_at"
     ).bind(userId, ts, ts, ts, ts).run();
   } catch (err) {

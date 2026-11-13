@@ -429,6 +429,26 @@ export function buildInlineKeyboard(rows) {
   return { inline_keyboard: rows };
 }
 
+/** Compact reply keyboard under the text field (private chats). */
+export function buildMainReplyKeyboard(locale) {
+  const fa = String(locale || "").indexOf("fa") === 0;
+  return {
+    keyboard: [
+      [
+        { text: fa ? "⚙️ تنظیمات" : "⚙️ Settings" },
+        { text: fa ? "🎭 شخصیت" : "🎭 Personality" }
+      ],
+      [
+        { text: fa ? "🧠 حافظه" : "🧠 Memory" },
+        { text: fa ? "❓ راهنما" : "❓ Help" }
+      ]
+    ],
+    resize_keyboard: true,
+    is_persistent: true
+  };
+}
+
+
 export function startTypingHeartbeat(env, ctx, chatId) {
   const signal = { stopped: false, cancelTimer: null };
   const task = (async function () {
@@ -458,4 +478,35 @@ export function startTypingHeartbeat(env, ctx, chatId) {
       if (signal.cancelTimer) signal.cancelTimer();
     }
   };
+}
+
+
+/** Public bot command list (shown in Telegram UI). Groups only see public cmds. */
+export async function ensureBotCommands(env) {
+  if (!env.TELEGRAM_BOT_TOKEN) return { ok: false };
+  // Default (private) — full list
+  const privateCmds = [
+    { command: "start", description: "🏠 Start / welcome" },
+    { command: "help", description: "❓ Help" },
+    { command: "settings", description: "⚙️ Settings" },
+    { command: "personality", description: "🎭 Personality" },
+    { command: "memory", description: "🧠 Memory" },
+    { command: "usage", description: "📊 Usage" },
+    { command: "reminders", description: "⏰ Reminders" }
+  ];
+  // Groups — only public commands
+  const groupCmds = [
+    { command: "start", description: "🏠 Intro" },
+    { command: "help", description: "❓ Group help" }
+  ];
+  try {
+    await tg(env, "setMyCommands", { commands: privateCmds, scope: { type: "all_private_chats" } });
+    await tg(env, "setMyCommands", { commands: groupCmds, scope: { type: "all_group_chats" } });
+    // Fallback default scope
+    await tg(env, "setMyCommands", { commands: privateCmds });
+    return { ok: true };
+  } catch (err) {
+    console.error("ensureBotCommands failed:", err.message);
+    return { ok: false };
+  }
 }
