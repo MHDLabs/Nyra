@@ -25,12 +25,11 @@ async function randomToken() {
 }
 
 export async function createSession(env) {
+  if (!env.KV) throw new Error("KV_UNAVAILABLE");
   const token = await randomToken();
-  if (env.KV) {
-    await env.KV.put(sessionKey(token), JSON.stringify({ created: Date.now() }), {
-      expirationTtl: SESSION_TTL_SEC
-    });
-  }
+  await env.KV.put(sessionKey(token), JSON.stringify({ created: Date.now() }), {
+    expirationTtl: SESSION_TTL_SEC
+  });
   return token;
 }
 
@@ -64,10 +63,11 @@ export function readSessionCookie(request) {
   return "";
 }
 
-export function sessionCookieHeader(token, maxAge) {
+export function sessionCookieHeader(token, maxAge, secure) {
   const age = maxAge != null ? maxAge : SESSION_TTL_SEC;
   return COOKIE_NAME + "=" + encodeURIComponent(token) +
-    "; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=" + age;
+    "; Path=/; HttpOnly; SameSite=Strict; Max-Age=" + age +
+    (secure === false ? "" : "; Secure");
 }
 
 export function clearSessionCookieHeader() {

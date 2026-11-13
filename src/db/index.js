@@ -27,7 +27,8 @@ export {
 export {
   getUser, getUserStrict, upsertUser, touchLastInbound, getChat, recordGroupChatAndCheckAccess, isUserBlocked,
   saveThreadMessage, getThreadContext, isGroupTrigger, determineThreadId,
-  getFlowState, setFlowState, clearFlowState
+  getFlowState, setFlowState, clearFlowState,
+  blockUser, unblockUser
 } from "./users.js";
 
 export {

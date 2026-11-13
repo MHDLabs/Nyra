@@ -5,7 +5,7 @@
 import { RATE_LIMIT_ADMIN_PER_MIN, RATE_LIMIT_CALLBACK_PER_MIN, RATE_LIMIT_CONN_TEST_PER_MIN, MAX_PERSONALITY_PROMPT, MAX_PERSONALITY_DESC, MAX_CUSTOM_INSTRUCTIONS, OPENAI_DEFAULT_URL, ANTHROPIC_DEFAULT_URL, RETIRED_PERSONALITY_IDS } from "../config.js";
 import { now, truncate, escapeHtml, isAdmin, checkRateLimit } from "../utils.js";
 import { sendMessage, answerCallback, editMessage, buildInlineKeyboard } from "../telegram.js";
-import { getUser, getFlowState, setFlowState, clearFlowState, getUserConnectionById, deleteUserConnection, toggleUserConnection, setDefaultConnection, setConnectionFast, setConnectionVision, updateUserConnectionTest, setDefaultRoute, deleteRoute, setRouteDefaultModel, removeRouteModel, removeRouteToken, toggleRouteToken } from "../db.js";
+import { getUser, getFlowState, setFlowState, clearFlowState, getUserConnectionById, deleteUserConnection, toggleUserConnection, setDefaultConnection, setConnectionFast, setConnectionVision, updateUserConnectionTest, setDefaultRoute, deleteRoute, setRouteDefaultModel, removeRouteModel, removeRouteToken, toggleRouteToken , blockUser, unblockUser} from "../db.js";
 import { humanizeError, testUserConnectionById } from "../ai.js";
 import { showSettingsMenu, showModelList, showPersonalitiesForUser, showMyPersonalities, showPersonalityDetail, showMemorySubmenu, showCustomInstructionsMenu, showUsage, showPrivacy, sourceSuffix, sourceBackButton, showMyConnections, resolveUserConnectionShortId, showRoutesList, showRouteDetail, resolveRouteShortId, resolveRouteItemShortId, showPersonalModelsMenu } from "../menus.js";
 import { startAddConnectionFlow, startEditConnectionFlow, flowPromptLabel, flowPromptApiKey, flowPromptReview, handleFlowSkip, flowFetchModels, showModelPage, flowSelectModel, finalizeConnectionFromFlow, startAddRouteFlow, startEditRouteFlow, routePromptBaseUrl, routePromptModels, routePromptReview, finalizeRouteFromFlow } from "../flows.js";
@@ -420,10 +420,10 @@ export async function handleCallbackQuery(env, ctx, query) {
       else if (section === "user") {
         if (action === "block" && target) {
           if (isAdmin(env, target)) { await editMessage(env, chatId, messageId, "Cannot block an admin.", buildInlineKeyboard([[{ text: "Back", callback_data: "adm:main" }]]), "HTML"); return; }
-          await env.DB.prepare("INSERT OR REPLACE INTO blocked_users (telegram_id, reason, blocked_at, blocked_by) VALUES (?, 'admin block', ?, ?)").bind(target, now(), userId).run();
+          await blockUser(env, target, userId, "admin block");
           await showAdminUsers(env, chatId, messageId);
         } else if (action === "unblock" && target) {
-          await env.DB.prepare("DELETE FROM blocked_users WHERE telegram_id = ?").bind(target).run();
+          await unblockUser(env, target);
           await showAdminBlocked(env, chatId, messageId);
         }
       }

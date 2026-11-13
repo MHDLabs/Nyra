@@ -380,6 +380,8 @@ async function runMaintenance(env) {
     await env.KV.put("nyra:purge:last_run", String(t), { expirationTtl: 172800 });
     await env.DB.prepare("DELETE FROM thread_messages WHERE created_at < ?").bind(now() - (CONTEXT_TTL * 2)).run();
     await env.DB.prepare("DELETE FROM processed_updates WHERE received_at < ?").bind(Math.floor(Date.now() / 1000) - UPDATE_DEDUP_RETENTION_S).run();
+    // chat_logs: keep 90 days (free D1 size). shortcut: fixed TTL; upgrade: per-chat caps
+    await env.DB.prepare("DELETE FROM chat_logs WHERE created_at < ?").bind(now() - (90 * 24 * 60 * 60)).run();
     console.log("Maintenance purge completed.");
   } catch (err) {
     console.error("Maintenance purge failed:", err.message);

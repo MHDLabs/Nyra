@@ -100,6 +100,16 @@ export async function isUserBlocked(env, userId) {
   } catch (err) { return false; }
 }
 
+export async function blockUser(env, targetId, byUserId, reason) {
+  await env.DB.prepare(
+    "INSERT OR REPLACE INTO blocked_users (telegram_id, reason, blocked_at, blocked_by) VALUES (?, ?, ?, ?)"
+  ).bind(targetId, reason || "admin block", now(), byUserId || 0).run();
+}
+
+export async function unblockUser(env, targetId) {
+  await env.DB.prepare("DELETE FROM blocked_users WHERE telegram_id = ?").bind(targetId).run();
+}
+
 export async function saveThreadMessage(env, chatId, threadId, messageId, userId, role, content) {
   try {
     await env.DB.prepare(

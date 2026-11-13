@@ -88,13 +88,6 @@
         '<span>@' + escapeHtml(u.username || "—") + " · " + u.telegram_id + "</span></div>";
       el.addEventListener("click", () => openUser(u.telegram_id, el));
       userList.appendChild(el);
-      // Lazy avatar
-      const img = new Image();
-      img.src = "/admin-api/users/" + u.telegram_id + "/avatar";
-      img.onload = function () {
-        const box = el.querySelector(".avatar");
-        if (box) { box.innerHTML = ""; box.appendChild(img); }
-      };
     });
   }
 

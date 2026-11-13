@@ -10,6 +10,8 @@ import {
 import {
   listPrivateChatUsers, listGroupChats, listChatMessages, logChatMessage
 } from "../db/chat-logs.js";
+import { blockUser, unblockUser } from "../db/users.js";
+import { checkMemoryRate } from "../utils.js";
 
 function panelHtmlResponse(html) {
   return new Response(html, {
@@ -60,11 +62,18 @@ export async function routeAdminPanel(env, ctx, request, pathname) {
   // Auth endpoints
   if (path === "/admin-api/login" && request.method === "POST") {
     if (!isPanelConfigured(env)) return json(503, { error: "ADMIN_PANEL_PASSWORD is not configured" });
+    const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+    if (!checkMemoryRate("admin_login:" + ip, 5, 60000)) return json(429, { error: "rate_limited" });
     let body;
     try { body = await request.json(); } catch (e) { return json(400, { error: "invalid_json" }); }
     if (!verifyPassword(env, body && body.password)) return json(401, { error: "invalid_password" });
-    const token = await createSession(env);
-    return json(200, { ok: true }, { "set-cookie": sessionCookieHeader(token) });
+    try {
+      const token = await createSession(env);
+      const secure = url.protocol === "https:";
+      return json(200, { ok: true }, { "set-cookie": sessionCookieHeader(token, null, secure) });
+    } catch (e) {
+      return json(503, { error: "session_store_unavailable" });
+    }
   }
 
   if (path === "/admin-api/logout" && request.method === "POST") {
@@ -153,13 +162,9 @@ export async function routeAdminPanel(env, ctx, request, pathname) {
       await env.DB.prepare("UPDATE users SET " + sets.join(", ") + " WHERE telegram_id = ?").bind(...binds).run();
     }
     if (body.blocked === true) {
-      try {
-        await env.DB.prepare("INSERT OR IGNORE INTO blocked_users (telegram_id, created_at) VALUES (?, ?)").bind(id, now()).run();
-      } catch (e) {
-        try { await env.DB.prepare("INSERT OR IGNORE INTO blocked_users (telegram_id) VALUES (?)").bind(id).run(); } catch (e2) {}
-      }
+      await blockUser(env, id, 0, "admin panel");
     } else if (body.blocked === false) {
-      try { await env.DB.prepare("DELETE FROM blocked_users WHERE telegram_id = ?").bind(id).run(); } catch (e) {}
+      await unblockUser(env, id);
     }
     return json(200, { ok: true });
   }
@@ -247,8 +252,9 @@ export async function routeAdminPanel(env, ctx, request, pathname) {
     if (!text || text.length > 4000) return json(400, { error: "invalid_text" });
 
     if (body.all === true) {
+      // shortcut: sync fan-out capped at 50 for free-plan CPU; upgrade: reuse broadcast.js jobs
       const res = await env.DB.prepare(
-        "SELECT telegram_id FROM users WHERE telegram_id NOT IN (SELECT telegram_id FROM blocked_users) LIMIT 500"
+        "SELECT telegram_id FROM users WHERE telegram_id NOT IN (SELECT telegram_id FROM blocked_users) LIMIT 50"
       ).all();
       const ids = (res.results || []).map(function (r) { return r.telegram_id; });
       let sent = 0, failed = 0;
@@ -260,9 +266,14 @@ export async function routeAdminPanel(env, ctx, request, pathname) {
             chat_id: ids[i], chat_type: "private", message_id: r.result && r.result.message_id,
             user_id: null, role: "assistant", content: text, created_at: now()
           }));
-        } else failed++;
+        } else {
+          failed++;
+          if (r && r.parameters && r.parameters.retry_after) {
+            await new Promise(function (resolve) { setTimeout(resolve, Math.min(Number(r.parameters.retry_after) || 1, 5) * 1000); });
+          }
+        }
       }
-      return json(200, { ok: true, sent: sent, failed: failed, total: ids.length });
+      return json(200, { ok: true, sent: sent, failed: failed, total: ids.length, capped: true });
     }
 
     const target = body.telegram_id != null ? Number(body.telegram_id)
