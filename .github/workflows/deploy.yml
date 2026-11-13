@@ -91,7 +91,7 @@ jobs:
           TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           REF="${GITHUB_REF_NAME}"
           echo "Deploying Nyra@$SHORT (ref=$REF) builtAt=$TIME"
-          npx wrangler deploy \
+          npm exec -- wrangler deploy \
             --var "NYRA_BUILD_SHA:${SHA}" \
             --var "NYRA_BUILD_REF:${REF}" \
             --var "NYRA_BUILD_TIME:${TIME}" \
