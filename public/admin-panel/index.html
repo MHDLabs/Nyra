@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark light" />
+  <title>Nyra Admin Panel</title>
+  <link rel="stylesheet" href="/admin-panel/styles.css" />
+</head>
+<body>
+  <div class="bg-blob b1"></div>
+  <div class="bg-blob b2"></div>
+  <div class="bg-blob b3"></div>
+
+  <div id="login-view" class="view">
+    <div class="glass login-card">
+      <div class="brand">
+        <div class="logo">N</div>
+        <div>
+          <h1>Nyra Admin</h1>
+          <p class="muted">پنل مدیریت خارج از تلگرام</p>
+        </div>
+      </div>
+      <form id="login-form">
+        <label>رمز عبور پنل</label>
+        <input type="password" id="password" autocomplete="current-password" required placeholder="ADMIN_PANEL_PASSWORD" />
+        <button type="submit" class="btn primary">ورود</button>
+        <p id="login-error" class="error" hidden></p>
+      </form>
+      <div class="theme-row">
+        <button type="button" class="btn ghost" data-theme="dark">دارک</button>
+        <button type="button" class="btn ghost" data-theme="light">روشن</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="app-view" class="view" hidden>
+    <header class="glass topbar">
+      <div class="brand small">
+        <div class="logo">N</div>
+        <strong>Nyra Admin</strong>
+      </div>
+      <nav class="tabs">
+        <button data-tab="users" class="active">کاربران</button>
+        <button data-tab="groups">گروه‌ها</button>
+        <button data-tab="models">مدل‌ها</button>
+        <button data-tab="broadcast">ارسال پیام</button>
+      </nav>
+      <div class="top-actions">
+        <span id="stats" class="muted"></span>
+        <button type="button" class="btn ghost" data-theme-toggle>تم</button>
+        <button type="button" class="btn danger" id="logout-btn">خروج</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section id="tab-users" class="tab active">
+        <div class="glass panel list-panel">
+          <div class="panel-head">
+            <h2>کاربران</h2>
+            <input type="search" id="user-search" placeholder="جستجو نام / یوزرنیم / id" />
+          </div>
+          <div id="user-list" class="list"></div>
+        </div>
+        <div class="glass panel detail-panel" id="user-detail">
+          <p class="muted center">یک کاربر را انتخاب کنید</p>
+        </div>
+      </section>
+
+      <section id="tab-groups" class="tab">
+        <div class="glass panel list-panel">
+          <div class="panel-head"><h2>گروه‌ها</h2></div>
+          <div id="group-list" class="list"></div>
+        </div>
+        <div class="glass panel detail-panel" id="group-detail">
+          <p class="muted center">یک گروه را انتخاب کنید</p>
+        </div>
+      </section>
+
+      <section id="tab-models" class="tab">
+        <div class="glass panel full">
+          <div class="panel-head"><h2>مدل‌ها / کانکشن‌ها</h2></div>
+          <div id="model-list" class="cards"></div>
+        </div>
+      </section>
+
+      <section id="tab-broadcast" class="tab">
+        <div class="glass panel full narrow">
+          <div class="panel-head"><h2>ارسال پیام</h2></div>
+          <form id="send-form" class="stack">
+            <label>هدف</label>
+            <select id="send-target">
+              <option value="one">یک کاربر (telegram_id)</option>
+              <option value="all">همه کاربران (غیرمسدود)</option>
+            </select>
+            <input type="text" id="send-id" placeholder="telegram_id" />
+            <label>متن پیام</label>
+            <textarea id="send-text" rows="5" placeholder="متن پیام..."></textarea>
+            <button type="submit" class="btn primary">ارسال</button>
+            <p id="send-result" class="muted"></p>
+          </form>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/admin-panel/app.js"></script>
+</body>
+</html>

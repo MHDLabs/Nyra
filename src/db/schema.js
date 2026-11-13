@@ -309,6 +309,16 @@ const CORE_MIGRATIONS = [
       "CREATE TABLE IF NOT EXISTS schedule_delivery_attempts (id INTEGER PRIMARY KEY AUTOINCREMENT, schedule_id INTEGER NOT NULL, occurrence_key TEXT NOT NULL, attempt INTEGER NOT NULL, status TEXT NOT NULL, error TEXT, created_at INTEGER NOT NULL, UNIQUE(schedule_id, occurrence_key, attempt))",
       "CREATE INDEX IF NOT EXISTS idx_schedule_attempts ON schedule_delivery_attempts(schedule_id, created_at DESC)"
     ]
+  },
+  {
+    id: 14,
+    label: "add durable chat_logs for admin panel archival",
+    statements: [
+      "CREATE TABLE IF NOT EXISTS chat_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER NOT NULL, chat_type TEXT NOT NULL, message_id INTEGER, user_id INTEGER, role TEXT NOT NULL, content TEXT NOT NULL, media_type TEXT, created_at INTEGER NOT NULL)",
+      "CREATE INDEX IF NOT EXISTS idx_chat_logs_chat ON chat_logs(chat_id, created_at DESC, id DESC)",
+      "CREATE INDEX IF NOT EXISTS idx_chat_logs_user ON chat_logs(user_id, created_at DESC)",
+      "CREATE INDEX IF NOT EXISTS idx_chat_logs_type ON chat_logs(chat_type, created_at DESC)"
+    ]
   }
 ];
 

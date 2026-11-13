@@ -9,6 +9,7 @@ import { getMasterKey, validateSecrets } from "./crypto.js";
 import { ensureSchema, maybeInitSchema } from "./db.js";
 import { ensureWebhook, ensureMenuButton } from "./telegram.js";
 import { routeMiniAppAPI } from "./miniapp.js";
+import { routeAdminPanel } from "./admin-panel/router.js";
 import { MINIAPP_DISABLED } from "./config.js";
 import { logFailedUpdate, cleanupOldFailedUpdates } from "./dlq.js";
 import { pruneOldTranscripts } from "./voice/stt.js";
@@ -101,6 +102,11 @@ export default {
     // endpoint that initialises the schema, learns the public origin and
     // registers the Telegram webhook + Mini App menu button.
     if (request.method === "GET" && url.pathname === "/status") return await handleStatus(request, env, adminIds);
+
+    // Admin web panel (password-gated, separate from Mini App).
+    if (url.pathname === "/admin-panel" || url.pathname.startsWith("/admin-panel/") || url.pathname.startsWith("/admin-api/")) {
+      return await routeAdminPanel(env, ctx, request, url.pathname);
+    }
 
     // Every other Worker-handled request also teaches us the public origin, so
     // the webhook bootstraps even when only the Mini App (/api/*) is used and

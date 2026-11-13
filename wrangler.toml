@@ -31,7 +31,7 @@ mode = "smart"
 directory = "public"
 binding = "ASSETS"
 not_found_handling = "none"
-run_worker_first = ["/", "/index.html", "/app.js", "/styles.css", "/webhook", "/setup", "/status", "/api/*"]
+run_worker_first = ["/", "/index.html", "/app.js", "/styles.css", "/webhook", "/setup", "/status", "/api/*", "/admin-panel", "/admin-panel/*", "/admin-api/*"]
 
 [triggers]
 # Self-healing (part of the zero-manual-setup flow): the scheduled handler
@@ -64,11 +64,13 @@ ADMIN_IDS = "7141112393"
 [[d1_databases]]
 binding = "DB"
 database_name = "nyra"
+database_id = "2173aded-26b0-45f0-98b9-71ee1b39a18d"
 
 # KV namespace — auto-provisioned the same way on deploy.
 # If you already have a deployed instance, KEEP your existing id here.
 [[kv_namespaces]]
 binding = "KV"
+id = "9e7579fee18e45a2865a1e4bf5495b99"
 
 # Workers AI — available on all plans (generous free tier)
 # Used exclusively for reaction classification (sentiment analysis)

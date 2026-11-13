@@ -6,6 +6,7 @@ import { MAX_TELEGRAM_LENGTH, MEMORY_UPDATE_INTERVAL, RATE_LIMIT_USER_PER_MIN, R
 import { now, escapeHtml, buildUserContent, checkRateLimit } from "../utils.js";
 import { sendMessageReturn, sendMessage, sendMessageSafeResult, editMessage, deleteMessage, startTypingHeartbeat, pickImageFile, downloadTelegramFile } from "../telegram.js";
 import { getUser, upsertUser, getChat, saveThreadMessage, getThreadContext, updateUsageStatsAsync, resolveUserActiveConnection, trackConnectionUsage, reserveSharedRequest, releaseSharedRequest, recordSharedTokenUsage, sharedQuotaMessage } from "../db.js";
+import { logChatMessage, detectMediaType } from "../db/chat-logs.js";
 import { normalizeError, humanizeError, shouldNotifyAdmin, tryAgentWithFallback, notifyAdminOnError } from "../ai.js";
 import { buildContextMessages, getUserPersonality, consolidateMemory, consolidateChatSummary, incrementMessageCount } from "../memory.js";
 import { showNoConnectionMessage } from "../menus.js";
@@ -119,6 +120,17 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
   }
 
   await saveThreadMessage(env, chatId, threadId, message.message_id, userId, "user", userContent);
+  // Durable archive for admin panel (groups: only triggered turns reach here).
+  ctx.waitUntil(logChatMessage(env, {
+    chat_id: chatId,
+    chat_type: isGroup ? (chat.type || "group") : "private",
+    message_id: message.message_id,
+    user_id: userId,
+    role: "user",
+    content: userContent,
+    media_type: detectMediaType(message),
+    created_at: now()
+  }));
 
   // Vision path: when the active connection is marked as image-capable and the
   // user actually sent one, download the image and hand it to the model as a
@@ -310,6 +322,15 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
       await sendMessageReturn(env, chatId, chunks[i].text, opts);
     }
     await saveThreadMessage(env, chatId, threadId, finalMsgId, null, "assistant", replyText);
+    ctx.waitUntil(logChatMessage(env, {
+      chat_id: chatId,
+      chat_type: isGroup ? (chat.type || "group") : "private",
+      message_id: finalMsgId,
+      user_id: null,
+      role: "assistant",
+      content: replyText,
+      created_at: now()
+    }));
   } else {
     const part = chunks[0];
     const finalEdit = await editMessage(env, chatId, placeholderMsgId, part.text, undefined, part.parseMode);
@@ -332,6 +353,15 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
       }
     }
     await saveThreadMessage(env, chatId, threadId, finalMsgId, null, "assistant", replyText);
+    ctx.waitUntil(logChatMessage(env, {
+      chat_id: chatId,
+      chat_type: isGroup ? (chat.type || "group") : "private",
+      message_id: finalMsgId,
+      user_id: null,
+      role: "assistant",
+      content: replyText,
+      created_at: now()
+    }));
   }
 
   const counter = await incrementMessageCount(env, userId);

@@ -31,6 +31,10 @@ export {
 } from "./users.js";
 
 export {
+  logChatMessage, listPrivateChatUsers, listGroupChats, listChatMessages, detectMediaType
+} from "./chat-logs.js";
+
+export {
   trackConnectionUsage, getConnectionUsageStats, getAllConnectionUsageStats,
   parseUsageStats, updateUsageStatsAsync
 } from "./usage.js";
