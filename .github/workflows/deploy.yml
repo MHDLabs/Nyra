@@ -81,9 +81,8 @@ jobs:
       - name: Install Wrangler only
         if: steps.creds.outputs.present == 'true'
         run: |
-          # Prefer lockfile when healthy; fall back to direct wrangler install.
-          npm ci --ignore-scripts --no-audit --no-fund \
-            || npm install --no-save --ignore-scripts --no-audit --no-fund wrangler@4
+          # Avoid full lockfile: optional sharp/platform packages hang npm ci on Actions.
+          npm install --no-save --ignore-scripts --no-audit --no-fund wrangler@4
 
       - name: Deploy with build metadata
         if: steps.creds.outputs.present == 'true'
