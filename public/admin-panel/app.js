@@ -19,7 +19,7 @@
     }
     localStorage.setItem("nyra_admin_theme", document.documentElement.getAttribute("data-theme"));
   }
-  theme(localStorage.getItem("nyra_admin_theme") || "dark");
+  theme(localStorage.getItem("nyra_admin_theme") || "light");
   document.querySelectorAll("[data-theme]").forEach((btn) => {
     btn.addEventListener("click", () => theme(btn.getAttribute("data-theme")));
   });
@@ -151,7 +151,7 @@
       openUser(id, el);
     };
     $("btn-msg").onclick = function () {
-      document.querySelector('[data-tab="broadcast"]').click();
+      activateTab("broadcast");
       $("send-target").value = "one";
       $("send-id").value = String(id);
       $("send-text").focus();
@@ -207,15 +207,17 @@
     });
   }
 
-  // Tabs
-  document.querySelectorAll(".tabs button").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll(".tabs button").forEach((b) => b.classList.remove("active"));
-      document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
-      btn.classList.add("active");
-      const tab = $("tab-" + btn.getAttribute("data-tab"));
-      if (tab) tab.classList.add("active");
+  // Tabs (bottom nav — White Panel style)
+  function activateTab(name) {
+    document.querySelectorAll("#bottom-nav button").forEach((b) => {
+      b.classList.toggle("active", b.getAttribute("data-tab") === name);
     });
+    document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
+    const tab = $("tab-" + name);
+    if (tab) tab.classList.add("active");
+  }
+  document.querySelectorAll("#bottom-nav button").forEach((btn) => {
+    btn.addEventListener("click", () => activateTab(btn.getAttribute("data-tab")));
   });
 
   loginForm.addEventListener("submit", async (e) => {
