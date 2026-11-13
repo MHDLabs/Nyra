@@ -1,6 +1,5 @@
-# OTA deploy — push to main ships this Worker.
-# Avoid full optional dependency tree (sharp etc.): npm was hanging on Actions
-# with "Exit handler never called".
+# OTA deploy — push to main ships this Worker via Wrangler.
+# Force registry.npmjs.org (some runners/mirrors break optional workerd packages).
 
 name: Deploy
 
@@ -35,7 +34,7 @@ jobs:
     name: Deploy Worker (OTA)
     needs: test
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     steps:
       - name: Check Cloudflare credentials
         id: creds
@@ -57,20 +56,21 @@ jobs:
         if: steps.creds.outputs.present == 'true'
         with:
           node-version: "22"
+          registry-url: "https://registry.npmjs.org"
 
-      - name: Install Wrangler (no optional deps)
+      - name: Install Wrangler
         if: steps.creds.outputs.present == 'true'
         env:
-          npm_config_optional: "false"
+          npm_config_registry: "https://registry.npmjs.org"
           npm_config_fund: "false"
           npm_config_audit: "false"
           npm_config_progress: "false"
-          npm_config_fetch_timeout: "60000"
-          npm_config_fetch_retries: "2"
+          npm_config_fetch_timeout: "120000"
+          npm_config_fetch_retries: "3"
         run: |
           set -e
-          # --omit=optional skips sharp/platform binaries that hang npm on GHA
-          npm install --no-save --ignore-scripts --omit=optional wrangler@4.42.0
+          # Optional deps REQUIRED (workerd-linux-64). Do not use --omit=optional.
+          npm install --no-save --ignore-scripts wrangler@4.42.0
           ./node_modules/.bin/wrangler --version
 
       - name: Deploy Worker
@@ -78,6 +78,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          npm_config_registry: "https://registry.npmjs.org"
         run: |
           set -e
           SHA="${GITHUB_SHA}"
