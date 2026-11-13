@@ -6,7 +6,8 @@
   "license": "MIT",
   "scripts": {
     "test": "node --test test/*.test.js",
-    "deploy": "node scripts/postdeploy.mjs"
+    "deploy": "node scripts/postdeploy.mjs",
+    "deploy:worker": "wrangler deploy"
   },
   "cloudflare": {
     "bindings": {
@@ -23,5 +24,8 @@
         "description": "REQUIRED \u2014 numeric Telegram user ID(s) of the administrator(s), digits only (e.g. `123456789`), comma-separated for several. Find yours by sending any message to @userinfobot."
       }
     }
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
   }
 }
