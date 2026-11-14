@@ -22,12 +22,13 @@ export const RATE_LIMIT_ADMIN_PER_MIN = 10;
 export const RATE_LIMIT_CALLBACK_PER_MIN = 30;
 export const RATE_LIMIT_SETUP_PER_MIN = 5;
 export const RATE_LIMIT_CONN_TEST_PER_MIN = 10;
-export const AI_PRIMARY_ATTEMPT_TIMEOUT_MS = 30000;
-export const AI_MAX_PRIMARY_ATTEMPTS = 3;
-// Retries for transient provider faults (empty body, 429, timeout) on any connection.
-export const AI_MAX_RETRYABLE_ATTEMPTS = 3;
-export const AI_RETRY_DELAYS_MS = [1000, 2000];
-export const AI_STREAM_STALL_TIMEOUT_MS = 30000;
+// Single attempt per model with a long wall-clock budget (no multi-retry loops).
+export const AI_PRIMARY_ATTEMPT_TIMEOUT_MS = 120000;
+export const AI_MAX_PRIMARY_ATTEMPTS = 1;
+// No per-connection retries for transient faults — one shot, high timeout.
+export const AI_MAX_RETRYABLE_ATTEMPTS = 1;
+export const AI_RETRY_DELAYS_MS = [];
+export const AI_STREAM_STALL_TIMEOUT_MS = 120000;
 export const AI_STREAM_TOTAL_BUDGET_MS = 180000;
 export const AI_TEST_TIMEOUT_MS = 8000;
 export const AI_TEST_HARD_TIMEOUT_MS = 10000;

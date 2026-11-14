@@ -1,4 +1,4 @@
-import { isGuestModeEnabled } from "../db/settings.js";
+import { detectGuestContext } from "../db/settings.js";
 // The AI turn: rate limits, context assembly, the streaming reply loop with
 // throttled edit-in-place, reaction handling, memory consolidation and error
 // surfacing. This is the single most performance-sensitive path in the bot —
@@ -47,8 +47,14 @@ export async function handleAIMessage(env, ctx, message, from, chat, isGroup, th
 }
 
 async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, heartbeat) {
-  const guestMode = isGroup ? await isGuestModeEnabled(env) : false;
-  const guestPrefix = guestMode ? "<b>Guest mode</b>\n\n" : "";
+  let guestMode = false;
+  if (isGroup) {
+    try {
+      const { getBotIdentity } = await import("../db.js");
+      const identity = await getBotIdentity(env);
+      guestMode = await detectGuestContext(env, chat, identity && identity.id);
+    } catch (e) { guestMode = false; }
+  }
   const userId = from.id;
   const chatId = chat.id;
   const rawText = (message.text || message.caption || "").trim();

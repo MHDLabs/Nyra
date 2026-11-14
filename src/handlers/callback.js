@@ -406,8 +406,7 @@ export async function handleCallbackQuery(env, ctx, query) {
         if (action === "enabled") await setTriggerFlag(env, "trigger_enabled", !cfg.enabled, userId);
         else if (action === "reply") await setTriggerFlag(env, "trigger_reply", !cfg.reply, userId);
         else if (action === "mention") await setTriggerFlag(env, "trigger_mention", !cfg.mention, userId);
-        else if (action === "guest") await setTriggerFlag(env, "guest_mode", !cfg.guestMode, userId);
-        await showAdminTriggers(env, chatId, messageId);
+                await showAdminTriggers(env, chatId, messageId);
       }
       else if (section === "react") {
         // Opening the section arms a flow so the admin's next plain message is

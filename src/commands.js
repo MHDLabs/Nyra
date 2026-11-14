@@ -486,7 +486,7 @@ export async function showAdminMenu(env, chatId, messageId) {
     [{ text: fa ? "🚫 مسدودها" : "🚫 Blocked", callback_data: "adm:blocked" }, { text: fa ? "📊 آمار" : "📊 Stats", callback_data: "adm:stats" }],
     [{ text: fa ? "🤖 مدل‌ها" : "🤖 Models", callback_data: "adm:conns" }, { text: fa ? "💚 وضعیت" : "💚 Status", callback_data: "adm:status" }],
     [{ text: fa ? "😀 واکنش‌ها" : "😀 Reactions", callback_data: "adm:react" }, { text: fa ? "⚠️ نگهداری" : "⚠️ Maintenance", callback_data: "adm:maint" }],
-    [{ text: fa ? "🔔 تریگرها / مهمان" : "🔔 Triggers / Guest", callback_data: "adm:triggers" }],
+    [{ text: fa ? "🔔 تریگرها" : "🔔 Triggers", callback_data: "adm:triggers" }],
     [{ text: fa ? "بستن" : "Close", callback_data: "adm:close" }]
   ];
   await editMessage(env, chatId, messageId, text, buildInlineKeyboard(rows), "HTML");
@@ -595,22 +595,36 @@ export async function showAdminStatus(env, chatId, messageId) {
 export async function showAdminReactions(env, chatId, messageId) {
   const configured = await getConfiguredReactions(env);
   const allowed = await getAllowedReactions(env, null);
-  const lines = [
-    "<b>Reactions</b>", "",
-    "Source: <b>" + (configured ? "custom" : "defaults") + "</b>",
-    "Allowed: " + (allowed.join(" ") || "(none)"),
-    "",
-    "<i>Nyra only reacts in groups when she is named, and stays silent when no reaction clearly fits.</i>",
-    "",
-    "Send the emoji Nyra may use — e.g. <code>👍 ❤ 🤔</code> — one message, space or comma separated.",
-    "Send <code>default</code> to restore the built-in set."
-  ];
+  const user = chatId ? await getUser(env, chatId).catch(function () { return null; }) : null;
+  const fa = user && String(user.locale || "").indexOf("fa") === 0;
+  const lines = fa
+    ? [
+        "<b>😀 واکنش‌ها</b>", "",
+        "منبع: <b>" + (configured ? "سفارشی" : "پیش‌فرض") + "</b>",
+        "مجاز: " + (allowed.join(" ") || "(هیچ)"),
+        "",
+        "<i>نیرا فقط وقتی در گروه نامش برده شود واکنش می‌گذارد و اگر واکنش مناسبی پیدا نشود ساکت می‌ماند.</i>",
+        "",
+        "ایموجی‌های مجاز را بفرستید — مثلاً <code>👍 ❤ 🤔</code> — در یک پیام، با فاصله یا ویرگول.",
+        "برای بازگرداندن مجموعهٔ پیش‌فرض بنویسید: <code>default</code>"
+      ]
+    : [
+        "<b>😀 Reactions</b>", "",
+        "Source: <b>" + (configured ? "custom" : "defaults") + "</b>",
+        "Allowed: " + (allowed.join(" ") || "(none)"),
+        "",
+        "<i>Nyra only reacts in groups when she is named, and stays silent when no reaction clearly fits.</i>",
+        "",
+        "Send the emoji Nyra may use — e.g. <code>👍 ❤ 🤔</code> — one message, space or comma separated.",
+        "Send <code>default</code> to restore the built-in set."
+      ];
   const buttons = [
-    [{ text: "Restore defaults", callback_data: "adm:react:default" }],
-    [{ text: "Back", callback_data: "adm:main" }]
+    [{ text: fa ? "بازگرداندن پیش‌فرض" : "Restore defaults", callback_data: "adm:react:default" }],
+    [{ text: fa ? "بازگشت" : "Back", callback_data: "adm:main" }]
   ];
-  await editMessage(env, chatId, messageId, lines.join("\n"), buildInlineKeyboard(buttons), "HTML");
+  await editMessage(env, chatId, messageId, (fa ? "\u200F" : "") + lines.join("\n"), buildInlineKeyboard(buttons), "HTML");
 }
+
 
 export async function showAdminMaintenance(env, chatId, messageId) {
   const { isMaintenanceMode } = await import("./db/maintenance.js");
@@ -642,30 +656,28 @@ export async function showAdminTriggers(env, chatId, messageId) {
   const on = fa ? "روشن" : "ON";
   const off = fa ? "خاموش" : "OFF";
   const text = fa
-    ? ("<b>🔔 تریگرهای گروه و حالت مهمان</b>\n\n"
+    ? ("<b>🔔 تریگرهای گروه</b>\n\n"
       + "• تریگر کلی: <b>" + (cfg.enabled ? on : off) + "</b>\n"
       + "• پاسخ به ریپلای: <b>" + (cfg.reply ? on : off) + "</b>\n"
-      + "• منشن @" + "یوزرنیم: <b>" + (cfg.mention ? on : off) + "</b>\n"
-      + "• کلمات: <code>" + escapeHtml((cfg.words || []).join(", ")) + "</code>\n"
-      + "• Guest mode: <b>" + (cfg.guestMode ? on : off) + "</b>\n\n"
-      + "در Guest mode ابتدای هر پاسخ گروهی با تیتر انگلیسی <b>Guest mode</b> می‌آید.\n"
-      + "کلمات را با /settriggers کلمه1,کلمه2 تنظیم کنید.")
-    : ("<b>🔔 Group triggers & Guest mode</b>\n\n"
+      + "• منشن: <b>" + (cfg.mention ? on : off) + "</b>\n"
+      + "• کلمات: <code>" + escapeHtml((cfg.words || []).join(", ")) + "</code>\n\n"
+      + "کلمات را با /settriggers کلمه1,کلمه2 تنظیم کنید.\n"
+      + "<i>حالت مهمان (Guest) فقط وقتی اعمال می‌شود که نیرا عضو گروه نباشد و به‌عنوان مهمان منشن شود — از این منو کنترل نمی‌شود.</i>")
+    : ("<b>🔔 Group triggers</b>\n\n"
       + "• Master: <b>" + (cfg.enabled ? on : off) + "</b>\n"
       + "• Reply-to-bot: <b>" + (cfg.reply ? on : off) + "</b>\n"
       + "• @mention: <b>" + (cfg.mention ? on : off) + "</b>\n"
-      + "• Words: <code>" + escapeHtml((cfg.words || []).join(", ")) + "</code>\n"
-      + "• Guest mode: <b>" + (cfg.guestMode ? on : off) + "</b>\n\n"
-      + "Guest mode prefixes group replies with bold <b>Guest mode</b>.\n"
-      + "Set words with /settriggers word1,word2");
+      + "• Words: <code>" + escapeHtml((cfg.words || []).join(", ")) + "</code>\n\n"
+      + "Set words with /settriggers word1,word2\n"
+      + "<i>Guest mode applies only when Nyra is mentioned as a non-member guest — not controlled here.</i>");
   const rows = [
-    [{ text: (cfg.enabled ? "✅" : "❌") + " Master", callback_data: "adm:trig:enabled" },
-     { text: (cfg.reply ? "✅" : "❌") + " Reply", callback_data: "adm:trig:reply" }],
-    [{ text: (cfg.mention ? "✅" : "❌") + " Mention", callback_data: "adm:trig:mention" },
-     { text: (cfg.guestMode ? "✅" : "❌") + " Guest", callback_data: "adm:trig:guest" }],
+    [{ text: (cfg.enabled ? "✅" : "❌") + (fa ? " کلی" : " Master"), callback_data: "adm:trig:enabled" },
+     { text: (cfg.reply ? "✅" : "❌") + (fa ? " ریپلای" : " Reply"), callback_data: "adm:trig:reply" }],
+    [{ text: (cfg.mention ? "✅" : "❌") + (fa ? " منشن" : " Mention"), callback_data: "adm:trig:mention" }],
     [{ text: fa ? "بازگشت" : "Back", callback_data: "adm:main" }]
   ];
-  if (messageId) await editMessage(env, chatId, messageId, text, buildInlineKeyboard(rows), "HTML");
-  else await sendMessage(env, chatId, text, { parse_mode: "HTML", reply_markup: buildInlineKeyboard(rows) });
+  if (messageId) await editMessage(env, chatId, messageId, (fa ? "\u200F" : "") + text, buildInlineKeyboard(rows), "HTML");
+  else await sendMessage(env, chatId, (fa ? "\u200F" : "") + text, { parse_mode: "HTML", reply_markup: buildInlineKeyboard(rows) });
 }
+
 

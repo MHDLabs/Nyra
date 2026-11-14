@@ -216,14 +216,27 @@ export async function showUsage(env, chatId, messageId, userId) {
 }
 
 export async function showPrivacy(env, chatId, messageId) {
-  const text = "<b>Privacy</b>\n\n" +
-    "• Nyra stores a lightweight profile, a small structured memory, and recent conversation context for your chats.\n" +
-    "• Memory and conversations are stored in the project database; credentials are encrypted at rest, memory text is not.\n" +
-    "• AI models are configured by administrators and shared across users.\n" +
-    "• The app never shows your memory or conversations to other users — including admins.\n\n" +
-    "Change memory behavior in Memory.";
-  await editMessage(env, chatId, messageId, text, buildInlineKeyboard([[{ text: "Back", callback_data: "set:menu" }]]), "HTML");
+  const user = await getUser(env, chatId).catch(function () { return null; });
+  const fa = user && String(user.locale || "").indexOf("fa") === 0;
+  const text = fa
+    ? ("<b>🔒 حریم خصوصی</b>\n\n"
+      + "• نیرا یک پروفایل سبک، حافظهٔ ساختاریافتهٔ کوچک و بافت گفت‌وگوی اخیر شما را نگه می‌دارد.\n"
+      + "• حافظه و گفتگوها در پایگاه دادهٔ پروژه ذخیره می‌شوند؛ کلیدهای API رمزنگاری می‌شوند، متن حافظه نه.\n"
+      + "• مدل‌های هوش مصنوعی را ادمین پیکربندی می‌کند و بین کاربران به اشتراک گذاشته می‌شوند.\n"
+      + "• از این نسخه، پیام‌های چت برای پنل مدیریت ادمین بایگانی می‌شوند (فقط ادمین).\n"
+      + "• حافظه و گفتگوهای شما برای سایر کاربران عادی نمایش داده نمی‌شود.\n\n"
+      + "رفتار حافظه را از بخش حافظه تغییر دهید.")
+    : ("<b>🔒 Privacy</b>\n\n"
+      + "• Nyra stores a lightweight profile, a small structured memory, and recent conversation context for your chats.\n"
+      + "• Memory and conversations are stored in the project database; API credentials are encrypted at rest, memory text is not.\n"
+      + "• AI models are configured by administrators and may be shared across users.\n"
+      + "• From this version, chat messages are archived for the admin management panel (admins only).\n"
+      + "• Your memory and conversations are not shown to other regular users.\n\n"
+      + "Change memory behavior under Memory.");
+  const back = fa ? "بازگشت" : "Back";
+  await editMessage(env, chatId, messageId, (fa ? "\u200F" : "") + text, buildInlineKeyboard([[{ text: back, callback_data: "set:menu" }]]), "HTML");
 }
+
 
 export function sourceSuffix(source) {
   return source === "adm" ? ":adm" : "";

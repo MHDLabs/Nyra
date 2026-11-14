@@ -147,7 +147,31 @@ export async function setTriggerWords(env, words, updatedBy) {
   return await setSetting(env, "trigger_words", cleaned.join(","), updatedBy);
 }
 
+/** @deprecated Admin toggle removed — use detectGuestContext. */
 export async function isGuestModeEnabled(env) {
-  const cfg = await getTriggerConfig(env);
-  return !!cfg.guestMode;
+  return false;
+}
+
+/**
+ * Guest mode: Nyra was addressed but is not a full group member (restricted /
+ * left / unknown). In private chats, never treat as guest.
+ * When true, replies are prefixed with bold "Guest mode".
+ */
+export async function detectGuestContext(env, chat, botId) {
+  if (!chat || !chat.id) return false;
+  const type = chat.type || "";
+  if (type === "private") return false;
+  if (type !== "group" && type !== "supergroup") return false;
+  if (!botId) return false;
+  try {
+    const { tg } = await import("../telegram.js");
+    const res = await tg(env, "getChatMember", { chat_id: chat.id, user_id: botId });
+    const status = res && res.ok && res.result ? String(res.result.status || "") : "";
+    // Full members: member / administrator / creator
+    if (status === "member" || status === "administrator" || status === "creator") return false;
+    // restricted / left / kicked / empty → guest-style reply when we still got the update
+    return true;
+  } catch (err) {
+    return false;
+  }
 }
