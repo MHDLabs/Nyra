@@ -1,3 +1,5 @@
+import type { NyraEnv } from "../../types/env.js";
+import type { TelegramId } from "../../types/domain.js";
 // AI connections: CRUD, the cached connection list, health bookkeeping and
 // active-connection resolution. Owns the single `userConnectionsCache`.
 import { CONNECTION_CACHE_TTL_MS } from "../config.js";
@@ -12,7 +14,7 @@ function invalidateUserConnectionsCache(userId) {
   else userConnectionsCache.clear();
 }
 
-export async function getUserConnections(env, userId, forceRefresh) {
+export async function getUserConnections(env: NyraEnv, userId, forceRefresh?: boolean) {
   const key = String(userId);
   const cached = userConnectionsCache.get(key);
   if (!forceRefresh && cached && cached.expiresAt > Date.now()) return cached.connections;
@@ -22,23 +24,23 @@ export async function getUserConnections(env, userId, forceRefresh) {
     userConnectionsCache.set(key, { connections: list, expiresAt: Date.now() + CONNECTION_CACHE_TTL_MS });
     return list;
   } catch (err) {
-    console.error("getUserConnections failed:", err.message);
+    console.error("getUserConnections failed:", (err instanceof Error ? err.message : String(err)));
     return [];
   }
 }
 
-export async function getEnabledUserConnections(env, userId) {
+export async function getEnabledUserConnections(env: NyraEnv, userId) {
   const all = await getUserConnections(env, userId);
   return all.filter(function (c) { return c.enabled === 1; });
 }
 
-export async function getUserConnectionById(env, userId, connectionId) {
+export async function getUserConnectionById(env: NyraEnv, userId, connectionId) {
   try {
     return await env.DB.prepare("SELECT * FROM ai_connections WHERE connection_id = ? AND ((telegram_id = ? AND is_global = 0) OR is_global = 1)").bind(connectionId, userId).first();
   } catch (err) { return null; }
 }
 
-export async function saveGlobalConnection(env, adminId, params) {
+export async function saveGlobalConnection(env: NyraEnv, adminId, params) {
   const ts = now();
   const encrypted = await encryptCredential(env, adminId, params.api_key);
   const connectionId = generateShortId();
@@ -49,7 +51,7 @@ export async function saveGlobalConnection(env, adminId, params) {
   let maxOrder = 100;
   try {
     const row = await env.DB.prepare("SELECT MAX(display_order) AS m FROM ai_connections WHERE is_global = 1").first();
-    if (row && row.m !== null && row.m !== undefined) maxOrder = row.m + 10;
+    if (row && row.m !== null && row.m !== undefined) maxOrder = Number(row.m) + 10;
   } catch (err) {}
   await env.DB.prepare(
     "INSERT INTO ai_connections (connection_id, telegram_id, label, provider, base_url, model, encrypted_key, key_iv, encryption_version, enabled, is_global, is_default, description, display_order, supports_vision, consecutive_failures, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 2, 1, ?, 0, ?, ?, ?, 0, ?, ?)"
@@ -62,14 +64,14 @@ export async function saveGlobalConnection(env, adminId, params) {
   return connectionId;
 }
 
-export async function updateUserConnection(env, userId, connectionId, updates) {
+export async function updateUserConnection(env: NyraEnv, userId, connectionId, updates) {
   const ts = now();
   const conn = await getUserConnectionById(env, userId, connectionId);
   if (!conn) return false;
   if (conn.is_global === 1 && !isAdmin(env, userId)) return false;
   if (conn.is_global === 0 && conn.telegram_id !== userId) return false;
-  const fields = [];
-  const values = [];
+  const fields: string[] = [];
+  const values: unknown[] = [];
   if (updates.label !== undefined) { fields.push("label = ?"); values.push(updates.label); }
   if (updates.description !== undefined) { fields.push("description = ?"); values.push(updates.description); }
   if (updates.base_url !== undefined) { fields.push("base_url = ?"); values.push(normalizeBaseUrl(updates.provider || conn.provider, updates.base_url)); }
@@ -93,10 +95,10 @@ export async function updateUserConnection(env, userId, connectionId, updates) {
     }
     invalidateUserConnectionsCache(null);
     return true;
-  } catch (err) { console.error("updateUserConnection failed:", err.message); return false; }
+  } catch (err) { console.error("updateUserConnection failed:", (err instanceof Error ? err.message : String(err))); return false; }
 }
 
-export async function deleteUserConnection(env, userId, connectionId) {
+export async function deleteUserConnection(env: NyraEnv, userId, connectionId) {
   const conn = await getUserConnectionById(env, userId, connectionId);
   if (!conn) return false;
   if (conn.is_global === 1 && !isAdmin(env, userId)) return false;
@@ -111,10 +113,10 @@ export async function deleteUserConnection(env, userId, connectionId) {
     invalidateUserConnectionsCache(null);
     try { await env.DB.prepare("UPDATE users SET active_connection_id = NULL, updated_at = ? WHERE active_connection_id = ?").bind(now(), connectionId).run(); } catch (e) {}
     return true;
-  } catch (err) { console.error("deleteUserConnection failed:", err.message); return false; }
+  } catch (err) { console.error("deleteUserConnection failed:", (err instanceof Error ? err.message : String(err))); return false; }
 }
 
-export async function toggleUserConnection(env, userId, connectionId) {
+export async function toggleUserConnection(env: NyraEnv, userId, connectionId) {
   const conn = await getUserConnectionById(env, userId, connectionId);
   if (!conn) return false;
   if (conn.is_global === 1 && !isAdmin(env, userId)) return false;
@@ -127,19 +129,19 @@ export async function toggleUserConnection(env, userId, connectionId) {
   } catch (err) { return false; }
 }
 
-export async function setDefaultConnection(env, adminId, connectionId) {
+export async function setDefaultConnection(env: NyraEnv, adminId, connectionId) {
   if (!isAdmin(env, adminId)) return false;
   try {
     await env.DB.prepare("UPDATE ai_connections SET is_default = 0 WHERE is_global = 1").run();
     await env.DB.prepare("UPDATE ai_connections SET is_default = 1, updated_at = ? WHERE connection_id = ? AND is_global = 1").bind(now(), connectionId).run();
     invalidateUserConnectionsCache(null);
     return true;
-  } catch (err) { console.error("setDefaultConnection failed:", err.message); return false; }
+  } catch (err) { console.error("setDefaultConnection failed:", (err instanceof Error ? err.message : String(err))); return false; }
 }
 
 /** Toggle fast-mode on a global connection. Fast models stream straight from
  * the webhook request instead of waiting in the queue consumer's batch window. */
-export async function setConnectionFast(env, adminId, connectionId) {
+export async function setConnectionFast(env: NyraEnv, adminId, connectionId) {
   if (!isAdmin(env, adminId)) return false;
   const conn = await getUserConnectionById(env, adminId, connectionId);
   if (!conn) return false;
@@ -149,7 +151,7 @@ export async function setConnectionFast(env, adminId, connectionId) {
     await env.DB.prepare("UPDATE ai_connections SET is_fast = ?, updated_at = ? WHERE connection_id = ?").bind(newState, now(), connectionId).run();
     invalidateUserConnectionsCache(null);
     return true;
-  } catch (err) { console.error("setConnectionFast failed:", err.message); return false; }
+  } catch (err) { console.error("setConnectionFast failed:", (err instanceof Error ? err.message : String(err))); return false; }
 }
 
 /**
@@ -157,7 +159,7 @@ export async function setConnectionFast(env, adminId, connectionId) {
  * actually accept image input — when on, the user's photos are forwarded to the
  * model instead of being reduced to a "[user sent a photo]" placeholder.
  */
-export async function setConnectionVision(env, adminId, connectionId) {
+export async function setConnectionVision(env: NyraEnv, adminId, connectionId) {
   if (!isAdmin(env, adminId)) return false;
   const conn = await getUserConnectionById(env, adminId, connectionId);
   if (!conn) return false;
@@ -167,10 +169,10 @@ export async function setConnectionVision(env, adminId, connectionId) {
     await env.DB.prepare("UPDATE ai_connections SET supports_vision = ?, updated_at = ? WHERE connection_id = ?").bind(newState, now(), connectionId).run();
     invalidateUserConnectionsCache(null);
     return true;
-  } catch (err) { console.error("setConnectionVision failed:", err.message); return false; }
+  } catch (err) { console.error("setConnectionVision failed:", (err instanceof Error ? err.message : String(err))); return false; }
 }
 
-export async function updateUserConnectionTest(env, userId, connectionId, status, error, latencyMs, diagnostic) {
+export async function updateUserConnectionTest(env: NyraEnv, userId, connectionId, status, error, latencyMs, diagnostic) {
   const ts = now();
   try {
     if (status === "success") {
@@ -181,17 +183,17 @@ export async function updateUserConnectionTest(env, userId, connectionId, status
         .bind(ts, status, error || null, latencyMs || null, diagnostic || null, ts, connectionId).run();
     }
     invalidateUserConnectionsCache(null);
-  } catch (err) { console.error("updateUserConnectionTest failed:", err.message); }
+  } catch (err) { console.error("updateUserConnectionTest failed:", (err instanceof Error ? err.message : String(err))); }
 }
 
-export async function recordConnectionFailure(env, connectionId) {
+export async function recordConnectionFailure(env: NyraEnv, connectionId) {
   try {
     await env.DB.prepare("UPDATE ai_connections SET consecutive_failures = consecutive_failures + 1, updated_at = ? WHERE connection_id = ?").bind(now(), connectionId).run();
     invalidateUserConnectionsCache(null);
   } catch (err) {}
 }
 
-export async function recordConnectionSuccess(env, connectionId) {
+export async function recordConnectionSuccess(env: NyraEnv, connectionId) {
   try {
     await env.DB.prepare("UPDATE ai_connections SET consecutive_failures = 0, last_success_at = ?, updated_at = ? WHERE connection_id = ?").bind(now(), now(), connectionId).run();
     invalidateUserConnectionsCache(null);
@@ -199,7 +201,7 @@ export async function recordConnectionSuccess(env, connectionId) {
 }
 
 /** The caller's own enabled connections (never the operator's). */
-export async function getEnabledPersonalConnections(env, userId) {
+export async function getEnabledPersonalConnections(env: NyraEnv, userId) {
   const all = await getUserConnections(env, userId);
   return all.filter(function (c) { return c.enabled === 1 && c.is_global === 0 && Number(c.telegram_id) === Number(userId); });
 }
@@ -209,20 +211,20 @@ export async function getEnabledPersonalConnections(env, userId) {
  * key of their own can actually reach, so the shared-service switch must never
  * be treated as "available" when this returns zero rows.
  */
-export async function getEnabledSharedConnections(env) {
+export async function getEnabledSharedConnections(env: NyraEnv) {
   try {
     const res = await env.DB.prepare(
       "SELECT connection_id, telegram_id, label, provider, base_url, model, enabled, is_global, is_default, is_fast, supports_vision, description, display_order, last_test_status, last_test_diagnostic, last_test_error, last_test_at, consecutive_failures, created_at FROM ai_connections WHERE is_global = 1 AND enabled = 1 ORDER BY is_default DESC, display_order ASC, created_at ASC"
     ).all();
     return res.results || [];
   } catch (err) {
-    console.error("getEnabledSharedConnections failed:", err.message);
+    console.error("getEnabledSharedConnections failed:", (err instanceof Error ? err.message : String(err)));
     return [];
   }
 }
 
 /** Operator-owned connections including disabled ones, credential-free. */
-export async function listGlobalConnections(env) {
+export async function listGlobalConnections(env: NyraEnv) {
   try {
     const res = await env.DB.prepare(
       // `has_key` is derived, never the ciphertext itself: the admin panel has
@@ -233,12 +235,12 @@ export async function listGlobalConnections(env) {
     ).all();
     return res.results || [];
   } catch (err) {
-    console.error("listGlobalConnections failed:", err.message);
+    console.error("listGlobalConnections failed:", (err instanceof Error ? err.message : String(err)));
     return [];
   }
 }
 
-export async function countEnabledSharedConnections(env) {
+export async function countEnabledSharedConnections(env: NyraEnv) {
   try {
     const row = await env.DB.prepare("SELECT COUNT(*) AS c FROM ai_connections WHERE is_global = 1 AND enabled = 1").first();
     return row ? row.c : 0;
@@ -246,7 +248,7 @@ export async function countEnabledSharedConnections(env) {
 }
 
 /** Explicit enable/disable for a global connection (admin only). */
-export async function setGlobalConnectionEnabled(env, adminId, connectionId, enabled) {
+export async function setGlobalConnectionEnabled(env: NyraEnv, adminId, connectionId, enabled) {
   if (!isAdmin(env, adminId)) return false;
   const conn = await getUserConnectionById(env, adminId, connectionId);
   if (!conn || conn.is_global !== 1) return false;
@@ -255,10 +257,10 @@ export async function setGlobalConnectionEnabled(env, adminId, connectionId, ena
       .bind(enabled ? 1 : 0, now(), connectionId).run();
     invalidateUserConnectionsCache(null);
     return true;
-  } catch (err) { console.error("setGlobalConnectionEnabled failed:", err.message); return false; }
+  } catch (err) { console.error("setGlobalConnectionEnabled failed:", (err instanceof Error ? err.message : String(err))); return false; }
 }
 
-export async function resolveUserActiveConnection(env, user) {
+export async function resolveUserActiveConnection(env: NyraEnv, user) {
   const conns = await getEnabledUserConnections(env, user.telegram_id);
   if (conns.length === 0) return { connection: null, switched: false, previousMissing: false };
   let conn = null;
@@ -266,9 +268,10 @@ export async function resolveUserActiveConnection(env, user) {
     for (let i = 0; i < conns.length; i++) if (conns[i].connection_id === user.active_connection_id) { conn = conns[i]; break; }
   }
   if (!conn) {
-    let target = null;
+    let target: Record<string, any> | null = null;
     for (let i = 0; i < conns.length; i++) if (conns[i].is_global === 1 && conns[i].is_default === 1) { target = conns[i]; break; }
-    if (!target) target = conns[0];
+    if (!target) target = conns[0] || null;
+    if (!target) return { connection: null, switched: false, previousMissing: !!(user && user.active_connection_id) };
     try { await env.DB.prepare("UPDATE users SET active_connection_id = ?, updated_at = ? WHERE telegram_id = ?").bind(target.connection_id, now(), user.telegram_id).run(); } catch (err) {}
     return { connection: target, switched: true, previousMissing: !!(user && user.active_connection_id) };
   }
@@ -277,7 +280,7 @@ export async function resolveUserActiveConnection(env, user) {
 
 // --- Routes (multi-model + multi-token fallback groups) --------------------
 
-export async function countPersonalConnections(env, userId) {
+export async function countPersonalConnections(env: NyraEnv, userId) {
   try {
     const row = await env.DB.prepare("SELECT COUNT(*) AS c FROM ai_connections WHERE telegram_id = ? AND is_global = 0").bind(userId).first();
     return row ? row.c : 0;

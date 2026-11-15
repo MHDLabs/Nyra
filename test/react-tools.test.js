@@ -19,7 +19,7 @@ describe("reactions and tools", () => {
     assert.match(src, /react_to_message/);
   });
   it("supports_tools column is migrated", () => {
-    const src = readFileSync(new URL("../src/db/schema.js", import.meta.url), "utf8");
+    const src = readFileSync(new URL("../src/db/schema.ts", import.meta.url), "utf8");
     assert.match(src, /supports_tools/);
     assert.match(src, /seedWorkersAiCatalog/);
   });

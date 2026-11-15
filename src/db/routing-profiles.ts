@@ -1,3 +1,5 @@
+import type { NyraEnv } from "../../types/env.js";
+import type { TelegramId } from "../../types/domain.js";
 // Routing profiles: a user-owned, ordered "primary + fallbacks" list.
 //
 // A profile is a named list of routing_profile_entries. Each entry points at a
@@ -14,7 +16,7 @@ import { MAX_LABEL_LENGTH, MAX_ROUTE_LABEL_LENGTH, MAX_ROUTE_MODELS } from "../c
 
 const ENTRY_SELECT = "SELECT e.entry_id, e.profile_id, e.connection_id, e.model, e.priority, e.enabled AS entry_enabled, e.created_at AS entry_created_at, e.updated_at AS entry_updated_at, c.label AS connection_label, c.provider, c.base_url, c.encrypted_key, c.key_iv, c.telegram_id AS owner_telegram_id, c.enabled AS connection_enabled, c.is_global, c.is_fast, c.supports_vision, c.consecutive_failures, cm.model_id AS model_row_id, cm.label AS model_label, cm.enabled AS model_enabled, cm.verify_status, cm.source AS model_source FROM routing_profile_entries e JOIN routing_profiles p ON p.profile_id = e.profile_id JOIN ai_connections c ON c.connection_id = e.connection_id LEFT JOIN connection_models cm ON cm.connection_id = e.connection_id AND cm.model = e.model WHERE e.profile_id = ? AND p.telegram_id = ? AND (c.is_global = 1 OR c.telegram_id = ?) ORDER BY e.priority ASC, e.created_at ASC";
 
-export async function listRoutingProfiles(env, userId) {
+export async function listRoutingProfiles(env: NyraEnv, userId) {
   try {
     const res = await env.DB.prepare("SELECT * FROM routing_profiles WHERE telegram_id = ? ORDER BY is_default DESC, created_at ASC").bind(userId).all();
     return res.results || [];
@@ -25,26 +27,26 @@ export async function listRoutingProfiles(env, userId) {
   }
 }
 
-export async function countRoutingProfiles(env, userId) {
+export async function countRoutingProfiles(env: NyraEnv, userId) {
   try {
     const row = await env.DB.prepare("SELECT COUNT(*) AS c FROM routing_profiles WHERE telegram_id = ?").bind(userId).first();
     return row ? row.c : 0;
   } catch (err) { return 0; }
 }
 
-export async function getRoutingProfileById(env, userId, profileId) {
+export async function getRoutingProfileById(env: NyraEnv, userId, profileId) {
   try {
     return await env.DB.prepare("SELECT * FROM routing_profiles WHERE profile_id = ? AND telegram_id = ?").bind(profileId, userId).first();
   } catch (err) { return null; }
 }
 
-export async function getDefaultRoutingProfile(env, userId) {
+export async function getDefaultRoutingProfile(env: NyraEnv, userId) {
   try {
     return await env.DB.prepare("SELECT * FROM routing_profiles WHERE telegram_id = ? AND is_default = 1 AND enabled = 1 ORDER BY created_at ASC").bind(userId).first();
   } catch (err) { return null; }
 }
 
-export async function getRoutingProfileEntries(env, profileId) {
+export async function getRoutingProfileEntries(env: NyraEnv, profileId) {
   try {
     const res = await env.DB.prepare("SELECT * FROM routing_profile_entries WHERE profile_id = ? ORDER BY priority ASC, created_at ASC").bind(profileId).all();
     return res.results || [];
@@ -52,30 +54,30 @@ export async function getRoutingProfileEntries(env, profileId) {
 }
 
 /** Entries joined with their connection + model row, owner-scoped. */
-export async function getRoutingEntriesWithConnections(env, userId, profileId) {
+export async function getRoutingEntriesWithConnections(env: NyraEnv, userId, profileId) {
   try {
     const res = await env.DB.prepare(ENTRY_SELECT).bind(profileId, userId, userId).all();
     return res.results || [];
   } catch (err) {
-    console.error("getRoutingEntriesWithConnections failed:", err.message);
+    console.error("getRoutingEntriesWithConnections failed:", (err instanceof Error ? err.message : String(err)));
     return [];
   }
 }
 
-export async function getRoutingProfileBundle(env, userId, profileId) {
+export async function getRoutingProfileBundle(env: NyraEnv, userId, profileId) {
   const profile = await getRoutingProfileById(env, userId, profileId);
   if (!profile) return null;
   const entries = await getRoutingProfileEntries(env, profileId);
   return { profile: profile, entries: entries };
 }
 
-export async function getRoutingEntryById(env, profileId, entryId) {
+export async function getRoutingEntryById(env: NyraEnv, profileId, entryId) {
   try {
     return await env.DB.prepare("SELECT * FROM routing_profile_entries WHERE entry_id = ? AND profile_id = ?").bind(entryId, profileId).first();
   } catch (err) { return null; }
 }
 
-export async function createRoutingProfile(env, userId, params) {
+export async function createRoutingProfile(env: NyraEnv, userId, params) {
   const p = params || {};
   const label = String(p.label === undefined || p.label === null ? "" : p.label).trim();
   if (!label) return { ok: false, error: "label_required" };
@@ -92,17 +94,17 @@ export async function createRoutingProfile(env, userId, params) {
       .bind(profileId, userId, label, isDefault, p.cross_source_fallback ? 1 : 0, ts, ts).run();
     return { ok: true, profileId: profileId };
   } catch (err) {
-    console.error("createRoutingProfile failed:", err.message);
+    console.error("createRoutingProfile failed:", (err instanceof Error ? err.message : String(err)));
     return { ok: false, error: "create_failed" };
   }
 }
 
-export async function updateRoutingProfile(env, userId, profileId, updates) {
+export async function updateRoutingProfile(env: NyraEnv, userId, profileId, updates) {
   const u = updates || {};
   const profile = await getRoutingProfileById(env, userId, profileId);
   if (!profile) return { ok: false, error: "not_found" };
-  const fields = [];
-  const values = [];
+  const fields: string[] = [];
+  const values: unknown[] = [];
   if (u.label !== undefined) {
     const label = String(u.label).trim();
     if (!label) return { ok: false, error: "label_required" };
@@ -117,12 +119,12 @@ export async function updateRoutingProfile(env, userId, profileId, updates) {
     await env.DB.prepare("UPDATE routing_profiles SET " + fields.join(", ") + " WHERE profile_id = ? AND telegram_id = ?").bind.apply(null, values).run();
     return { ok: true };
   } catch (err) {
-    console.error("updateRoutingProfile failed:", err.message);
+    console.error("updateRoutingProfile failed:", (err instanceof Error ? err.message : String(err)));
     return { ok: false, error: "update_failed" };
   }
 }
 
-export async function deleteRoutingProfile(env, userId, profileId) {
+export async function deleteRoutingProfile(env: NyraEnv, userId, profileId) {
   const profile = await getRoutingProfileById(env, userId, profileId);
   if (!profile) return false;
   try {
@@ -133,12 +135,12 @@ export async function deleteRoutingProfile(env, userId, profileId) {
     ]);
     return true;
   } catch (err) {
-    console.error("deleteRoutingProfile failed:", err.message);
+    console.error("deleteRoutingProfile failed:", (err instanceof Error ? err.message : String(err)));
     return false;
   }
 }
 
-export async function setDefaultRoutingProfile(env, userId, profileId) {
+export async function setDefaultRoutingProfile(env: NyraEnv, userId, profileId) {
   const profile = await getRoutingProfileById(env, userId, profileId);
   if (!profile) return false;
   try {
@@ -148,32 +150,32 @@ export async function setDefaultRoutingProfile(env, userId, profileId) {
     ]);
     return true;
   } catch (err) {
-    console.error("setDefaultRoutingProfile failed:", err.message);
+    console.error("setDefaultRoutingProfile failed:", (err instanceof Error ? err.message : String(err)));
     return false;
   }
 }
 
 /** Select this profile for the user (users.active_profile_id). */
-export async function setActiveRoutingProfile(env, userId, profileId) {
+export async function setActiveRoutingProfile(env: NyraEnv, userId, profileId) {
   const profile = await getRoutingProfileById(env, userId, profileId);
   if (!profile || profile.enabled !== 1) return false;
   try {
     await env.DB.prepare("UPDATE users SET active_profile_id = ?, updated_at = ? WHERE telegram_id = ?").bind(profileId, now(), userId).run();
     return true;
   } catch (err) {
-    console.error("setActiveRoutingProfile failed:", err.message);
+    console.error("setActiveRoutingProfile failed:", (err instanceof Error ? err.message : String(err)));
     return false;
   }
 }
 
-export async function clearActiveRoutingProfile(env, userId) {
+export async function clearActiveRoutingProfile(env: NyraEnv, userId) {
   try {
     await env.DB.prepare("UPDATE users SET active_profile_id = NULL, updated_at = ? WHERE telegram_id = ?").bind(now(), userId).run();
     return true;
   } catch (err) { return false; }
 }
 
-async function nextEntryPriority(env, profileId) {
+async function nextEntryPriority(env: NyraEnv, profileId) {
   try {
     const row = await env.DB.prepare("SELECT MAX(priority) AS m FROM routing_profile_entries WHERE profile_id = ?").bind(profileId).first();
     if (row && row.m !== null && row.m !== undefined) return Number(row.m) + 10;
@@ -185,7 +187,7 @@ async function nextEntryPriority(env, profileId) {
  * Add an entry. The (profile, connection, model) triple is unique: adding a
  * duplicate is idempotent and returns the existing entry instead of failing.
  */
-export async function addRoutingProfileEntry(env, userId, profileId, params) {
+export async function addRoutingProfileEntry(env: NyraEnv, userId, profileId, params) {
   const p = params || {};
   const profile = await getRoutingProfileById(env, userId, profileId);
   if (!profile) return { ok: false, error: "not_found" };
@@ -198,7 +200,7 @@ export async function addRoutingProfileEntry(env, userId, profileId, params) {
   let count = 0;
   try {
     const row = await env.DB.prepare("SELECT COUNT(*) AS c FROM routing_profile_entries WHERE profile_id = ?").bind(profileId).first();
-    count = row ? row.c : 0;
+    count = row ? Number(row.c) : 0;
   } catch (err) {}
   if (count >= MAX_ROUTE_MODELS) return { ok: false, error: "too_many_entries" };
   let priority = Number(p.priority);
@@ -211,21 +213,21 @@ export async function addRoutingProfileEntry(env, userId, profileId, params) {
     const stored = await getRoutingEntryById(env, profileId, entryId);
     return { ok: true, entry: stored, existed: false };
   } catch (err) {
-    if (String(err.message || "").toLowerCase().indexOf("unique") !== -1) {
+    if (String((err instanceof Error ? err.message : String(err)) || "").toLowerCase().indexOf("unique") !== -1) {
       const dup = await env.DB.prepare("SELECT * FROM routing_profile_entries WHERE profile_id = ? AND connection_id = ? AND model = ?").bind(profileId, connectionId, model).first().catch(function () { return null; });
       if (dup) return { ok: true, entry: dup, existed: true };
     }
-    console.error("addRoutingProfileEntry failed:", err.message);
+    console.error("addRoutingProfileEntry failed:", (err instanceof Error ? err.message : String(err)));
     return { ok: false, error: "create_failed" };
   }
 }
 
-export async function updateRoutingProfileEntry(env, userId, profileId, entryId, updates) {
+export async function updateRoutingProfileEntry(env: NyraEnv, userId, profileId, entryId, updates) {
   const profile = await getRoutingProfileById(env, userId, profileId);
   if (!profile) return { ok: false, error: "not_found" };
   const u = updates || {};
-  const fields = [];
-  const values = [];
+  const fields: string[] = [];
+  const values: unknown[] = [];
   if (u.enabled !== undefined) { fields.push("enabled = ?"); values.push(u.enabled ? 1 : 0); }
   if (u.priority !== undefined) {
     const n = Number(u.priority);
@@ -239,12 +241,12 @@ export async function updateRoutingProfileEntry(env, userId, profileId, entryId,
     await env.DB.prepare("UPDATE routing_profile_entries SET " + fields.join(", ") + " WHERE entry_id = ? AND profile_id = ?").bind.apply(null, values).run();
     return { ok: true };
   } catch (err) {
-    console.error("updateRoutingProfileEntry failed:", err.message);
+    console.error("updateRoutingProfileEntry failed:", (err instanceof Error ? err.message : String(err)));
     return { ok: false, error: "update_failed" };
   }
 }
 
-export async function deleteRoutingProfileEntry(env, userId, profileId, entryId) {
+export async function deleteRoutingProfileEntry(env: NyraEnv, userId, profileId, entryId) {
   const profile = await getRoutingProfileById(env, userId, profileId);
   if (!profile) return false;
   try {
@@ -258,13 +260,13 @@ export async function deleteRoutingProfileEntry(env, userId, profileId, entryId)
  * belong to the profile but are not listed are appended afterwards, so a
  * partial reorder request can never lose an entry from the plan.
  */
-export async function reorderRoutingProfileEntries(env, userId, profileId, entryIds) {
+export async function reorderRoutingProfileEntries(env: NyraEnv, userId, profileId, entryIds) {
   const profile = await getRoutingProfileById(env, userId, profileId);
   if (!profile) return false;
   const current = await getRoutingProfileEntries(env, profileId);
   if (current.length === 0) return true;
   const known = new Set(current.map(function (e) { return e.entry_id; }));
-  const ordered = [];
+  const ordered: string[] = [];
   const seen = new Set();
   const requested = Array.isArray(entryIds) ? entryIds : [];
   for (let i = 0; i < requested.length; i++) {
@@ -272,7 +274,7 @@ export async function reorderRoutingProfileEntries(env, userId, profileId, entry
     if (known.has(id) && !seen.has(id)) { seen.add(id); ordered.push(id); }
   }
   for (let i = 0; i < current.length; i++) {
-    if (!seen.has(current[i].entry_id)) { seen.add(current[i].entry_id); ordered.push(current[i].entry_id); }
+    if (!seen.has(current[i].entry_id)) { seen.add(String(current[i].entry_id)); ordered.push(String(current[i].entry_id)); }
   }
   const ts = now();
   try {
@@ -283,7 +285,7 @@ export async function reorderRoutingProfileEntries(env, userId, profileId, entry
     await env.DB.batch(batch);
     return true;
   } catch (err) {
-    console.error("reorderRoutingProfileEntries failed:", err.message);
+    console.error("reorderRoutingProfileEntries failed:", (err instanceof Error ? err.message : String(err)));
     return false;
   }
 }

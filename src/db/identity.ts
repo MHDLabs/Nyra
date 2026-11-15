@@ -1,10 +1,12 @@
+import type { NyraEnv } from "../../types/env.js";
+import type { TelegramId } from "../../types/domain.js";
 // Bot identity (numeric id + @username): in-isolate cache backed by KV.
 import { BOT_IDENTITY_NEGATIVE_TTL, BOT_IDENTITY_TTL } from "../config.js";
 import { tg } from "../telegram.js";
 
-let botIdentityCache = { id: null, username: null, expiresAt: 0 };
+let botIdentityCache: { id: number | null; username: string | null; expiresAt: number } = { id: null, username: null, expiresAt: 0 };
 
-export async function getBotIdentity(env) {
+export async function getBotIdentity(env: NyraEnv) {
   if (botIdentityCache.expiresAt > Date.now()) return botIdentityCache;
   if (env.TELEGRAM_BOT_ID && env.TELEGRAM_BOT_USERNAME) {
     const parsedId = parseInt(env.TELEGRAM_BOT_ID, 10);
@@ -15,7 +17,7 @@ export async function getBotIdentity(env) {
     }
   }
   try {
-    const cached = await env.KV.get("bot:identity", "json");
+    const cached = await env.KV.get("bot:identity", "json") as { id?: number; username?: string } | null;
     if (cached && typeof cached.id === "number" && cached.id > 0) {
       botIdentityCache = { id: cached.id, username: cached.username || null, expiresAt: Date.now() + BOT_IDENTITY_TTL };
       return botIdentityCache;

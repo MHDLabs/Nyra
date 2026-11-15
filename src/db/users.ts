@@ -1,10 +1,12 @@
+import type { NyraEnv } from "../../types/env.js";
+import type { TelegramId } from "../../types/domain.js";
 // Users, chats, thread history, block list and per-user conversation flow state.
 import { FLOW_TTL, MAX_CONTEXT_MESSAGES, USER_LAST_SEEN_INTERVAL } from "../config.js";
 import { containsNyraWord, escapeRegex, isAdmin, now, truncate } from "../utils.js";
 
-export async function getUser(env, userId) {
+export async function getUser(env: NyraEnv, userId) {
   try { return await env.DB.prepare("SELECT * FROM users WHERE telegram_id = ?").bind(userId).first(); }
-  catch (err) { console.error("getUser failed:", err.message); return null; }
+  catch (err) { console.error("getUser failed:", (err instanceof Error ? err.message : String(err))); return null; }
 }
 
 /**
@@ -13,22 +15,22 @@ export async function getUser(env, userId) {
  * a genuinely missing row — swallowing the error made every outage look like
  * "user not found".
  */
-export async function getUserStrict(env, userId) {
+export async function getUserStrict(env: NyraEnv, userId) {
   return await env.DB.prepare("SELECT * FROM users WHERE telegram_id = ?").bind(userId).first();
 }
 
-export async function upsertUser(env, from) {
+export async function upsertUser(env: NyraEnv, from) {
   const ts = now();
   const existing = await getUser(env, from.id);
   if (!existing) {
     try {
       await env.DB.prepare("INSERT INTO users (telegram_id, first_name, last_name, username, language_code, personality_id, memory_mode, memory_data, usage_stats, fallback_enabled, msg_counter, active_connection_id, created_at, last_seen_at, updated_at) VALUES (?, ?, ?, ?, ?, 'romantic', 'normal', '{}', '{}', 1, 0, NULL, ?, ?, ?) ON CONFLICT(telegram_id) DO NOTHING")
         .bind(from.id, from.first_name || "", from.last_name || "", from.username || "", from.language_code || "", ts, ts, ts).run();
-    } catch (err) { console.error("upsertUser insert failed:", err.message); }
+    } catch (err) { console.error("upsertUser insert failed:", (err instanceof Error ? err.message : String(err))); }
     return await getUser(env, from.id);
   }
   const nameChanged = existing.first_name !== (from.first_name || "") || existing.last_name !== (from.last_name || "") || existing.username !== (from.username || "") || existing.language_code !== (from.language_code || "");
-  const lastSeenOld = (ts - (existing.last_seen_at || 0)) > USER_LAST_SEEN_INTERVAL;
+  const lastSeenOld = (ts - Number(existing.last_seen_at || 0)) > USER_LAST_SEEN_INTERVAL;
   if (!nameChanged && !lastSeenOld) return existing;
   try {
     if (nameChanged) {
@@ -46,7 +48,7 @@ export async function upsertUser(env, from) {
  * tracking. Unlike last_seen_at this is not throttled — every eligible message
  * advances the inactivity clock. Outgoing bot messages must never call this.
  */
-export async function touchLastInbound(env, userId) {
+export async function touchLastInbound(env: NyraEnv, userId) {
   if (!userId) return;
   const ts = now();
   try {
@@ -64,17 +66,17 @@ export async function touchLastInbound(env, userId) {
         "UPDATE users SET last_inbound_at = ?, proactive_episode_key = NULL, updated_at = ? WHERE telegram_id = ?"
       ).bind(ts, ts, userId).run();
     } catch (err2) {
-      console.error("touchLastInbound failed:", err2.message);
+      console.error("touchLastInbound failed:", (err2 instanceof Error ? err2.message : String(err2)));
     }
   }
 }
 
-export async function getChat(env, chatId) {
+export async function getChat(env: NyraEnv, chatId) {
   try { return await env.DB.prepare("SELECT * FROM chats WHERE chat_id = ?").bind(chatId).first(); }
   catch (err) { return null; }
 }
 
-export async function recordGroupChatAndCheckAccess(env, chat, userId) {
+export async function recordGroupChatAndCheckAccess(env: NyraEnv, chat, userId) {
   const ts = now();
   const existing = await getChat(env, chat.id);
   if (!existing) {
@@ -93,32 +95,32 @@ export async function recordGroupChatAndCheckAccess(env, chat, userId) {
   return mode === "enabled";
 }
 
-export async function isUserBlocked(env, userId) {
+export async function isUserBlocked(env: NyraEnv, userId) {
   try {
     const row = await env.DB.prepare("SELECT telegram_id FROM blocked_users WHERE telegram_id = ?").bind(userId).first();
     return !!row;
   } catch (err) { return false; }
 }
 
-export async function blockUser(env, targetId, byUserId, reason) {
+export async function blockUser(env: NyraEnv, targetId, byUserId, reason) {
   await env.DB.prepare(
     "INSERT OR REPLACE INTO blocked_users (telegram_id, reason, blocked_at, blocked_by) VALUES (?, ?, ?, ?)"
   ).bind(targetId, reason || "admin block", now(), byUserId || 0).run();
 }
 
-export async function unblockUser(env, targetId) {
+export async function unblockUser(env: NyraEnv, targetId) {
   await env.DB.prepare("DELETE FROM blocked_users WHERE telegram_id = ?").bind(targetId).run();
 }
 
-export async function saveThreadMessage(env, chatId, threadId, messageId, userId, role, content) {
+export async function saveThreadMessage(env: NyraEnv, chatId, threadId, messageId, userId, role, content) {
   try {
     await env.DB.prepare(
       "INSERT INTO thread_messages (chat_id, message_id, thread_id, user_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(chat_id, message_id) DO UPDATE SET thread_id = excluded.thread_id, content = excluded.content"
     ).bind(chatId, messageId, threadId, userId || null, role, truncate(content || "", 2000), now()).run();
-  } catch (err) { console.error("saveThreadMessage failed:", err.message); }
+  } catch (err) { console.error("saveThreadMessage failed:", (err instanceof Error ? err.message : String(err))); }
 }
 
-export async function getThreadContext(env, chatId, threadId, limit) {
+export async function getThreadContext(env: NyraEnv, chatId, threadId, limit) {
   const lim = (typeof limit === "number" && limit > 0) ? limit : MAX_CONTEXT_MESSAGES;
   try {
     const result = await env.DB.prepare(
@@ -166,7 +168,7 @@ export function isGroupTrigger(message, identity, config) {
   return { trigger: false, mode: null };
 }
 
-export async function determineThreadId(env, chatId, message, identity, triggerMode) {
+export async function determineThreadId(env: NyraEnv, chatId, message, identity, triggerMode) {
   if (triggerMode === "reply" && isReplyToBot(message, identity)) {
     const replyMsgId = message.reply_to_message.message_id;
     try {
@@ -178,15 +180,15 @@ export async function determineThreadId(env, chatId, message, identity, triggerM
   return message.message_id;
 }
 
-export async function getFlowState(env, userId) {
+export async function getFlowState(env: NyraEnv, userId) {
   try { return await env.KV.get("flow:" + userId, "json"); } catch (err) { return null; }
 }
 
-export async function setFlowState(env, userId, state) {
+export async function setFlowState(env: NyraEnv, userId, state) {
   try { await env.KV.put("flow:" + userId, JSON.stringify(state), { expirationTtl: FLOW_TTL }); }
-  catch (err) { console.error("setFlowState failed:", err.message); }
+  catch (err) { console.error("setFlowState failed:", (err instanceof Error ? err.message : String(err))); }
 }
 
-export async function clearFlowState(env, userId) {
+export async function clearFlowState(env: NyraEnv, userId) {
   try { await env.KV.delete("flow:" + userId); } catch (err) {}
 }

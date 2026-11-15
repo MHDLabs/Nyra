@@ -1,3 +1,5 @@
+import type { NyraEnv } from "../../types/env.js";
+import type { TelegramId } from "../../types/domain.js";
 // Per-user locale persistence (users.locale).
 //
 // The Mini App (and, through the same row, the Telegram bot) reads this value;
@@ -10,14 +12,14 @@ import { getUserStrict } from "./users.js";
 import { now } from "../utils.js";
 
 /** Stored locale for a user (null when never chosen, even if language_code exists). */
-export async function getStoredUserLocale(env, userId) {
+export async function getStoredUserLocale(env: NyraEnv, userId) {
   const user = await getUserStrict(env, userId);
   if (!user) return null;
   return user.locale ? normalizeLocale(user.locale) : null;
 }
 
 /** Effective locale: stored value, else Telegram language_code, else en-US. */
-export async function getUserLocale(env, userId) {
+export async function getUserLocale(env: NyraEnv, userId) {
   const user = await getUserStrict(env, userId);
   return localeForUser(user);
 }
@@ -27,7 +29,7 @@ export async function getUserLocale(env, userId) {
  * Only the `locale` column (and `updated_at`) is written; the previous value is
  * replaced in place, never causing dependent data to be dropped.
  */
-export async function setUserLocale(env, userId, locale) {
+export async function setUserLocale(env: NyraEnv, userId, locale) {
   if (!isSupportedLocaleInput(locale)) return { ok: false, reason: "invalid_locale" };
   const normalized = normalizeLocale(locale);
   if (SUPPORTED_LOCALES.indexOf(normalized) === -1) return { ok: false, reason: "invalid_locale" };

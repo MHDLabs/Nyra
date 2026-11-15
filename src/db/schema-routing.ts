@@ -1,3 +1,5 @@
+import type { NyraEnv } from "../../types/env.js";
+import type { TelegramId } from "../../types/domain.js";
 // Routing/connection migrations. Kept in a separate module so the routing
 // engineer can extend the data model without touching the core schema file;
 // `schema.js` concatenates this list after the core migrations (ids 1-11).

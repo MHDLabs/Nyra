@@ -1,3 +1,5 @@
+import type { NyraEnv } from "../../types/env.js";
+import type { TelegramId } from "../../types/domain.js";
 // D1 schema bootstrap, versioned migrations and periodic housekeeping.
 // Owns the one-shot guarded init path (`ensureSchema` / `maybeInitSchema`).
 import { CONTEXT_TTL, DEFAULT_PERSONALITIES, RETIRED_PERSONALITY_IDS, SCHEMA_PROBE_INTERVAL_MS } from "../config.js";
@@ -16,7 +18,7 @@ let migrationsSettled = false;
 // never user input.
 const RETIRED_PERSONALITY_SQL = RETIRED_PERSONALITY_IDS.map(function (id) { return "'" + id + "'"; }).join(",");
 
-async function seedWorkersAiCatalog(env) {
+async function seedWorkersAiCatalog(env: NyraEnv) {
   const models = [
     { id: "wai-llama-3.1-8b", model: "@cf/meta/llama-3.1-8b-instruct", label: "Workers AI · Llama 3.1 8B" },
     { id: "wai-llama-3.3-70b", model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast", label: "Workers AI · Llama 3.3 70B Fast" },
@@ -31,11 +33,11 @@ async function seedWorkersAiCatalog(env) {
         "INSERT OR IGNORE INTO ai_connections (connection_id, telegram_id, label, provider, base_url, model, encrypted_key, key_iv, encryption_version, enabled, is_global, is_default, supports_tools, supports_vision, description, display_order, created_at, updated_at) " +
         "VALUES (?, 0, ?, 'workers-ai', NULL, ?, 'workers-ai', 'workers-ai', 2, 0, 1, 0, 0, 0, 'Cloudflare Workers AI (free tier)', ?, ?, ?)"
       ).bind(m.id, m.label, m.model, 200 + i, ts, ts).run();
-    } catch (e) { console.error("seed workers-ai", m.id, e.message); }
+    } catch (e) { console.error("seed workers-ai", m.id, (e instanceof Error ? e.message : String(e))); }
   }
 }
 
-export async function ensureSchema(env) {
+export async function ensureSchema(env: NyraEnv) {
   if (schemaReady) {
     // Base tables already exist in this isolate, but the database itself may
     // still owe a migration that shipped with a newer deployment. One indexed
@@ -43,7 +45,7 @@ export async function ensureSchema(env) {
     if (migrationsSettled) return;
     migrationsSettled = true;
     try { if (!(await hasPendingMigrations(env))) return; }
-    catch (err) { console.error("Migration probe failed:", err.message); return; }
+    catch (err) { console.error("Migration probe failed:", (err instanceof Error ? err.message : String(err))); return; }
     schemaReady = false;
   }
   const statements = [
@@ -83,10 +85,10 @@ export async function ensureSchema(env) {
     "CREATE INDEX IF NOT EXISTS idx_voice_transcripts_created ON voice_transcripts(created_at)",
     "CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)"
   ];
-  const schemaErrors = [];
+  const schemaErrors: string[] = [];
   for (let i = 0; i < statements.length; i++) {
     try { await env.DB.prepare(statements[i]).run(); }
-    catch (err) { console.error("Schema statement failed:", err.message); schemaErrors.push(err.message); }
+    catch (err) { console.error("Schema statement failed:", (err instanceof Error ? err.message : String(err))); schemaErrors.push((err instanceof Error ? err.message : String(err))); }
   }
   const alters = [
     ["users", "active_connection_id", "TEXT"],
@@ -144,9 +146,9 @@ export async function ensureSchema(env) {
       if (!hasCol) await env.DB.prepare("ALTER TABLE " + table + " ADD COLUMN " + column + " " + def).run();
     } catch (err) {
       // A concurrent isolate may have added the same column first — benign.
-      if (String(err.message || "").toLowerCase().indexOf("duplicate column") !== -1) continue;
-      console.error("Alter " + table + "." + column + " failed:", err.message);
-      schemaErrors.push(err.message);
+      if (String((err instanceof Error ? err.message : String(err)) || "").toLowerCase().indexOf("duplicate column") !== -1) continue;
+      console.error("Alter " + table + "." + column + " failed:", (err instanceof Error ? err.message : String(err)));
+      schemaErrors.push((err instanceof Error ? err.message : String(err)));
     }
   }
   if (schemaErrors.length > 0) {
@@ -164,7 +166,7 @@ export async function ensureSchema(env) {
       try {
         await env.DB.prepare("INSERT OR IGNORE INTO personalities (personality_id, name, prompt, enabled, is_builtin, created_at, updated_at) VALUES (?, ?, ?, 1, 1, ?, ?)")
           .bind(p.id, p.name, p.prompt, ts, ts).run();
-      } catch (e2) { console.error("Seed personality failed:", e2.message); }
+      } catch (e2) { console.error("Seed personality failed:", (e2 instanceof Error ? e2.message : String(e2))); }
     }
   }
   await runMaintenance(env);
@@ -349,13 +351,13 @@ const MIGRATIONS = CORE_MIGRATIONS.concat(ROUTING_MIGRATIONS);
 // these statements to an in-memory SQLite database. Not used at runtime.
 export { MIGRATIONS as SCHEMA_MIGRATIONS };
 
-async function runPendingMigrations(env) {
+async function runPendingMigrations(env: NyraEnv) {
   let appliedIds;
   try {
     const res = await env.DB.prepare("SELECT id FROM schema_migrations").all();
     appliedIds = new Set((res.results || []).map(function (r) { return r.id; }));
   } catch (err) {
-    console.error("schema_migrations read failed:", err.message);
+    console.error("schema_migrations read failed:", (err instanceof Error ? err.message : String(err)));
     throw err;
   }
   for (let i = 0; i < MIGRATIONS.length; i++) {
@@ -367,7 +369,7 @@ async function runPendingMigrations(env) {
       await env.DB.batch(batch);
       console.log("Applied schema migration " + m.id + ": " + m.label);
     } catch (err) {
-      const msg = String(err && err.message ? err.message : err).toLowerCase();
+      const msg = String(err && (err instanceof Error ? err.message : String(err)) ? (err instanceof Error ? err.message : String(err)) : err).toLowerCase();
       // Columns/tables may already exist if an earlier deploy applied them via
       // the additive `alters` path before the numbered migration was recorded.
       if (msg.indexOf("duplicate column") !== -1 || msg.indexOf("already exists") !== -1) {
@@ -376,10 +378,10 @@ async function runPendingMigrations(env) {
           console.log("Schema migration " + m.id + " recorded after benign conflict: " + m.label);
           continue;
         } catch (e2) {
-          console.error("Schema migration " + m.id + " conflict follow-up failed:", e2.message);
+          console.error("Schema migration " + m.id + " conflict follow-up failed:", (e2 instanceof Error ? e2.message : String(e2)));
         }
       }
-      console.error("Schema migration " + m.id + " failed:", err.message);
+      console.error("Schema migration " + m.id + " failed:", (err instanceof Error ? err.message : String(err)));
       throw err;
     }
   }
@@ -392,7 +394,7 @@ const PURGE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 const UPDATE_DEDUP_RETENTION_S = 7 * 24 * 60 * 60;
 
-async function runMaintenance(env) {
+async function runMaintenance(env: NyraEnv) {
   try {
     const marker = await env.KV.get("nyra:purge:last_run");
     const last = marker ? parseInt(marker, 10) : 0;
@@ -405,7 +407,7 @@ async function runMaintenance(env) {
     await env.DB.prepare("DELETE FROM chat_logs WHERE created_at < ?").bind(now() - (90 * 24 * 60 * 60)).run();
     console.log("Maintenance purge completed.");
   } catch (err) {
-    console.error("Maintenance purge failed:", err.message);
+    console.error("Maintenance purge failed:", (err instanceof Error ? err.message : String(err)));
   }
 }
 
@@ -419,7 +421,7 @@ const SCHEMA_CHECK_KEY = "nyra:schema:checked_at";
  * One indexed read, so it is cheap enough to run before honouring the KV probe
  * window.
  */
-export async function hasPendingMigrations(env) {
+export async function hasPendingMigrations(env: NyraEnv) {
   try {
     const res = await env.DB.prepare("SELECT id FROM schema_migrations").all();
     const applied = new Set((res.results || []).map(function (r) { return r.id; }));
@@ -431,7 +433,7 @@ export async function hasPendingMigrations(env) {
   }
 }
 
-export async function maybeInitSchema(env) {
+export async function maybeInitSchema(env: NyraEnv) {
   try {
     // The probe window must never delay a migration that shipped with this
     // deployment: an already-initialised production database would otherwise
@@ -444,6 +446,6 @@ export async function maybeInitSchema(env) {
     await env.KV.put(SCHEMA_CHECK_KEY, String(Date.now()), { expirationTtl: 86400 });
     await ensureSchema(env);
   } catch (err) {
-    console.error("Schema initialisation failed:", err.message);
+    console.error("Schema initialisation failed:", (err instanceof Error ? err.message : String(err)));
   }
 }
