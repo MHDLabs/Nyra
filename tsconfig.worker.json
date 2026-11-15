@@ -20,10 +20,7 @@
     "checkJs": false,
     "rootDir": ".",
     "baseUrl": ".",
-    "types": [],
-    "typeRoots": [
-      "/tmp/nyra-tools/node_modules/@types"
-    ]
+    "types": []
   },
   "include": [
     "src/index.ts",

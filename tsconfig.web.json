@@ -13,7 +13,8 @@
     "skipLibCheck": true,
     "noEmit": true,
     "rootDir": "web-src",
-    "baseUrl": "."
+    "baseUrl": ".",
+    "types": []
   },
   "include": [
     "web-src/**/*.ts",
