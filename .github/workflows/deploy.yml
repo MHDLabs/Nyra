@@ -62,21 +62,21 @@ jobs:
         if: steps.creds.outputs.present == 'true'
         with:
           node-version: "22"
+          cache: npm
           registry-url: "https://registry.npmjs.org"
 
-      - name: Install Wrangler
+      - name: Install dependencies (npm ci)
         if: steps.creds.outputs.present == 'true'
         env:
           npm_config_registry: "https://registry.npmjs.org"
           npm_config_fund: "false"
           npm_config_audit: "false"
-          npm_config_progress: "false"
           npm_config_fetch_timeout: "120000"
-          npm_config_fetch_retries: "3"
+          npm_config_fetch_retries: "5"
         run: |
           set -e
-          # Optional deps REQUIRED (workerd-linux-64). Do not use --omit=optional.
-          npm install --no-save --ignore-scripts wrangler@4.42.0
+          # Full lockfile install — includes optional workerd for wrangler.
+          npm ci --no-audit --no-fund
           ./node_modules/.bin/wrangler --version
 
       - name: Deploy Worker

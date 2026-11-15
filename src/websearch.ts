@@ -10,21 +10,43 @@ const UA =
 
 function decodeHtmlEntities(text) {
   if (!text) return "";
-  return String(text)
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#x27;/gi, "'")
-    .replace(/&#39;/g, "'")
-    .replace(/&#x2F;/gi, "/")
+  let s = String(text);
+  // Decode non-amp entities first, then &amp; last, so we never create double-unescape pairs.
+  s = s
     .replace(/&nbsp;/gi, " ")
-    .replace(/<[^>]*>/g, "")
-    .trim();
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0*39;/g, "'")
+    .replace(/&#x0*27;/gi, "'")
+    .replace(/&#x0*2f;/gi, "/")
+    .replace(/&#(\d+);/g, function (_, n) {
+      const code = parseInt(n, 10);
+      return Number.isFinite(code) && code > 0 ? String.fromCharCode(code) : "";
+    })
+    .replace(/&#x([0-9a-f]+);/gi, function (_, h) {
+      const code = parseInt(h, 16);
+      return Number.isFinite(code) && code > 0 ? String.fromCharCode(code) : "";
+    })
+    .replace(/&amp;/gi, "&");
+  return s;
 }
 
+/** Strip HTML tags until stable, then decode entities, then strip again (entity→tag). */
 function stripTags(html) {
-  return decodeHtmlEntities(String(html || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+  let s = String(html || "");
+  let prev = "";
+  while (s !== prev) {
+    prev = s;
+    s = s.replace(/<[^>]*>/g, " ");
+  }
+  s = decodeHtmlEntities(s);
+  prev = "";
+  while (s !== prev) {
+    prev = s;
+    s = s.replace(/<[^>]*>/g, " ");
+  }
+  return s.replace(/\s+/g, " ").trim();
 }
 
 /** Prefer Persian region when the query contains Persian/Arabic script. */
@@ -33,11 +55,21 @@ function duckDuckGoLocale(query) {
   return "wt-wt";
 }
 
+/** Allow only http(s) URLs via the URL parser (blocks javascript:, data:, vbscript:, etc.). */
+function isSafeHttpUrl(raw) {
+  try {
+    const u = new URL(String(raw || "").trim());
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch (_) {
+    return false;
+  }
+}
+
 function normalizeItem(item, source) {
   const title = stripTags(item.title || "").slice(0, 200);
   const url = String(item.url || "").trim().slice(0, 1000);
   const snippet = stripTags(item.snippet || item.description || item.content || "").slice(0, 700);
-  if (!title || !url || !/^https?:\/\//i.test(url) || url.startsWith("javascript:")) return null;
+  if (!title || !url || !isSafeHttpUrl(url)) return null;
   return { title, url, snippet, source };
 }
 
