@@ -136,3 +136,108 @@ test("replayFailedUpdate returns false when error_info is unparsable or has no b
   assert.equal(await replayFailedUpdate(env, 21), false);
   assert.equal(env.sent.length, 0);
 });
+
+import { cleanupOldFailedUpdates, logFailedUpdate } from "../src/dlq.js";
+import { REDACTED } from "../src/redact.js";
+
+test("listFailedUpdates redacts secrets in message_text and error_info", async () => {
+  const secret = "123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw";
+  const body = { update_id: 1, message: { text: "token " + secret } };
+  const env = fakeEnv([
+    row({
+      id: 50,
+      message_text: "token " + secret,
+      error_info: JSON.stringify({ attempts: 3, body: body })
+    })
+  ]);
+  // Keep a copy of stored error_info to prove we do not mutate storage
+  const storedBefore = env.store[0].error_info;
+  const { items } = await listFailedUpdates(env, 20, 0);
+  assert.ok(!items[0].message_text.includes(secret));
+  assert.ok(items[0].message_text.includes(REDACTED) || items[0].message_text.indexOf("123456789") === -1);
+  assert.ok(!items[0].error_info.includes(secret));
+  assert.equal(env.store[0].error_info, storedBefore, "stored payload must remain intact for replay");
+});
+
+test("listFailedUpdates clamps invalid pagination", async () => {
+  const env = fakeEnv([row({ id: 1 })]);
+  const a = await listFailedUpdates(env, -5, -10);
+  assert.equal(a.limit, 1);
+  assert.equal(a.offset, 0);
+  const b = await listFailedUpdates(env, 9999, 0);
+  assert.equal(b.limit, 200);
+});
+
+test("cleanupOldFailedUpdates clamps retention and deletes only unreplayed old rows", async () => {
+  const old = nowLike() - 40 * 24 * 3600;
+  const env = fakeEnv([
+    row({ id: 1, created_at: old, replayed_at: null }),
+    row({ id: 2, created_at: old, replayed_at: 123 })
+  ]);
+  // Patch DELETE path into fakeEnv via prepare
+  env.DB.prepare = function (sql) {
+    return {
+      _args: [],
+      bind(...args) {
+        this._args = args;
+        return this;
+      },
+      async first() {
+        return null;
+      },
+      async all() {
+        return { results: [] };
+      },
+      async run() {
+        if (sql.indexOf("DELETE FROM failed_updates") !== -1) {
+          const cutoff = this._args[0];
+          let changes = 0;
+          for (let i = env.store.length - 1; i >= 0; i--) {
+            const r = env.store[i];
+            if (r.created_at < cutoff && r.replayed_at == null) {
+              env.store.splice(i, 1);
+              changes++;
+            }
+          }
+          return { meta: { changes } };
+        }
+        return { meta: { changes: 0 } };
+      }
+    };
+  };
+  const deleted = await cleanupOldFailedUpdates(env, 30);
+  assert.equal(deleted, 1);
+  assert.equal(env.store.length, 1);
+  assert.equal(env.store[0].id, 2);
+});
+
+function nowLike() {
+  return Math.floor(Date.now() / 1000);
+}
+
+test("logFailedUpdate tolerates missing message body", async () => {
+  const inserts = [];
+  const env = {
+    DB: {
+      prepare() {
+        return {
+          bind(...args) {
+            inserts.push(args);
+            return this;
+          },
+          async run() {
+            return { meta: { changes: 1 } };
+          }
+        };
+      }
+    }
+  };
+  await logFailedUpdate(env, {});
+  assert.equal(inserts.length, 1);
+});
+
+test("replayFailedUpdate rejects non-positive ids", async () => {
+  const env = fakeEnv([row({ id: 1 })]);
+  assert.equal(await replayFailedUpdate(env, 0), false);
+  assert.equal(await replayFailedUpdate(env, -1), false);
+});
