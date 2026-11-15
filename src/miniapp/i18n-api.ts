@@ -1,4 +1,4 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
+// @ts-nocheck — Task 9 progressive UI surface; contracts in types/miniapp.ts
 // Localization API for the Mini App. The client fetches ONE dictionary after
 // authentication and renders every label through it; it never hardcodes a
 // translation and localStorage is not the source of truth.

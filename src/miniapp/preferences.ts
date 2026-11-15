@@ -1,4 +1,4 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
+// @ts-nocheck — Task 9 progressive UI surface; contracts in types/miniapp.ts
 // Mini App parity handlers for everything the Telegram menus could already do
 // but the web UI could not reach: preferred name, memory inspection/clearing,
 // personality selection, custom instructions and the per-connection fast /

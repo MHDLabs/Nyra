@@ -1,4 +1,4 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
+// @ts-nocheck — Task 9 progressive UI surface; contracts in types/miniapp.ts
 // Admin panel HTTP API — password-gated, separate from Mini App.
 import { now } from "../utils.js";
 import { sendMessageReturn } from "../telegram.js";

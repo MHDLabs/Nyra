@@ -1,4 +1,4 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
+// @ts-nocheck — Task 9 progressive UI surface; contracts in types/miniapp.ts
 // Broadcast management over the admin API: create, list, pause/resume,
 // cancel, per-broadcast delivery stats, and a recipient-count preview so an
 // admin can see the blast radius before starting a campaign.
