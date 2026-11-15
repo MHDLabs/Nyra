@@ -351,3 +351,32 @@ test("formatTable, formatList and formatCodeBlock emit valid MarkdownV2", () => 
   assert.equal(escapeMarkdownV2("a.b"), "a\\.b");
   assert.equal(plainText("**b**"), "b");
 });
+
+// --- Task 13 boundary coverage for the formatter facade -------------------
+
+test("formatter boundary: empty and null inputs", () => {
+  assert.equal(formatTable(null), "");
+  assert.equal(formatTable([]), "");
+  assert.equal(formatList(null), "");
+  assert.equal(formatList([]), "");
+  assert.equal(formatCodeBlock(null), "```\n\n```");
+  assert.equal(plainText(null), "");
+  assert.equal(escapeMarkdownV2(null), "");
+  const empty = safeFormat(null, "MarkdownV2");
+  assert.equal(empty.chunked, false);
+  assert.ok(typeof empty.text === "string");
+});
+
+test("formatter boundary: splitPlainChunks respects max length", () => {
+  const src = "word ".repeat(2000);
+  const chunks = safeFormatChunks(src, null);
+  assertAllFit(chunks, MAX);
+  assert.ok(chunks.length >= 1);
+});
+
+test("formatter boundary: non-MarkdownV2 parse mode returns plain payload", () => {
+  const r = safeFormat("**x**", "HTML");
+  assert.equal(r.parseMode, null);
+  assert.equal(r.chunked, false);
+  assert.equal(r.text, "**x**");
+});
