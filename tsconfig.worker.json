@@ -29,11 +29,11 @@
     "src/index.ts",
     "src/telegram.ts",
     "src/db/**/*.ts",
+    "src/providers/**/*.ts",
     "src/core/**/*.ts",
     "src/ts-smoke/**/*.ts",
     "types/**/*.ts",
-    "worker-configuration.d.ts",
-    "src/providers/**/*.ts"
+    "worker-configuration.d.ts"
   ],
   "exclude": [
     "node_modules",

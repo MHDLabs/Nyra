@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
 
-const src = readFileSync(new URL("../src/commands.js", import.meta.url), "utf8");
+const src = readFileSync(new URL("../src/commands.ts", import.meta.url), "utf8");
 
 describe("Commands surface", () => {
   it("registers core user commands", () => {

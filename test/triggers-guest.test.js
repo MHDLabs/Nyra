@@ -28,7 +28,7 @@ describe("configurable group triggers", () => {
   });
 
   it("guest prefix helper exists", () => {
-    const src = readFileSync(new URL("../src/handlers/ai-message.js", import.meta.url), "utf8");
+    const src = readFileSync(new URL("../src/handlers/ai-message.ts", import.meta.url), "utf8");
     assert.match(src, /Guest mode/);
     assert.match(src, /prefixGuestChunks/);
   });

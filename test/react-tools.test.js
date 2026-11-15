@@ -15,7 +15,7 @@ describe("reactions and tools", () => {
     assert.equal(shouldReact({ text: "hello everyone here" }, { type: "supergroup" }, identity), false);
   });
   it("exposes react_to_message tool", () => {
-    const src = readFileSync(new URL("../src/tools.js", import.meta.url), "utf8");
+    const src = readFileSync(new URL("../src/tools.ts", import.meta.url), "utf8");
     assert.match(src, /react_to_message/);
   });
   it("supports_tools column is migrated", () => {
