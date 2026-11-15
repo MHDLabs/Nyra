@@ -88,3 +88,27 @@ test("explicit key round trips and rejects a different owner", async () => {
   assert.equal(await decryptCredential(env, 42, ct, iv), "sk-explicit-roundtrip");
   await assert.rejects(() => decryptCredential(env, 43, ct, iv), /DECRYPTION_FAILED/);
 });
+
+test("empty plaintext encrypts and decrypts", async () => {
+  const env = testEnv(5);
+  const { ct, iv } = await encryptCredential(env, 42, "");
+  assert.equal(await decryptCredential(env, 42, ct, iv), "");
+});
+
+test("invalid base64 ciphertext is rejected", async () => {
+  const env = testEnv(6);
+  await assert.rejects(() => decryptCredential(env, 1, "!!!", "AAAA"), /INVALID_CIPHERTEXT/);
+});
+
+test("wrong IV length is rejected", async () => {
+  const env = testEnv(7);
+  const { ct } = await encryptCredential(env, 1, "x");
+  const shortIv = bytesToBase64(new Uint8Array(8));
+  await assert.rejects(() => decryptCredential(env, 1, ct, shortIv), /INVALID_CIPHERTEXT|DECRYPTION_FAILED/);
+});
+
+test("missing ct or iv rejects", async () => {
+  const env = testEnv(8);
+  await assert.rejects(() => decryptCredential(env, 1, "", "AAAA"), /INVALID_CIPHERTEXT/);
+  await assert.rejects(() => decryptCredential(env, 1, "AAAA", ""), /INVALID_CIPHERTEXT/);
+});
