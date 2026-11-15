@@ -1,3 +1,5 @@
+import type { NyraEnv } from "../../types/env.js";
+import type { TelegramId } from "../../types/domain.js";
 // Storage facade. `src/db.js` re-exports this verbatim, so no caller has to
 
 export {

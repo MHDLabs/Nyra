@@ -1,3 +1,5 @@
+import type { NyraEnv } from "../../types/env.js";
+import type { TelegramId } from "../../types/domain.js";
 // Personal message schedules (good morning / good night / custom).
 // Distinct from task reminders: these are recurring social/automation messages.
 import { now } from "../utils.js";
@@ -77,7 +79,7 @@ export function computeNextRunAt(localTime, timezone, daysOfWeek, fromSec) {
   const weekdayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 
   function partsAt(sec) {
-    const parts = {};
+    const parts: Record<string, string> = {};
     dtf.formatToParts(new Date(sec * 1000)).forEach(function (p) { parts[p.type] = p.value; });
     return {
       year: parseInt(parts.year, 10),
@@ -96,14 +98,14 @@ export function computeNextRunAt(localTime, timezone, daysOfWeek, fromSec) {
     // Search a 50h window centered near probe to cover offset extremes.
     let lo = probeSec - 36 * 3600;
     let hi = probeSec + 36 * 3600;
-    let found = null;
+    let found: number | null = null;
     // Binary search for the first second where local H:M >= target on that civil date.
     while (lo <= hi) {
       const mid = Math.floor((lo + hi) / 2);
       const p = partsAt(mid);
       const sameDay = p.year === p0.year && p.month === p0.month && p.day === p0.day;
       const mins = p.hour * 60 + p.minute;
-      const targetMins = parsed.hour * 60 + parsed.minute;
+      const targetMins = parsed!.hour * 60 + parsed!.minute;
       if (!sameDay) {
         if (p.year < p0.year || (p.year === p0.year && (p.month < p0.month || (p.month === p0.month && p.day < p0.day)))) lo = mid + 1;
         else hi = mid - 1;
@@ -120,7 +122,7 @@ export function computeNextRunAt(localTime, timezone, daysOfWeek, fromSec) {
     // Verify wall clock matches (non-existent local times yield null).
     const v = partsAt(found);
     if (v.year !== p0.year || v.month !== p0.month || v.day !== p0.day) return null;
-    if (v.hour !== parsed.hour || v.minute !== parsed.minute) return null;
+    if (v.hour !== parsed!.hour || v.minute !== parsed!.minute) return null;
     return found;
   }
 
@@ -136,31 +138,31 @@ export function computeNextRunAt(localTime, timezone, daysOfWeek, fromSec) {
   return null;
 }
 
-export async function countUserSchedules(env, telegramId) {
+export async function countUserSchedules(env: NyraEnv, telegramId) {
   try {
     const row = await env.DB.prepare(
       "SELECT COUNT(*) AS c FROM schedules WHERE telegram_id = ?"
     ).bind(telegramId).first();
     return row ? Number(row.c) || 0 : 0;
   } catch (err) {
-    console.error("countUserSchedules failed:", err.message);
+    console.error("countUserSchedules failed:", (err instanceof Error ? err.message : String(err)));
     return 0;
   }
 }
 
-export async function listSchedules(env, telegramId) {
+export async function listSchedules(env: NyraEnv, telegramId) {
   try {
     const res = await env.DB.prepare(
       "SELECT * FROM schedules WHERE telegram_id = ? ORDER BY enabled DESC, next_run_at ASC, id ASC"
     ).bind(telegramId).all();
     return (res.results || []).map(hydrate);
   } catch (err) {
-    console.error("listSchedules failed:", err.message);
+    console.error("listSchedules failed:", (err instanceof Error ? err.message : String(err)));
     return [];
   }
 }
 
-export async function getScheduleById(env, id, telegramId) {
+export async function getScheduleById(env: NyraEnv, id, telegramId) {
   try {
     const row = await env.DB.prepare(
       "SELECT * FROM schedules WHERE id = ? AND telegram_id = ?"
@@ -171,7 +173,7 @@ export async function getScheduleById(env, id, telegramId) {
   }
 }
 
-export async function createSchedule(env, data) {
+export async function createSchedule(env: NyraEnv, data) {
   const ts = now();
   let dayList = data.days_of_week;
   if (data.kind === "weekly" && (!Array.isArray(dayList) || !dayList.length)) {
@@ -202,12 +204,12 @@ export async function createSchedule(env, data) {
     const id = result.meta && result.meta.last_row_id;
     return { ok: true, id: id, next_run_at: next };
   } catch (err) {
-    console.error("createSchedule failed:", err.message);
+    console.error("createSchedule failed:", (err instanceof Error ? err.message : String(err)));
     return { ok: false, reason: "db" };
   }
 }
 
-export async function updateSchedule(env, id, telegramId, patch) {
+export async function updateSchedule(env: NyraEnv, id, telegramId, patch) {
   const existing = await getScheduleById(env, id, telegramId);
   if (!existing) return { ok: false, reason: "not_found" };
   const ts = now();
@@ -230,12 +232,12 @@ export async function updateSchedule(env, id, telegramId, patch) {
     ).bind(title, message_text, generation_mode, local_time, timezone, days, enabled, next, ts, id, telegramId).run();
     return { ok: true, next_run_at: next };
   } catch (err) {
-    console.error("updateSchedule failed:", err.message);
+    console.error("updateSchedule failed:", (err instanceof Error ? err.message : String(err)));
     return { ok: false, reason: "db" };
   }
 }
 
-export async function deleteSchedule(env, id, telegramId) {
+export async function deleteSchedule(env: NyraEnv, id, telegramId) {
   try {
     const result = await env.DB.prepare(
       "DELETE FROM schedules WHERE id = ? AND telegram_id = ?"
@@ -246,7 +248,7 @@ export async function deleteSchedule(env, id, telegramId) {
   }
 }
 
-export async function claimDueSchedules(env, nowSec, limit) {
+export async function claimDueSchedules(env: NyraEnv, nowSec, limit) {
   const ts = Number.isFinite(nowSec) ? nowSec : now();
   const batch = Math.min(Math.max(limit || 15, 1), 30);
   try {
@@ -256,7 +258,7 @@ export async function claimDueSchedules(env, nowSec, limit) {
       "ORDER BY next_run_at ASC, id ASC LIMIT ?"
     ).bind(ts, ts - 300, batch).all();
     const rows = res.results || [];
-    const claimed = [];
+    const claimed: unknown[] = [];
     for (let i = 0; i < rows.length; i++) {
       const token = "s" + ts + "_" + rows[i].id + "_" + Math.random().toString(36).slice(2, 8);
       const upd = await env.DB.prepare(
@@ -265,18 +267,18 @@ export async function claimDueSchedules(env, nowSec, limit) {
       ).bind(token, ts, ts, rows[i].id, ts - 300).run();
       if (upd.meta && upd.meta.changes > 0) {
         const h = hydrate(rows[i]);
-        h.claim_token = token;
-        claimed.push(h);
+        (h as any).claim_token = token;
+        claimed.push(h as any);
       }
     }
     return claimed;
   } catch (err) {
-    console.error("claimDueSchedules failed:", err.message);
+    console.error("claimDueSchedules failed:", (err instanceof Error ? err.message : String(err)));
     return [];
   }
 }
 
-export async function settleScheduleDelivery(env, id, claimToken, nextRunAt, status) {
+export async function settleScheduleDelivery(env: NyraEnv, id, claimToken, nextRunAt, status) {
   const ts = now();
   try {
     await env.DB.prepare(
@@ -284,11 +286,11 @@ export async function settleScheduleDelivery(env, id, claimToken, nextRunAt, sta
       "WHERE id = ? AND claim_token = ?"
     ).bind(ts, status || "sent", nextRunAt, ts, id, claimToken).run();
   } catch (err) {
-    console.error("settleScheduleDelivery failed:", err.message);
+    console.error("settleScheduleDelivery failed:", (err instanceof Error ? err.message : String(err)));
   }
 }
 
-export async function releaseScheduleForRetry(env, id, claimToken) {
+export async function releaseScheduleForRetry(env: NyraEnv, id, claimToken) {
   const ts = now();
   try {
     await env.DB.prepare(

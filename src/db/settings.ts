@@ -1,3 +1,5 @@
+import type { NyraEnv } from "../../types/env.js";
+import type { TelegramId } from "../../types/domain.js";
 // Global deployment settings (`app_settings` key/value toggles).
 import { now } from "../utils.js";
 import { NYRA_VARIANTS } from "../config.js";
@@ -6,7 +8,7 @@ import {
   DEFAULT_SHARED_REQUEST_LIMIT, DEFAULT_SHARED_TOKEN_LIMIT
 } from "../config.js";
 
-export async function getSetting(env, key, fallback) {
+export async function getSetting(env: NyraEnv, key, fallback) {
   try {
     const row = await env.DB.prepare("SELECT value FROM app_settings WHERE key = ?").bind(key).first();
     if (!row) return fallback;
@@ -14,47 +16,47 @@ export async function getSetting(env, key, fallback) {
   } catch (err) { return fallback; }
 }
 
-export async function setSetting(env, key, value, updatedBy) {
+export async function setSetting(env: NyraEnv, key, value, updatedBy) {
   try {
     await env.DB.prepare("INSERT INTO app_settings (key, value, updated_at, updated_by) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by")
       .bind(key, String(value), now(), updatedBy || null).run();
     return true;
-  } catch (err) { console.error("setSetting failed:", err.message); return false; }
+  } catch (err) { console.error("setSetting failed:", (err instanceof Error ? err.message : String(err))); return false; }
 }
 
-export async function isPersonalModelsAllowed(env) {
+export async function isPersonalModelsAllowed(env: NyraEnv) {
   const v = await getSetting(env, "allow_personal_models", "0");
   return v === "1" || v === "true";
 }
 
-export async function getPersonalModelLimit(env) {
+export async function getPersonalModelLimit(env: NyraEnv) {
   const v = await getSetting(env, "personal_model_limit", "5");
   const n = parseInt(v, 10);
   return Number.isFinite(n) && n > 0 ? n : 5;
 }
 
-export async function getWorkersAIPolicy(env) {
+export async function getWorkersAIPolicy(env: NyraEnv) {
   const value = await getSetting(env, "workers_ai_policy", "disabled");
   return ["disabled", "admins", "all"].includes(value) ? value : "disabled";
 }
 
-export async function setWorkersAIPolicy(env, policy, updatedBy) {
+export async function setWorkersAIPolicy(env: NyraEnv, policy, updatedBy) {
   if (!["disabled", "admins", "all"].includes(policy)) return false;
   return await setSetting(env, "workers_ai_policy", policy, updatedBy);
 }
 
-export async function getWorkersAIModel(env) {
+export async function getWorkersAIModel(env: NyraEnv) {
   const value = await getSetting(env, "workers_ai_model", "@cf/meta/llama-3.1-8b-instruct");
   return /^@cf\/[a-z0-9][a-z0-9./_-]{2,119}$/i.test(value) ? value : "@cf/meta/llama-3.1-8b-instruct";
 }
 
-export async function setWorkersAIModel(env, model, updatedBy) {
+export async function setWorkersAIModel(env: NyraEnv, model, updatedBy) {
   const value = String(model || "").trim();
   if (!/^@cf\/[a-z0-9][a-z0-9./_-]{2,119}$/i.test(value)) return false;
   return await setSetting(env, "workers_ai_model", value, updatedBy);
 }
 
-export async function canUseWorkersAI(env, userId) {
+export async function canUseWorkersAI(env: NyraEnv, userId) {
   const policy = await getWorkersAIPolicy(env);
   if (policy === "disabled" || !env || !env.AI || typeof env.AI.run !== "function") return false;
   if (policy === "all") return true;
@@ -64,7 +66,7 @@ export async function canUseWorkersAI(env, userId) {
 
 // --- Shared service (admin-provided global connections) -------------------
 
-export async function isSharedServiceEnabled(env) {
+export async function isSharedServiceEnabled(env: NyraEnv) {
   // Opt-in only: an admin must explicitly enable the shared service, so a
   // freshly deployed bot never gives away operator-paid credit by accident.
   const v = await getSetting(env, SETTING_SHARED_SERVICE_ENABLED, "0");
@@ -77,15 +79,15 @@ function quotaFromSetting(v, fallback) {
   return n;
 }
 
-export async function getSharedRequestLimit(env) {
+export async function getSharedRequestLimit(env: NyraEnv) {
   return quotaFromSetting(await getSetting(env, SETTING_SHARED_REQUEST_LIMIT, String(DEFAULT_SHARED_REQUEST_LIMIT)), DEFAULT_SHARED_REQUEST_LIMIT);
 }
 
-export async function getSharedTokenLimit(env) {
+export async function getSharedTokenLimit(env: NyraEnv) {
   return quotaFromSetting(await getSetting(env, SETTING_SHARED_TOKEN_LIMIT, String(DEFAULT_SHARED_TOKEN_LIMIT)), DEFAULT_SHARED_TOKEN_LIMIT);
 }
 
-export async function getSharedServiceSettings(env) {
+export async function getSharedServiceSettings(env: NyraEnv) {
   return {
     enabled: await isSharedServiceEnabled(env),
     daily_request_limit: await getSharedRequestLimit(env),
@@ -93,7 +95,7 @@ export async function getSharedServiceSettings(env) {
   };
 }
 
-export async function setSharedServiceSettings(env, updatedBy, body) {
+export async function setSharedServiceSettings(env: NyraEnv, updatedBy, body) {
   const patch = {};
   if (body && body.enabled !== undefined) patch[SETTING_SHARED_SERVICE_ENABLED] = body.enabled ? "1" : "0";
   if (body && body.daily_request_limit !== undefined) {
@@ -126,7 +128,7 @@ function parseWordList(raw) {
 }
 
 /** Global group-trigger policy (admin-configurable). */
-export async function getTriggerConfig(env) {
+export async function getTriggerConfig(env: NyraEnv) {
   const enabled = (await getSetting(env, "trigger_enabled", "1")) !== "0";
   const reply = (await getSetting(env, "trigger_reply", "1")) !== "0";
   const mention = (await getSetting(env, "trigger_mention", "1")) !== "0";
@@ -135,20 +137,20 @@ export async function getTriggerConfig(env) {
   return { enabled: enabled, reply: reply, mention: mention, words: words, guestMode: guestMode };
 }
 
-export async function setTriggerFlag(env, key, on, updatedBy) {
+export async function setTriggerFlag(env: NyraEnv, key, on, updatedBy) {
   const allowed = ["trigger_enabled", "trigger_reply", "trigger_mention", "guest_mode"];
   if (allowed.indexOf(key) === -1) return false;
   return await setSetting(env, key, on ? "1" : "0", updatedBy);
 }
 
-export async function setTriggerWords(env, words, updatedBy) {
+export async function setTriggerWords(env: NyraEnv, words, updatedBy) {
   const list = Array.isArray(words) ? words : parseWordList(words);
   const cleaned = list.map(function (w) { return String(w).trim().slice(0, 32); }).filter(Boolean).slice(0, 20);
   return await setSetting(env, "trigger_words", cleaned.join(","), updatedBy);
 }
 
 /** @deprecated Admin toggle removed — use detectGuestContext. */
-export async function isGuestModeEnabled(env) {
+export async function isGuestModeEnabled(env: NyraEnv) {
   return false;
 }
 
@@ -157,7 +159,7 @@ export async function isGuestModeEnabled(env) {
  * left / unknown). In private chats, never treat as guest.
  * When true, replies are prefixed with bold "Guest mode".
  */
-export async function detectGuestContext(env, chat, botId) {
+export async function detectGuestContext(env: NyraEnv, chat, botId) {
   if (!chat || !chat.id) return false;
   const type = chat.type || "";
   if (type === "private") return false;

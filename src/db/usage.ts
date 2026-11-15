@@ -1,3 +1,5 @@
+import type { NyraEnv } from "../../types/env.js";
+import type { TelegramId } from "../../types/domain.js";
 // Per-user request/token accounting and per-connection usage rollups.
 import { now } from "../utils.js";
 import { getUser } from "./users.js";
@@ -5,7 +7,7 @@ import { getUser } from "./users.js";
 /**
  * Track connection usage (tokens and requests)
  */
-export async function trackConnectionUsage(env, connectionId, telegramId, tokensUsed = 0) {
+export async function trackConnectionUsage(env: NyraEnv, connectionId, telegramId, tokensUsed = 0) {
   try {
     const date = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
     await env.DB.prepare(`
@@ -17,14 +19,14 @@ export async function trackConnectionUsage(env, connectionId, telegramId, tokens
         requests_count = requests_count + excluded.requests_count
     `).bind(connectionId, telegramId, tokensUsed, date).run();
   } catch (err) {
-    console.error("Connection usage tracking failed:", err.message);
+    console.error("Connection usage tracking failed:", (err instanceof Error ? err.message : String(err)));
   }
 }
 
 /**
  * Get connection usage stats by connection
  */
-export async function getConnectionUsageStats(env, connectionId, days = 7) {
+export async function getConnectionUsageStats(env: NyraEnv, connectionId, days = 7) {
   try {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - days);
@@ -44,7 +46,7 @@ export async function getConnectionUsageStats(env, connectionId, days = 7) {
 
     return result || { total_tokens: 0, total_requests: 0, unique_users: 0, active_days: 0 };
   } catch (err) {
-    console.error("Get connection usage stats failed:", err.message);
+    console.error("Get connection usage stats failed:", (err instanceof Error ? err.message : String(err)));
     return { total_tokens: 0, total_requests: 0, unique_users: 0, active_days: 0 };
   }
 }
@@ -52,7 +54,7 @@ export async function getConnectionUsageStats(env, connectionId, days = 7) {
 /**
  * Get all connection usage summary for admin
  */
-export async function getAllConnectionUsageStats(env, days = 7) {
+export async function getAllConnectionUsageStats(env: NyraEnv, days = 7) {
   try {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - days);
@@ -77,7 +79,7 @@ export async function getAllConnectionUsageStats(env, days = 7) {
 
     return result.results || [];
   } catch (err) {
-    console.error("Get all connection usage stats failed:", err.message);
+    console.error("Get all connection usage stats failed:", (err instanceof Error ? err.message : String(err)));
     return [];
   }
 }
@@ -97,7 +99,7 @@ export function parseUsageStats(raw) {
   } catch (err) { return empty; }
 }
 
-async function updateUsageStats(env, userId, success, errorCategory, usage) {
+async function updateUsageStats(env: NyraEnv, userId, success, errorCategory, usage) {
   const user = await getUser(env, userId);
   if (!user) return;
   const stats = parseUsageStats(user.usage_stats);
@@ -114,10 +116,10 @@ async function updateUsageStats(env, userId, success, errorCategory, usage) {
     stats.cost_usd = (stats.cost_usd || 0) + usage.cost;
   }
   try { await env.DB.prepare("UPDATE users SET usage_stats = ? WHERE telegram_id = ?").bind(JSON.stringify(stats), userId).run(); }
-  catch (err) { console.error("updateUsageStats failed:", err.message); }
+  catch (err) { console.error("updateUsageStats failed:", (err instanceof Error ? err.message : String(err))); }
 }
 
-export function updateUsageStatsAsync(env, ctx, userId, success, errorCategory, usage) {
+export function updateUsageStatsAsync(env: NyraEnv, ctx, userId, success, errorCategory, usage) {
   if (ctx && ctx.waitUntil) ctx.waitUntil(updateUsageStats(env, userId, success, errorCategory, usage));
   else updateUsageStats(env, userId, success, errorCategory, usage).catch(function () {});
 }

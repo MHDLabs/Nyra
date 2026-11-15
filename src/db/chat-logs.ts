@@ -1,3 +1,5 @@
+import type { NyraEnv } from "../../types/env.js";
+import type { TelegramId } from "../../types/domain.js";
 // Durable chat archival for the admin panel (separate from short-lived thread_messages).
 import { now } from "../utils.js";
 
@@ -12,7 +14,7 @@ function clip(text) {
 /**
  * Append one archived message. Failures are logged and never thrown.
  */
-export async function logChatMessage(env, entry) {
+export async function logChatMessage(env: NyraEnv, entry) {
   if (!env || !env.DB || !entry) return;
   const chatId = Number(entry.chat_id);
   if (!Number.isFinite(chatId)) return;
@@ -36,11 +38,11 @@ export async function logChatMessage(env, entry) {
       Number.isFinite(entry.created_at) ? entry.created_at : now()
     ).run();
   } catch (err) {
-    console.error("logChatMessage failed:", err.message);
+    console.error("logChatMessage failed:", (err instanceof Error ? err.message : String(err)));
   }
 }
 
-export async function listPrivateChatUsers(env, options) {
+export async function listPrivateChatUsers(env: NyraEnv, options) {
   const opts = options || {};
   const limit = Math.min(Math.max(Number(opts.limit) || 50, 1), 100);
   const offset = Math.max(Number(opts.offset) || 0, 0);
@@ -68,12 +70,12 @@ export async function listPrivateChatUsers(env, options) {
     ).bind(limit, offset).all();
     return res.results || [];
   } catch (err) {
-    console.error("listPrivateChatUsers failed:", err.message);
+    console.error("listPrivateChatUsers failed:", (err instanceof Error ? err.message : String(err)));
     return [];
   }
 }
 
-export async function listGroupChats(env, options) {
+export async function listGroupChats(env: NyraEnv, options) {
   const opts = options || {};
   const limit = Math.min(Math.max(Number(opts.limit) || 50, 1), 100);
   const offset = Math.max(Number(opts.offset) || 0, 0);
@@ -96,13 +98,13 @@ export async function listGroupChats(env, options) {
       ).bind(limit, offset).all();
       return res.results || [];
     } catch (e2) {
-      console.error("listGroupChats failed:", e2.message);
+      console.error("listGroupChats failed:", (e2 instanceof Error ? e2.message : String(e2)));
       return [];
     }
   }
 }
 
-export async function listChatMessages(env, chatId, options) {
+export async function listChatMessages(env: NyraEnv, chatId, options) {
   const opts = options || {};
   const limit = Math.min(Math.max(Number(opts.limit) || 50, 1), 200);
   const beforeId = opts.before_id != null ? Number(opts.before_id) : null;
@@ -120,7 +122,7 @@ export async function listChatMessages(env, chatId, options) {
     ).bind(chatId, limit).all();
     return (res.results || []).reverse();
   } catch (err) {
-    console.error("listChatMessages failed:", err.message);
+    console.error("listChatMessages failed:", (err instanceof Error ? err.message : String(err)));
     return [];
   }
 }

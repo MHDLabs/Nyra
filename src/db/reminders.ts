@@ -1,3 +1,5 @@
+import type { NyraEnv } from "../../types/env.js";
+import type { TelegramId } from "../../types/domain.js";
 // Reminders: owner-scoped persistence for scheduled tasks plus the atomic
 // claim/lease protocol the cron delivery loop relies on.
 //
@@ -27,16 +29,20 @@ const ATTEMPTS_KEEP = 20;
 // as a rest-parameter method, so a spread is the honest way to call it; these
 // helpers keep the call sites readable instead of writing
 // `env.DB.prepare(sql).bind(...binds)` inline at every site.
-function all(env, sql, binds) {
-  return env.DB.prepare(sql).bind(...binds).all();
+function all(env: NyraEnv, sql: string, binds: any[] = []) {
+  const stmt = env.DB.prepare(sql);
+  if (!binds.length) return stmt.all();
+  return stmt.bind(...binds).all();
 }
 
-function run(env, sql, binds) {
-  return env.DB.prepare(sql).bind(...binds).run();
+function run(env: NyraEnv, sql: string, binds: any[] = []) {
+  const stmt = env.DB.prepare(sql);
+  return (binds.length ? stmt.bind(...(binds as [string, ...any[]])) : stmt).run();
 }
 
-function first(env, sql, binds) {
-  return env.DB.prepare(sql).bind(...binds).first();
+function first(env: NyraEnv, sql: string, binds: any[] = []) {
+  const stmt = env.DB.prepare(sql);
+  return (binds.length ? stmt.bind(...(binds as [string, ...any[]])) : stmt).first();
 }
 
 function clampText(value, max) {
@@ -59,7 +65,7 @@ function parseRecurrence(raw) {
     if (!parsed.bucket || !parsed.interval) return null;
     return parsed;
   } catch (err) {
-    console.error("Reminder recurrence parse failed:", err.message);
+    console.error("Reminder recurrence parse failed:", (err instanceof Error ? err.message : String(err)));
     return null;
   }
 }
@@ -94,11 +100,11 @@ export function hydrateReminder(row) {
 /** Statuses that still occupy a slot against MAX_REMINDERS_PER_USER. */
 const ACTIVE_STATUSES = ["pending", "processing"];
 
-export async function countActiveReminders(env, telegramId) {
+export async function countActiveReminders(env: NyraEnv, telegramId): Promise<number> {
   const row = await env.DB
     .prepare("SELECT COUNT(*) AS c FROM reminders WHERE telegram_id = ? AND status IN ('pending','processing')")
     .bind(telegramId).first();
-  return row && Number.isFinite(row.c) ? row.c : 0;
+  return Number(row && Number.isFinite(row.c) ? row.c : 0);
 }
 
 /**
@@ -106,7 +112,7 @@ export async function countActiveReminders(env, telegramId) {
  * `{ ok: false, reason }` — a refusal is a normal outcome (quota, bad input)
  * and the caller decides what to tell the user, so this never throws for them.
  */
-export async function createReminder(env, data) {
+export async function createReminder(env: NyraEnv, data) {
   const telegramId = data.telegramId;
   const title = clampText(data.title, MAX_REMINDER_TITLE);
   if (!Number.isFinite(telegramId)) return { ok: false, reason: "no_user" };
@@ -140,19 +146,19 @@ export async function createReminder(env, data) {
     const reminder = await getReminderById(env, id, telegramId);
     return { ok: true, reminder: reminder };
   } catch (err) {
-    console.error("createReminder failed:", err.message);
+    console.error("createReminder failed:", (err instanceof Error ? err.message : String(err)));
     return { ok: false, reason: "db_error" };
   }
 }
 
 /** Owner-scoped single read. A non-owner id returns null, never another row. */
-export async function getReminderById(env, id, telegramId) {
+export async function getReminderById(env: NyraEnv, id, telegramId) {
   if (!Number.isFinite(id) || !Number.isFinite(telegramId)) return null;
   try {
     const row = await env.DB.prepare("SELECT * FROM reminders WHERE id = ? AND telegram_id = ?").bind(id, telegramId).first();
     return hydrateReminder(row);
   } catch (err) {
-    console.error("getReminderById failed:", err.message);
+    console.error("getReminderById failed:", (err instanceof Error ? err.message : String(err)));
     return null;
   }
 }
@@ -162,7 +168,7 @@ export async function getReminderById(env, id, telegramId) {
  * cursor) is used instead of OFFSET so a reminder created mid-browse cannot
  * shift a row onto a page the user already saw.
  */
-export async function listReminders(env, telegramId, opts) {
+export async function listReminders(env: NyraEnv, telegramId, opts) {
   const options = opts || {};
   const limit = Math.min(Math.max(Number.isFinite(options.limit) ? options.limit : REMINDER_LIST_PAGE, 1), 50);
   const statuses = Array.isArray(options.statuses) && options.statuses.length
@@ -186,20 +192,20 @@ export async function listReminders(env, telegramId, opts) {
     const result = await all(env, sql, binds);
     return (result.results || []).map(hydrateReminder);
   } catch (err) {
-    console.error("listReminders failed:", err.message);
+    console.error("listReminders failed:", (err instanceof Error ? err.message : String(err)));
     return [];
   }
 }
 
 /** Total count for a page header. Owner-scoped, indexed by idx_reminders_user. */
-export async function countReminders(env, telegramId, statuses) {
+export async function countReminders(env: NyraEnv, telegramId, statuses) {
   const list = Array.isArray(statuses) && statuses.length ? statuses : ACTIVE_STATUSES;
   const placeholders = list.map(function () { return "?"; }).join(",");
   try {
     const row = await first(env, "SELECT COUNT(*) AS c FROM reminders WHERE telegram_id = ? AND status IN (" + placeholders + ")", [telegramId].concat(list));
     return row && Number.isFinite(row.c) ? row.c : 0;
   } catch (err) {
-    console.error("countReminders failed:", err.message);
+    console.error("countReminders failed:", (err instanceof Error ? err.message : String(err)));
     return 0;
   }
 }
@@ -219,10 +225,10 @@ const EDITABLE_COLUMNS = {
  * Returns the updated reminder, or null when the row does not exist for this
  * owner (or nothing changed).
  */
-export async function updateReminder(env, id, telegramId, patch) {
+export async function updateReminder(env: NyraEnv, id, telegramId, patch) {
   if (!Number.isFinite(id) || !Number.isFinite(telegramId) || !patch) return null;
-  const sets = [];
-  const binds = [];
+  const sets: string[] = [];
+  const binds: unknown[] = [];
   for (const key of Object.keys(patch)) {
     const column = EDITABLE_COLUMNS[key];
     if (!column) continue;
@@ -252,13 +258,13 @@ export async function updateReminder(env, id, telegramId, patch) {
     }
     return await getReminderById(env, id, telegramId);
   } catch (err) {
-    console.error("updateReminder failed:", err.message);
+    console.error("updateReminder failed:", (err instanceof Error ? err.message : String(err)));
     return null;
   }
 }
 
 /** Owner-scoped cancel. Only a live reminder can be cancelled. */
-export async function cancelReminder(env, id, telegramId) {
+export async function cancelReminder(env: NyraEnv, id, telegramId) {
   if (!Number.isFinite(id) || !Number.isFinite(telegramId)) return false;
   try {
     const result = await env.DB.prepare(
@@ -267,13 +273,13 @@ export async function cancelReminder(env, id, telegramId) {
     ).bind(now(), id, telegramId).run();
     return !!(result && result.meta && result.meta.changes === 1);
   } catch (err) {
-    console.error("cancelReminder failed:", err.message);
+    console.error("cancelReminder failed:", (err instanceof Error ? err.message : String(err)));
     return false;
   }
 }
 
 /** Owner-scoped "mark done". Applies to a live or already-sent one-shot. */
-export async function completeReminder(env, id, telegramId) {
+export async function completeReminder(env: NyraEnv, id, telegramId) {
   if (!Number.isFinite(id) || !Number.isFinite(telegramId)) return false;
   const ts = now();
   try {
@@ -283,7 +289,7 @@ export async function completeReminder(env, id, telegramId) {
     ).bind(ts, ts, id, telegramId).run();
     return !!(result && result.meta && result.meta.changes === 1);
   } catch (err) {
-    console.error("completeReminder failed:", err.message);
+    console.error("completeReminder failed:", (err instanceof Error ? err.message : String(err)));
     return false;
   }
 }
@@ -304,12 +310,12 @@ export async function completeReminder(env, id, telegramId) {
  * Returns hydrated reminders. Throws on D1 failure — the caller (the scheduled
  * handler) logs it; swallowing it here would silently stop all delivery.
  */
-export async function claimDueReminders(env, nowSec, limit) {
+export async function claimDueReminders(env: NyraEnv, nowSec, limit) {
   const token = crypto.randomUUID();
   const candidates = await env.DB.prepare(
     "SELECT id FROM reminders WHERE status = 'pending' AND next_run_at <= ? ORDER BY next_run_at ASC, id ASC LIMIT ?"
   ).bind(nowSec, limit).all();
-  const ids = (candidates.results || []).map(function (r) { return r.id; });
+  const ids: number[] = (candidates.results || []).map(function (r) { return Number(r.id); });
   if (!ids.length) return [];
 
   const updates = ids.map(function (id) {
@@ -319,7 +325,7 @@ export async function claimDueReminders(env, nowSec, limit) {
   });
   // One batch = one implicit transaction, so a partial claim cannot be visible.
   const results = await env.DB.batch(updates);
-  const won = [];
+  const won: number[] = [];
   for (let i = 0; i < ids.length; i++) {
     const r = results && results[i];
     if (r && r.meta && r.meta.changes === 1) won.push(ids[i]);
@@ -327,10 +333,11 @@ export async function claimDueReminders(env, nowSec, limit) {
   if (!won.length) return [];
 
   const placeholders = won.map(function () { return "?"; }).join(",");
-  const claimed = await all(env,
-    "SELECT * FROM reminders WHERE claim_token = ? AND status = 'processing' AND id IN (" + placeholders + ") ORDER BY next_run_at ASC, id ASC",
-    [token].concat(won));
-  return (claimed.results || []).map(hydrateReminder);
+  const claimBinds: any[] = ([token] as any[]).concat(won);
+  const claimSql = "SELECT * FROM reminders WHERE claim_token = ? AND status = 'processing' AND id IN (" + placeholders + ") ORDER BY next_run_at ASC, id ASC";
+  // Dynamic IN-list bind: cast through any to satisfy D1's tuple overloads.
+  const claimed = await (env.DB as any).prepare(claimSql).bind(...claimBinds).all();
+  return ((claimed && claimed.results) || []).map(function (row) { return hydrateReminder(row); });
 }
 
 /**
@@ -341,7 +348,7 @@ export async function claimDueReminders(env, nowSec, limit) {
  *
  * Returns the number of recovered rows.
  */
-export async function recoverStaleClaims(env, nowSec, leaseSeconds) {
+export async function recoverStaleClaims(env: NyraEnv, nowSec, leaseSeconds) {
   try {
     const result = await env.DB.prepare(
       "UPDATE reminders SET status = 'pending', claim_token = NULL, claimed_at = NULL, updated_at = ? " +
@@ -351,24 +358,24 @@ export async function recoverStaleClaims(env, nowSec, leaseSeconds) {
     if (recovered > 0) console.log("Recovered " + recovered + " stale reminder claim(s).");
     return recovered;
   } catch (err) {
-    console.error("recoverStaleClaims failed:", err.message);
+    console.error("recoverStaleClaims failed:", (err instanceof Error ? err.message : String(err)));
     return 0;
   }
 }
 
 /** Record one delivery attempt. Best-effort: an audit-trail failure is logged,
  * never allowed to change the outcome of an already-attempted send. */
-export async function recordDeliveryAttempt(env, reminderId, attempt, status, error) {
+export async function recordDeliveryAttempt(env: NyraEnv, reminderId, attempt, status, error) {
   try {
     await env.DB.prepare(
       "INSERT INTO reminder_delivery_attempts (reminder_id, attempt, status, error, created_at) VALUES (?, ?, ?, ?, ?)"
     ).bind(reminderId, attempt, status, error ? String(error).slice(0, 500) : null, now()).run();
   } catch (err) {
-    console.error("recordDeliveryAttempt failed:", err.message);
+    console.error("recordDeliveryAttempt failed:", (err instanceof Error ? err.message : String(err)));
   }
 }
 
-export async function listDeliveryAttempts(env, reminderId, limit) {
+export async function listDeliveryAttempts(env: NyraEnv, reminderId, limit) {
   try {
     const result = await env.DB.prepare(
       "SELECT * FROM reminder_delivery_attempts WHERE reminder_id = ? ORDER BY created_at DESC LIMIT ?"
@@ -384,7 +391,7 @@ export async function listDeliveryAttempts(env, reminderId, limit) {
  * Guarded by the claim token so a worker whose lease was already recovered
  * cannot reschedule a row that another invocation now owns.
  */
-export async function releaseReminderForRetry(env, id, claimToken, error, nextAttemptAt, attempts) {
+export async function releaseReminderForRetry(env: NyraEnv, id, claimToken, error, nextAttemptAt, attempts) {
   try {
     const result = await env.DB.prepare(
       "UPDATE reminders SET status = 'pending', claim_token = NULL, claimed_at = NULL, attempts = ?, last_attempt_at = ?, last_error = ?, next_run_at = ?, updated_at = ? " +
@@ -392,7 +399,7 @@ export async function releaseReminderForRetry(env, id, claimToken, error, nextAt
     ).bind(attempts, now(), error ? String(error).slice(0, 500) : null, nextAttemptAt, now(), id, claimToken).run();
     return !!(result && result.meta && result.meta.changes === 1);
   } catch (err) {
-    console.error("releaseReminderForRetry failed:", err.message);
+    console.error("releaseReminderForRetry failed:", (err instanceof Error ? err.message : String(err)));
     return false;
   }
 }
@@ -402,7 +409,7 @@ export async function releaseReminderForRetry(env, id, claimToken, error, nextAt
  * such as a blocked bot, or the retry budget is exhausted). The row is kept —
  * the user can still see and fix it, and the attempt log explains why.
  */
-export async function failReminderPermanently(env, id, claimToken, error, attempts) {
+export async function failReminderPermanently(env: NyraEnv, id, claimToken, error, attempts) {
   try {
     const result = await env.DB.prepare(
       "UPDATE reminders SET status = 'failed', claim_token = NULL, claimed_at = NULL, attempts = ?, last_attempt_at = ?, last_error = ?, updated_at = ? " +
@@ -410,7 +417,7 @@ export async function failReminderPermanently(env, id, claimToken, error, attemp
     ).bind(attempts, now(), error ? String(error).slice(0, 500) : null, now(), id, claimToken).run();
     return !!(result && result.meta && result.meta.changes === 1);
   } catch (err) {
-    console.error("failReminderPermanently failed:", err.message);
+    console.error("failReminderPermanently failed:", (err instanceof Error ? err.message : String(err)));
     return false;
   }
 }
@@ -425,7 +432,7 @@ export async function failReminderPermanently(env, id, claimToken, error, attemp
  * anchor, so a missed cron tick cannot drop an occurrence: the next instant is
  * always derived from the original anchor, not from "now".
  */
-export async function settleReminderDelivery(env, id, claimToken, next) {
+export async function settleReminderDelivery(env: NyraEnv, id, claimToken, next) {
   const ts = now();
   try {
     let sql;
@@ -440,7 +447,7 @@ export async function settleReminderDelivery(env, id, claimToken, next) {
     const result = await run(env, sql, binds);
     return !!(result && result.meta && result.meta.changes === 1);
   } catch (err) {
-    console.error("settleReminderDelivery failed:", err.message);
+    console.error("settleReminderDelivery failed:", (err instanceof Error ? err.message : String(err)));
     return false;
   }
 }
@@ -449,26 +456,26 @@ export async function settleReminderDelivery(env, id, claimToken, next) {
  * Persist the user's IANA timezone. The value must already have been validated
  * with `isValidTimeZone` by the caller; this only stores it.
  */
-export async function setUserTimezone(env, telegramId, timezone) {
+export async function setUserTimezone(env: NyraEnv, telegramId, timezone) {
   if (!Number.isFinite(telegramId) || !timezone) return false;
   try {
     const result = await env.DB.prepare("UPDATE users SET timezone = ?, updated_at = ? WHERE telegram_id = ?")
       .bind(String(timezone).slice(0, 64), now(), telegramId).run();
     return !!(result && result.meta && result.meta.changes === 1);
   } catch (err) {
-    console.error("setUserTimezone failed:", err.message);
+    console.error("setUserTimezone failed:", (err instanceof Error ? err.message : String(err)));
     return false;
   }
 }
 
 /** Read the stored timezone for one user, or null when unset. */
-export async function getUserTimezone(env, telegramId) {
+export async function getUserTimezone(env: NyraEnv, telegramId) {
   if (!Number.isFinite(telegramId)) return null;
   try {
     const row = await env.DB.prepare("SELECT timezone FROM users WHERE telegram_id = ?").bind(telegramId).first();
     return row && row.timezone ? row.timezone : null;
   } catch (err) {
-    console.error("getUserTimezone failed:", err.message);
+    console.error("getUserTimezone failed:", (err instanceof Error ? err.message : String(err)));
     return null;
   }
 }

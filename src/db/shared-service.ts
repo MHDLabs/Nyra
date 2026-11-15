@@ -1,3 +1,5 @@
+import type { NyraEnv } from "../../types/env.js";
+import type { TelegramId } from "../../types/domain.js";
 // Shared service: the admin-provided global connections.
 //
 // A global connection (`ai_connections.is_global = 1`) is paid for by the
@@ -32,7 +34,7 @@ function quota(v, fallback) {
   return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
-export async function getSharedQuotas(env) {
+export async function getSharedQuotas(env: NyraEnv) {
   const enabledRaw = await getSetting(env, SETTING_SHARED_SERVICE_ENABLED, "0");
   return {
     enabled: enabledRaw === "1" || enabledRaw === "true",
@@ -41,7 +43,7 @@ export async function getSharedQuotas(env) {
   };
 }
 
-export async function getSharedUsage(env, userId, date) {
+export async function getSharedUsage(env: NyraEnv, userId, date) {
   try {
     const row = await env.DB.prepare("SELECT requests_count, tokens_used FROM shared_service_usage WHERE telegram_id = ? AND date = ?").bind(userId, date || todayUTC()).first();
     return { requests: row ? row.requests_count : 0, tokens: row ? row.tokens_used : 0 };
@@ -57,7 +59,7 @@ export async function getSharedUsage(env, userId, date) {
  * cost of the current request is not known yet (it is added afterwards by
  * `recordSharedTokenUsage`).
  */
-export async function reserveSharedRequest(env, userId, connection) {
+export async function reserveSharedRequest(env: NyraEnv, userId, connection) {
   if (!isSharedConnection(connection, userId)) return { allowed: true, shared: false };
   const q = await getSharedQuotas(env);
   if (!q.enabled) return { allowed: false, shared: true, reason: "shared_service_disabled", quota: 0, used: 0 };
@@ -77,8 +79,8 @@ export async function reserveSharedRequest(env, userId, connection) {
     // concurrent requests cannot both take the last remaining unit.
     // Check token quota BEFORE incrementing requests to prevent race
     const used = await getSharedUsage(env, userId, date);
-    if (q.tokenLimit > 0 && used.tokens >= q.tokenLimit) {
-      return { allowed: false, shared: true, reason: "shared_token_quota_exceeded", quota: q.tokenLimit, used: used.tokens };
+    if (q.tokenLimit > 0 && Number(used.tokens) >= q.tokenLimit) {
+      return { allowed: false, shared: true, reason: "shared_token_quota_exceeded", quota: q.tokenLimit, used: Number(used.tokens) };
     }
     const res = await env.DB.prepare(
       "UPDATE shared_service_usage SET requests_count = requests_count + 1 WHERE telegram_id = ? AND date = ? AND (? = 0 OR requests_count < ?)"
@@ -89,7 +91,7 @@ export async function reserveSharedRequest(env, userId, connection) {
     }
     return { allowed: true, shared: true, used: used.requests, quota: q.requestLimit, tokenLimit: q.tokenLimit };
   } catch (err) {
-    console.error("reserveSharedRequest failed:", err.message);
+    console.error("reserveSharedRequest failed:", (err instanceof Error ? err.message : String(err)));
     // Fail closed: an unreadable quota table must not hand out free operator credit.
     return { allowed: false, shared: true, reason: "shared_quota_unavailable", quota: 0, used: 0 };
   }
@@ -100,24 +102,24 @@ export async function reserveSharedRequest(env, userId, connection) {
  * produced anything. Without this, an outage on the operator's side burns the
  * user's daily allowance for an answer they never received.
  */
-export async function releaseSharedRequest(env, userId) {
+export async function releaseSharedRequest(env: NyraEnv, userId) {
   try {
     await env.DB.prepare("UPDATE shared_service_usage SET requests_count = MAX(requests_count - 1, 0) WHERE telegram_id = ? AND date = ?").bind(userId, todayUTC()).run();
-  } catch (err) { console.error("releaseSharedRequest failed:", err.message); }
+  } catch (err) { console.error("releaseSharedRequest failed:", (err instanceof Error ? err.message : String(err))); }
 }
 
 /** Add the measured token cost of a completed shared-service request. */
-export async function recordSharedTokenUsage(env, userId, tokens) {
+export async function recordSharedTokenUsage(env: NyraEnv, userId, tokens) {
   const n = Number(tokens);
   if (!Number.isFinite(n) || n <= 0) return;
   try {
     const date = todayUTC();
     await env.DB.prepare("INSERT INTO shared_service_usage (telegram_id, date, requests_count, tokens_used) VALUES (?, ?, 0, ?) ON CONFLICT(telegram_id, date) DO UPDATE SET tokens_used = tokens_used + excluded.tokens_used").bind(userId, date, n).run();
-  } catch (err) { console.error("recordSharedTokenUsage failed:", err.message); }
+  } catch (err) { console.error("recordSharedTokenUsage failed:", (err instanceof Error ? err.message : String(err))); }
 }
 
 /** Per-user shared-service consumption for the admin panel. */
-export async function getSharedUsageReport(env, days = 7) {
+export async function getSharedUsageReport(env: NyraEnv, days = 7) {
   try {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - days);
@@ -127,7 +129,7 @@ export async function getSharedUsageReport(env, days = 7) {
     ).bind(cutoff).all();
     return result.results || [];
   } catch (err) {
-    console.error("getSharedUsageReport failed:", err.message);
+    console.error("getSharedUsageReport failed:", (err instanceof Error ? err.message : String(err)));
     return [];
   }
 }

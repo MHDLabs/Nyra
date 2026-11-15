@@ -1,3 +1,5 @@
+import type { NyraEnv } from "../../types/env.js";
+import type { TelegramId } from "../../types/domain.js";
 // Routes: multi-model / multi-token fallback groups plus the ordered streaming
 // plan (`buildRoutePlan`) consumed by the AI layer. Owns `userRoutesCache`.
 import { CONNECTION_CACHE_TTL_MS } from "../config.js";
@@ -11,7 +13,7 @@ function invalidateUserRoutesCache(userId) {
   else userRoutesCache.clear();
 }
 
-export async function getUserRoutes(env, userId, forceRefresh) {
+export async function getUserRoutes(env: NyraEnv, userId, forceRefresh?: boolean) {
   const key = String(userId);
   const cached = userRoutesCache.get(key);
   if (!forceRefresh && cached && cached.expiresAt > Date.now()) return cached.routes;
@@ -21,25 +23,25 @@ export async function getUserRoutes(env, userId, forceRefresh) {
     userRoutesCache.set(key, { routes: list, expiresAt: Date.now() + CONNECTION_CACHE_TTL_MS });
     return list;
   } catch (err) {
-    console.error("getUserRoutes failed:", err.message);
+    console.error("getUserRoutes failed:", (err instanceof Error ? err.message : String(err)));
     return [];
   }
 }
 
-export async function getRouteById(env, userId, routeId) {
+export async function getRouteById(env: NyraEnv, userId, routeId) {
   try {
     return await env.DB.prepare("SELECT * FROM routes WHERE route_id = ? AND telegram_id = ?").bind(routeId, userId).first();
   } catch (err) { return null; }
 }
 
-export async function getRouteModels(env, routeId) {
+export async function getRouteModels(env: NyraEnv, routeId) {
   try {
     const result = await env.DB.prepare("SELECT * FROM route_models WHERE route_id = ? ORDER BY is_default DESC, display_order ASC, created_at ASC").bind(routeId).all();
     return result.results || [];
   } catch (err) { return []; }
 }
 
-export async function getRouteTokens(env, routeId) {
+export async function getRouteTokens(env: NyraEnv, routeId) {
   try {
     const result = await env.DB.prepare("SELECT * FROM route_tokens WHERE route_id = ? ORDER BY is_primary DESC, display_order ASC, created_at ASC").bind(routeId).all();
     return result.results || [];
@@ -47,7 +49,7 @@ export async function getRouteTokens(env, routeId) {
 }
 
 /** Full route bundle: route + ordered models + ordered tokens. */
-export async function getRouteBundle(env, userId, routeId) {
+export async function getRouteBundle(env: NyraEnv, userId, routeId) {
   const route = await getRouteById(env, userId, routeId);
   if (!route) return null;
   const models = await getRouteModels(env, routeId);
@@ -62,7 +64,7 @@ export function buildRoutePlan(bundle) {
   const route = bundle.route;
   const models = bundle.models.filter(function (m) { return true; });
   const tokens = bundle.tokens.filter(function (t) { return t.enabled === 1; });
-  const plan = [];
+  const plan: Record<string, unknown>[] = [];
   for (let mi = 0; mi < models.length; mi++) {
     const m = models[mi];
     for (let ti = 0; ti < tokens.length; ti++) {
@@ -91,10 +93,10 @@ export function buildRoutePlan(bundle) {
 }
 
 /** The user's active (or default) enabled route, if any. */
-export async function resolveUserActiveRoute(env, user) {
+export async function resolveUserActiveRoute(env: NyraEnv, user) {
   const routes = await getUserRoutes(env, user.telegram_id);
   if (routes.length === 0) return null;
-  let route = null;
+  let route: Record<string, any> | null = null;
   if (user && user.active_route_id) {
     for (let i = 0; i < routes.length; i++) if (routes[i].route_id === user.active_route_id) { route = routes[i]; break; }
   }
@@ -102,6 +104,7 @@ export async function resolveUserActiveRoute(env, user) {
     for (let i = 0; i < routes.length; i++) if (routes[i].is_default === 1) { route = routes[i]; break; }
   }
   if (!route) route = routes[0];
+  if (!route) return null;
   const models = await getRouteModels(env, route.route_id);
   const tokens = await getRouteTokens(env, route.route_id);
   const enabledTokens = tokens.filter(function (t) { return t.enabled === 1; });
@@ -109,19 +112,19 @@ export async function resolveUserActiveRoute(env, user) {
   return { route: route, models: models, tokens: tokens };
 }
 
-export async function saveRoute(env, userId, params) {
+export async function saveRoute(env: NyraEnv, userId, params) {
   const ts = now();
   const routeId = generateShortId();
   let maxOrder = 100;
   try {
     const row = await env.DB.prepare("SELECT MAX(display_order) AS m FROM routes WHERE telegram_id = ?").bind(userId).first();
-    if (row && row.m !== null && row.m !== undefined) maxOrder = row.m + 10;
+    if (row && row.m !== null && row.m !== undefined) maxOrder = Number(row.m) + 10;
   } catch (err) {}
   const models = params.models || [];
   const tokens = params.tokens || [];
   await env.DB.prepare("INSERT INTO routes (route_id, telegram_id, label, provider, base_url, is_default, display_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)")
     .bind(routeId, userId, params.label, params.provider, params.base_url || "", maxOrder, ts, ts).run();
-  const inserts = [];
+  const inserts: D1PreparedStatement[] = [];
   for (let i = 0; i < models.length; i++) {
     inserts.push(env.DB.prepare("INSERT INTO route_models (model_id, route_id, model, label, is_default, display_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
       .bind(generateShortId(), routeId, models[i], models[i], i === 0 ? 1 : 0, 100 + i * 10, ts, ts));
@@ -136,11 +139,11 @@ export async function saveRoute(env, userId, params) {
   return routeId;
 }
 
-export async function updateRoute(env, userId, routeId, updates) {
+export async function updateRoute(env: NyraEnv, userId, routeId, updates) {
   const route = await getRouteById(env, userId, routeId);
   if (!route) return false;
-  const fields = [];
-  const values = [];
+  const fields: string[] = [];
+  const values: unknown[] = [];
   if (updates.label !== undefined) { fields.push("label = ?"); values.push(updates.label); }
   if (updates.provider !== undefined) { fields.push("provider = ?"); values.push(updates.provider); }
   if (updates.base_url !== undefined) { fields.push("base_url = ?"); values.push(updates.base_url); }
@@ -151,10 +154,10 @@ export async function updateRoute(env, userId, routeId, updates) {
     await env.DB.prepare("UPDATE routes SET " + fields.join(", ") + " WHERE route_id = ?").bind.apply(null, values).run();
     invalidateUserRoutesCache(userId);
     return true;
-  } catch (err) { console.error("updateRoute failed:", err.message); return false; }
+  } catch (err) { console.error("updateRoute failed:", (err instanceof Error ? err.message : String(err))); return false; }
 }
 
-export async function deleteRoute(env, userId, routeId) {
+export async function deleteRoute(env: NyraEnv, userId, routeId) {
   const route = await getRouteById(env, userId, routeId);
   if (!route) return false;
   try {
@@ -166,10 +169,10 @@ export async function deleteRoute(env, userId, routeId) {
     try { await env.DB.prepare("UPDATE users SET active_route_id = NULL, updated_at = ? WHERE active_route_id = ?").bind(now(), routeId).run(); } catch (e) {}
     invalidateUserRoutesCache(userId);
     return true;
-  } catch (err) { console.error("deleteRoute failed:", err.message); return false; }
+  } catch (err) { console.error("deleteRoute failed:", (err instanceof Error ? err.message : String(err))); return false; }
 }
 
-export async function setDefaultRoute(env, userId, routeId) {
+export async function setDefaultRoute(env: NyraEnv, userId, routeId) {
   const route = await getRouteById(env, userId, routeId);
   if (!route) return false;
   try {
@@ -179,15 +182,15 @@ export async function setDefaultRoute(env, userId, routeId) {
     ]);
     invalidateUserRoutesCache(userId);
     return true;
-  } catch (err) { console.error("setDefaultRoute failed:", err.message); return false; }
+  } catch (err) { console.error("setDefaultRoute failed:", (err instanceof Error ? err.message : String(err))); return false; }
 }
 
-export async function addRouteModel(env, userId, routeId, model) {
+export async function addRouteModel(env: NyraEnv, userId, routeId, model) {
   const route = await getRouteById(env, userId, routeId);
   if (!route) return false;
   const ts = now();
   let count = 0;
-  try { const row = await env.DB.prepare("SELECT COUNT(*) AS c FROM route_models WHERE route_id = ?").bind(routeId).first(); count = row ? row.c : 0; } catch (e) {}
+  try { const row = await env.DB.prepare("SELECT COUNT(*) AS c FROM route_models WHERE route_id = ?").bind(routeId).first(); count = row ? Number(row.c) : 0; } catch (e) {}
   try {
     await env.DB.prepare("INSERT INTO route_models (model_id, route_id, model, label, is_default, display_order, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?, ?)")
       .bind(generateShortId(), routeId, model, model, 100 + count * 10, ts, ts).run();
@@ -196,7 +199,7 @@ export async function addRouteModel(env, userId, routeId, model) {
   } catch (err) { return false; }
 }
 
-export async function removeRouteModel(env, userId, routeId, modelId) {
+export async function removeRouteModel(env: NyraEnv, userId, routeId, modelId) {
   const route = await getRouteById(env, userId, routeId);
   if (!route) return false;
   try {
@@ -206,7 +209,7 @@ export async function removeRouteModel(env, userId, routeId, modelId) {
   } catch (err) { return false; }
 }
 
-export async function setRouteDefaultModel(env, userId, routeId, modelId) {
+export async function setRouteDefaultModel(env: NyraEnv, userId, routeId, modelId) {
   const route = await getRouteById(env, userId, routeId);
   if (!route) return false;
   try {
@@ -219,12 +222,12 @@ export async function setRouteDefaultModel(env, userId, routeId, modelId) {
   } catch (err) { return false; }
 }
 
-export async function addRouteToken(env, userId, routeId, apiKey, label) {
+export async function addRouteToken(env: NyraEnv, userId, routeId, apiKey, label) {
   const route = await getRouteById(env, userId, routeId);
   if (!route) return false;
   const ts = now();
   let count = 0;
-  try { const row = await env.DB.prepare("SELECT COUNT(*) AS c FROM route_tokens WHERE route_id = ?").bind(routeId).first(); count = row ? row.c : 0; } catch (e) {}
+  try { const row = await env.DB.prepare("SELECT COUNT(*) AS c FROM route_tokens WHERE route_id = ?").bind(routeId).first(); count = row ? Number(row.c) : 0; } catch (e) {}
   const enc = await encryptCredential(env, userId, apiKey);
   try {
     await env.DB.prepare("INSERT INTO route_tokens (token_id, route_id, label, encrypted_key, key_iv, encryption_version, enabled, is_primary, display_order, consecutive_failures, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 2, 1, 0, ?, 0, ?, ?)")
@@ -234,7 +237,7 @@ export async function addRouteToken(env, userId, routeId, apiKey, label) {
   } catch (err) { return false; }
 }
 
-export async function removeRouteToken(env, userId, routeId, tokenId) {
+export async function removeRouteToken(env: NyraEnv, userId, routeId, tokenId) {
   const route = await getRouteById(env, userId, routeId);
   if (!route) return false;
   try {
@@ -244,7 +247,7 @@ export async function removeRouteToken(env, userId, routeId, tokenId) {
   } catch (err) { return false; }
 }
 
-export async function toggleRouteToken(env, userId, routeId, tokenId) {
+export async function toggleRouteToken(env: NyraEnv, userId, routeId, tokenId) {
   const route = await getRouteById(env, userId, routeId);
   if (!route) return false;
   try {
@@ -256,14 +259,14 @@ export async function toggleRouteToken(env, userId, routeId, tokenId) {
   } catch (err) { return false; }
 }
 
-export async function recordRouteTokenFailure(env, tokenId) {
+export async function recordRouteTokenFailure(env: NyraEnv, tokenId) {
   try {
     await env.DB.prepare("UPDATE route_tokens SET consecutive_failures = consecutive_failures + 1, updated_at = ? WHERE token_id = ?").bind(now(), tokenId).run();
     invalidateUserRoutesCache(null);
   } catch (err) {}
 }
 
-export async function recordRouteTokenSuccess(env, tokenId) {
+export async function recordRouteTokenSuccess(env: NyraEnv, tokenId) {
   try {
     await env.DB.prepare("UPDATE route_tokens SET consecutive_failures = 0, last_success_at = ?, last_used_at = ?, updated_at = ? WHERE token_id = ?").bind(now(), now(), now(), tokenId).run();
     invalidateUserRoutesCache(null);

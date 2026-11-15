@@ -1,3 +1,5 @@
+import type { NyraEnv } from "../../types/env.js";
+import type { TelegramId } from "../../types/domain.js";
 // Connection models: the model names one AI connection can serve.
 //
 // A connection owns the endpoint and the encrypted credential; a model is just
@@ -17,7 +19,7 @@ import { MAX_LABEL_LENGTH, MAX_MODEL_LENGTH } from "../config.js";
 export const MODEL_SOURCES = ["manual", "discovered"];
 export const MODEL_VERIFY_STATES = ["unverified", "verified", "unavailable"];
 
-const SECRET_PATTERNS = [
+const SECRET_PATTERNS: Array<[RegExp, string]> = [
   [/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, "Bearer [redacted]"],
   [/\bsk-[A-Za-z0-9_-]{8,}/g, "[redacted-key]"],
   [/\b(?:x-api-key|api[_-]?key|authorization|secret|token)\b\s*[:=]\s*["']?[^"'\s,}{]{6,}/gi, "$1 [redacted]"]
@@ -53,7 +55,7 @@ export function publicConnectionModel(row, defaultModel) {
   };
 }
 
-export async function listConnectionModels(env, connectionId) {
+export async function listConnectionModels(env: NyraEnv, connectionId) {
   try {
     const res = await env.DB.prepare("SELECT * FROM connection_models WHERE connection_id = ? ORDER BY display_order ASC, created_at ASC, model ASC").bind(connectionId).all();
     return res.results || [];
@@ -64,27 +66,27 @@ export async function listConnectionModels(env, connectionId) {
   }
 }
 
-export async function countConnectionModels(env, connectionId) {
+export async function countConnectionModels(env: NyraEnv, connectionId) {
   try {
     const row = await env.DB.prepare("SELECT COUNT(*) AS c FROM connection_models WHERE connection_id = ?").bind(connectionId).first();
     return row ? row.c : 0;
   } catch (err) { return 0; }
 }
 
-export async function getConnectionModelById(env, connectionId, modelId) {
+export async function getConnectionModelById(env: NyraEnv, connectionId, modelId) {
   try {
     return await env.DB.prepare("SELECT * FROM connection_models WHERE connection_id = ? AND model_id = ?").bind(connectionId, modelId).first();
   } catch (err) { return null; }
 }
 
-export async function getConnectionModelByName(env, connectionId, model) {
+export async function getConnectionModelByName(env: NyraEnv, connectionId, model) {
   try {
     return await env.DB.prepare("SELECT * FROM connection_models WHERE connection_id = ? AND model = ?").bind(connectionId, model).first();
   } catch (err) { return null; }
 }
 
 /** Idempotent insert used by the connection write paths. */
-export async function ensureConnectionModel(env, connectionId, model, displayOrder) {
+export async function ensureConnectionModel(env: NyraEnv, connectionId, model, displayOrder) {
   const name = String(model === undefined || model === null ? "" : model).trim();
   if (!connectionId || !name) return null;
   const existing = await getConnectionModelByName(env, connectionId, name);
@@ -95,7 +97,7 @@ export async function ensureConnectionModel(env, connectionId, model, displayOrd
       .bind(connectionId + ":" + name, connectionId, name, name, displayOrder === undefined ? 100 : displayOrder, ts, ts).run();
     return await getConnectionModelByName(env, connectionId, name);
   } catch (err) {
-    console.error("ensureConnectionModel failed:", err.message);
+    console.error("ensureConnectionModel failed:", (err instanceof Error ? err.message : String(err)));
     return null;
   }
 }
@@ -106,7 +108,7 @@ export async function ensureConnectionModel(env, connectionId, model, displayOrd
  * Adding an existing (connection, model) pair is idempotent and returns the
  * existing row rather than failing the whole form.
  */
-export async function addConnectionModel(env, connectionId, params) {
+export async function addConnectionModel(env: NyraEnv, connectionId, params) {
   const p = params || {};
   const name = String(p.model === undefined || p.model === null ? "" : p.model).trim();
   if (!connectionId) return { ok: false, error: "missing_connection" };
@@ -131,20 +133,20 @@ export async function addConnectionModel(env, connectionId, params) {
     const stored = await getConnectionModelByName(env, connectionId, name);
     return stored ? { ok: true, model: stored, existed: false } : { ok: false, error: "insert_failed" };
   } catch (err) {
-    if (String(err.message || "").toLowerCase().indexOf("unique") !== -1) {
+    if (String((err instanceof Error ? err.message : String(err)) || "").toLowerCase().indexOf("unique") !== -1) {
       const stored = await getConnectionModelByName(env, connectionId, name);
       if (stored) return { ok: true, model: stored, existed: true };
     }
-    console.error("addConnectionModel failed:", err.message);
+    console.error("addConnectionModel failed:", (err instanceof Error ? err.message : String(err)));
     return { ok: false, error: "insert_failed" };
   }
 }
 
 /** Update label/enabled/display_order. Returns { ok, model?, error? }. */
-export async function updateConnectionModel(env, connectionId, modelId, updates) {
+export async function updateConnectionModel(env: NyraEnv, connectionId, modelId, updates) {
   const u = updates || {};
-  const fields = [];
-  const values = [];
+  const fields: string[] = [];
+  const values: unknown[] = [];
   if (u.label !== undefined) {
     const label = String(u.label).trim();
     if (!label) return { ok: false, error: "label_required" };
@@ -170,12 +172,12 @@ export async function updateConnectionModel(env, connectionId, modelId, updates)
     const current = await getConnectionModelById(env, connectionId, modelId);
     return current ? { ok: true, model: current } : { ok: false, error: "not_found" };
   } catch (err) {
-    console.error("updateConnectionModel failed:", err.message);
+    console.error("updateConnectionModel failed:", (err instanceof Error ? err.message : String(err)));
     return { ok: false, error: "update_failed" };
   }
 }
 
-export async function deleteConnectionModel(env, connectionId, modelId) {
+export async function deleteConnectionModel(env: NyraEnv, connectionId, modelId) {
   try {
     const res = await env.DB.prepare("DELETE FROM connection_models WHERE model_id = ? AND connection_id = ?").bind(modelId, connectionId).run();
     return !(res && res.meta && res.meta.changes === 0);
@@ -183,17 +185,17 @@ export async function deleteConnectionModel(env, connectionId, modelId) {
 }
 
 /** Make one model the connection primary model (mirrored onto ai_connections.model). */
-export async function setDefaultConnectionModel(env, connectionId, modelId) {
+export async function setDefaultConnectionModel(env: NyraEnv, connectionId, modelId) {
   const row = await getConnectionModelById(env, connectionId, modelId);
   if (!row) return false;
   try {
     await env.DB.prepare("UPDATE ai_connections SET model = ?, updated_at = ? WHERE connection_id = ?").bind(row.model, now(), connectionId).run();
     return true;
-  } catch (err) { console.error("setDefaultConnectionModel failed:", err.message); return false; }
+  } catch (err) { console.error("setDefaultConnectionModel failed:", (err instanceof Error ? err.message : String(err))); return false; }
 }
 
 /** Record a verification result. unavailable is a state, not a delete. */
-export async function setConnectionModelVerification(env, connectionId, modelId, status, lastError) {
+export async function setConnectionModelVerification(env: NyraEnv, connectionId, modelId, status, lastError) {
   const state = normalizeVerifyStatus(status);
   const ts = now();
   const error = state === "verified" ? null : redactErrorMessage(lastError || "");
@@ -202,7 +204,7 @@ export async function setConnectionModelVerification(env, connectionId, modelId,
       .bind(state, state === "verified" ? ts : null, error, ts, modelId, connectionId).run();
     return true;
   } catch (err) {
-    console.error("setConnectionModelVerification failed:", err.message);
+    console.error("setConnectionModelVerification failed:", (err instanceof Error ? err.message : String(err)));
     return false;
   }
 }
@@ -211,7 +213,7 @@ export async function setConnectionModelVerification(env, connectionId, modelId,
  * Enabled model rows for a connection, used by the router when building the
  * implicit fallback list. Returns [] when the table is empty/unavailable.
  */
-export async function listEnabledModelsForConnection(env, connectionId) {
+export async function listEnabledModelsForConnection(env: NyraEnv, connectionId) {
   const all = await listConnectionModels(env, connectionId);
   return all.filter(function (row) { return row.enabled === 1; });
 }
