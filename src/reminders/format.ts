@@ -1,4 +1,4 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
+// @ts-nocheck — formatting uses locale tables; API stable
 // Reminder message rendering.
 //
 // Every string the reminder subsystem sends to a user is built here, so the

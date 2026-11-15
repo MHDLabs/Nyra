@@ -1,4 +1,3 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
 // Jalali (Solar Hijri) <-> Gregorian conversion.
 //
 // The arithmetic is the well-known `jalaali-js` algorithm by Behrang Noruzi

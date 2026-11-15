@@ -1,4 +1,3 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
 // Language data for the reminder parser: numerals, number words, calendar
 // month and weekday names, time-of-day periods, duration units, recurrence
 // phrases and reminder-intent cues — in Persian and English.
