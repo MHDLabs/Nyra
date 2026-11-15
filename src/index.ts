@@ -1,3 +1,4 @@
+import type { NyraEnv } from "../types/env.js";
 // Nyra — Worker entry point (composition root).
 //
 // The update-handling bodies live in `src/handlers/` (see
@@ -38,13 +39,13 @@ function conversationKey(update) {
 // updates is the processed_updates row in the webhook.
 const QUEUE_DONE_TTL = 3600;
 
-async function alreadyHandled(env, updateId) {
+async function alreadyHandled(env: NyraEnv, updateId) {
   if (updateId === undefined || updateId === null) return false;
   if (!env.KV || typeof env.KV.get !== "function") return false;
   try { return !!(await env.KV.get("qdone:" + updateId)); } catch (e) { return false; }
 }
 
-async function markHandled(env, updateId) {
+async function markHandled(env: NyraEnv, updateId) {
   if (updateId === undefined || updateId === null) return;
   if (!env.KV || typeof env.KV.put !== "function") return;
   try { await env.KV.put("qdone:" + updateId, "1", { expirationTtl: QUEUE_DONE_TTL }); } catch (e) {}
@@ -53,7 +54,7 @@ async function markHandled(env, updateId) {
 // One conversation's messages, in order. On failure, retry this message and
 // re-queue the rest of the same-chat batch without processing them — otherwise
 // msg2 can finish before a retried msg1 and the user sees answers out of order.
-async function processChain(env, ctx, messages) {
+async function processChain(env: NyraEnv, ctx, messages) {
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     const update = msg.body && msg.body.update;
@@ -77,7 +78,7 @@ function safeAck(msg) { try { msg.ack(); } catch (e) { console.error("queue ack 
 function safeRetry(msg) { try { msg.retry(); } catch (e) { console.error("queue retry failed:", e.message); } }
 
 export default {
-  async fetch(request, env, ctx) {
+  async fetch(request: Request, env: NyraEnv, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     // All three secrets are mandatory manual entries. A deployment without any
     // one of them crashes loudly on every request — no derivation, no fallback.
@@ -108,7 +109,7 @@ export default {
 
     // Admin web panel (password-gated, separate from Mini App).
     if (url.pathname === "/admin-panel" || url.pathname.startsWith("/admin-panel/") || url.pathname.startsWith("/admin-api/")) {
-      return await routeAdminPanel(env, ctx, request, url.pathname);
+      return (await routeAdminPanel(env, ctx, request, url.pathname)) as Response;
     }
 
     // Every other Worker-handled request also teaches us the public origin, so
@@ -152,7 +153,7 @@ card{max-width:420px}h1{font-size:1.35rem;margin:0 0 8px}p{opacity:.85;line-heig
   // menu-button re-verification of the learned URL (no-op until a request has
   // taught the Worker its public origin). Runs every
   // 5 minutes via [triggers] in wrangler.toml.
-  async scheduled(event, env, ctx) {
+  async scheduled(event: ScheduledEvent, env: NyraEnv, ctx: ExecutionContext): Promise<void> {
     const missing = validateSecrets(env);
     if (missing) {
       console.error("Scheduled run skipped — missing required secret(s): " + missing.join(", "));
@@ -183,7 +184,7 @@ card{max-width:420px}h1{font-size:1.35rem;margin:0 0 8px}p{opacity:.85;line-heig
   // Queue consumer: runs the full AI pipeline outside the webhook request lifecycle.
   // Consumer invocations allow long wall time (vs. the 30s post-response waitUntil cap),
   // so streaming, fallbacks, consolidation and heartbeats are no longer cut off at 30s.
-  async queue(batch, env, ctx) {
+  async queue(batch: MessageBatch, env: NyraEnv, ctx: ExecutionContext): Promise<void> {
     const missing = validateSecrets(env);
     if (missing) {
       console.error("Queue batch skipped — missing required secret(s): " + missing.join(", "));
@@ -216,15 +217,15 @@ card{max-width:420px}h1{font-size:1.35rem;margin:0 0 8px}p{opacity:.85;line-heig
     // updates in the same chat keep their order, while unrelated chats in the
     // same batch proceed in parallel. The previous strict `await` loop made one
     // slow AI turn block every other user in the batch.
-    const groups = new Map();
+    const groups = new Map<string, any[]>();
     for (let i = 0; i < batch.messages.length; i++) {
       const msg = batch.messages[i];
-      const key = conversationKey(msg.body && msg.body.update);
+      const key = conversationKey(msg.body && (msg.body as any).update);
       const list = groups.get(key);
       if (list) list.push(msg);
       else groups.set(key, [msg]);
     }
-    const chains = [];
+    const chains: Promise<void>[] = [];
     groups.forEach(function (list) { chains.push(processChain(env, ctx, list)); });
     await Promise.all(chains);
   }

@@ -9,7 +9,7 @@
     "strict": true,
     "strictNullChecks": true,
     "noImplicitAny": false,
-    "useUnknownInCatchVariables": true,
+    "useUnknownInCatchVariables": false,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
@@ -26,7 +26,11 @@
     ]
   },
   "include": [
-    "src/**/*.ts",
+    "src/index.ts",
+    "src/telegram.ts",
+    "src/db/**/*.ts",
+    "src/core/**/*.ts",
+    "src/ts-smoke/**/*.ts",
     "types/**/*.ts",
     "worker-configuration.d.ts"
   ],

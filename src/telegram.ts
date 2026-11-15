@@ -1,3 +1,8 @@
+import type { NyraEnv } from "../types/env.js";
+import type { TelegramApiResponse } from "../types/telegram.js";
+
+type TgPayload = Record<string, any>;
+
 // Nyra — Telegram Bot API layer: calls, send/edit/delete, keyboards, typing heartbeat.
 import { TELEGRAM_API, MAX_TELEGRAM_LENGTH, TELEGRAM_TIMEOUT_MS, TELEGRAM_RETRY_MAX, TELEGRAM_RETRY_WAIT_CAP_MS, TYPING_HEARTBEAT_MS, WEBHOOK_RECHECK_MS, WEBHOOK_ATTEMPT_GUARD_MS, MINIAPP_DISABLED } from "./config.js";
 import { truncate, sleep, splitForTelegram, fetchWithTimeout } from "./utils.js";
@@ -12,7 +17,7 @@ export function applyRtlMark(text, enabled) {
   return "\u200F" + s;
 }
 
-export async function tg(env, method, payload, attempt) {
+export async function tg(env: NyraEnv, method: string, payload?: TgPayload, attempt?: number): Promise<TelegramApiResponse> {
   const currentAttempt = attempt || 0;
   const url = TELEGRAM_API + "/bot" + env.TELEGRAM_BOT_TOKEN + "/" + method;
   try {
@@ -22,7 +27,7 @@ export async function tg(env, method, payload, attempt) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     }, TELEGRAM_TIMEOUT_MS);
-    const data = await resp.json();
+    const data = (await resp.json()) as TelegramApiResponse;
     if (!data.ok) {
       if (data.error_code === 429 && data.parameters && data.parameters.retry_after && currentAttempt < TELEGRAM_RETRY_MAX) {
         const waitMs = Math.min(data.parameters.retry_after * 1000, TELEGRAM_RETRY_WAIT_CAP_MS);
@@ -91,7 +96,7 @@ async function readWebhookState(env) {
   }
 }
 
-async function writeWebhookState(env, state) {
+async function writeWebhookState(env: NyraEnv, state) {
   try { await env.KV.put(WEBHOOK_STATE_KEY, JSON.stringify(state)); }
   catch (err) { console.error("Webhook state write failed:", err.message); }
 }
@@ -108,7 +113,7 @@ async function secretFingerprint(secret) {
 
 // origin: public origin (scheme://host) of the current request, or null from
 // the scheduled handler — then the already-learned URL is re-verified.
-export async function ensureWebhook(env, origin) {
+export async function ensureWebhook(env: NyraEnv, origin) {
   try {
     if (!env.TELEGRAM_BOT_TOKEN) return { ok: false, status: "no_token" };
     const secret = await getWebhookSecret(env);
@@ -171,12 +176,12 @@ export async function ensureWebhook(env, origin) {
 // Register the Mini App as the bot's chat menu button, so it is reachable from
 // the Telegram UI (the button next to the message input). Idempotent and
 // KV-gated: at most one setChatMenuButton per origin per WEBHOOK_RECHECK_MS.
-export async function ensureMenuButton(env, origin) {
+export async function ensureMenuButton(env: NyraEnv, origin) {
   try {
     if (!env.TELEGRAM_BOT_TOKEN) return { ok: false, status: "no_token" };
     // Maintenance: remove the web_app menu button so users are not sent to an offline Mini App.
     if (MINIAPP_DISABLED) {
-      let state = null;
+      let state: any = null;
       try {
         const raw = await env.KV.get(MENU_BUTTON_STATE_KEY);
         state = raw ? JSON.parse(raw) : null;
@@ -196,7 +201,7 @@ export async function ensureMenuButton(env, origin) {
     }
     const target = origin ? origin.replace(/\/+$/, "") : null;
     if (!target) return { ok: false, status: "awaiting_first_request" };
-    let state = null;
+    let state: any = null;
     try {
       const raw = await env.KV.get(MENU_BUTTON_STATE_KEY);
       state = raw ? JSON.parse(raw) : null;
@@ -278,7 +283,7 @@ export function pickImageFile(message) {
 const TELEGRAM_FILE_MAX_BYTES = 10 * 1024 * 1024;
 
 /** Download a Telegram file by file_id and return base64 plus its media type. */
-export async function downloadTelegramFile(env, fileId) {
+export async function downloadTelegramFile(env: NyraEnv, fileId) {
   if (!env.TELEGRAM_BOT_TOKEN || !fileId) return null;
   try {
     const info = await tg(env, "getFile", { file_id: fileId });
@@ -293,7 +298,7 @@ export async function downloadTelegramFile(env, fileId) {
     let binary = "";
     const CHUNK = 0x8000;
     for (let i = 0; i < bytes.length; i += CHUNK) {
-      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+      binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK)) as number[]);
     }
     return { data: btoa(binary), mediaType: mediaTypeForDocument({ file_name: filePath }) || "image/jpeg" };
   } catch (err) {
@@ -302,13 +307,13 @@ export async function downloadTelegramFile(env, fileId) {
   }
 }
 
-export async function sendMessageReturn(env, chatId, text, options) {
+export async function sendMessageReturn(env: NyraEnv, chatId, text, options) {
   const opts = options || {};
   const safeText = truncate(text || "", 40000);
   const chunks = splitForTelegram(safeText, MAX_TELEGRAM_LENGTH);
-  let firstResult = null;
+  let firstResult: any = null;
   for (let i = 0; i < chunks.length; i++) {
-    const payload = { chat_id: chatId, text: chunks[i], disable_web_page_preview: true };
+    const payload: any = { chat_id: chatId, text: chunks[i], disable_web_page_preview: true };
     if (opts.parse_mode) payload.parse_mode = opts.parse_mode;
     if (opts.reply_markup && i === chunks.length - 1) payload.reply_markup = opts.reply_markup;
     if (opts.reply_to_message_id && i === 0) payload.reply_to_message_id = opts.reply_to_message_id;
@@ -334,10 +339,10 @@ export async function sendMessageReturn(env, chatId, text, options) {
  * Send a Rich Message (Bot API 10.1+). Uses markdown-style InputRichMessage.
  * Returns the Telegram API result object.
  */
-export async function sendRichMessage(env, chatId, text, options) {
+export async function sendRichMessage(env: NyraEnv, chatId, text, options) {
   const opts = options || {};
   const body = truncate(String(text || ""), 32000);
-  const payload = {
+  const payload: any = {
     chat_id: chatId,
     rich_message: { markdown: body }
   };
@@ -351,7 +356,7 @@ export async function sendRichMessage(env, chatId, text, options) {
  * Prefer sendRichMessage; on method-not-found / unsupported clients fall back
  * to classic sendMessage so delivery never depends on Rich Message support.
  */
-export async function sendRichMessageSafe(env, chatId, text, options) {
+export async function sendRichMessageSafe(env: NyraEnv, chatId, text, options) {
   const opts = options || {};
   let result = await sendRichMessage(env, chatId, text, opts);
   if (result && result.ok) return result;
@@ -368,12 +373,12 @@ export async function sendRichMessageSafe(env, chatId, text, options) {
   return result;
 }
 
-export async function sendMessage(env, chatId, text, options) {
+export async function sendMessage(env: NyraEnv, chatId, text, options) {
   const result = await sendMessageReturn(env, chatId, text, options);
   return result && result.ok;
 }
 
-export async function sendMessageSafeResult(env, chatId, text, options) {
+export async function sendMessageSafeResult(env: NyraEnv, chatId, text, options) {
   const opts = options || {};
   let result = await sendMessageReturn(env, chatId, text, opts);
   if (result && result.ok) return result;
@@ -390,9 +395,9 @@ export async function sendMessageSafeResult(env, chatId, text, options) {
  * @param {string} [text] Optional toast text (max 200 chars)
  * @param {{ show_alert?: boolean, cache_time?: number, url?: string }} [options]
  */
-export async function answerCallback(env, callbackId, text, options) {
+export async function answerCallback(env: NyraEnv, callbackId, text, options) {
   const opts = options || {};
-  const payload = { callback_query_id: callbackId };
+  const payload: any = { callback_query_id: callbackId };
   if (text) payload.text = String(text).slice(0, 200);
   if (opts.show_alert) payload.show_alert = true;
   if (opts.cache_time != null) payload.cache_time = opts.cache_time;
@@ -401,16 +406,16 @@ export async function answerCallback(env, callbackId, text, options) {
   catch (err) { console.error("answerCallback failed:", err.message); }
 }
 
-export async function editMessage(env, chatId, messageId, text, replyMarkup, parseMode, options) {
+export async function editMessage(env: NyraEnv, chatId, messageId, text, replyMarkup, parseMode, options) {
   const extra = options || {};
   if (!messageId) {
-    const opts = {};
+    const opts: any = {};
     if (replyMarkup) opts.reply_markup = replyMarkup;
     if (parseMode) opts.parse_mode = parseMode;
     if (extra.message_thread_id != null) opts.message_thread_id = extra.message_thread_id;
     return await sendMessageReturn(env, chatId, text, opts);
   }
-  const payload = {
+  const payload: any = {
     chat_id: chatId,
     message_id: messageId,
     text: truncate(text || "\u200b", MAX_TELEGRAM_LENGTH),
@@ -428,7 +433,7 @@ export async function editMessage(env, chatId, messageId, text, replyMarkup, par
   return result;
 }
 
-export async function deleteMessage(env, chatId, messageId) {
+export async function deleteMessage(env: NyraEnv, chatId, messageId) {
   try { return await tg(env, "deleteMessage", { chat_id: chatId, message_id: messageId }); }
   catch (err) { console.error("deleteMessage failed:", err.message); return { ok: false }; }
 }
@@ -457,8 +462,8 @@ export function buildMainReplyKeyboard(locale) {
 }
 
 
-export function startTypingHeartbeat(env, ctx, chatId) {
-  const signal = { stopped: false, cancelTimer: null };
+export function startTypingHeartbeat(env: NyraEnv, ctx, chatId) {
+  const signal: { stopped: boolean; cancelTimer: any } = { stopped: false, cancelTimer: null };
   const task = (async function () {
     let consecutiveErrors = 0;
     while (!signal.stopped) {
@@ -470,13 +475,13 @@ export function startTypingHeartbeat(env, ctx, chatId) {
         consecutiveErrors++;
       }
       if (consecutiveErrors >= 5) break;
-      await new Promise(function (resolve) {
+      await new Promise<void>(function (resolve) {
         let resolved = false;
         const finish = function () { if (!resolved) { resolved = true; resolve(); } };
         const timer = setTimeout(finish, TYPING_HEARTBEAT_MS);
         signal.cancelTimer = function () { clearTimeout(timer); finish(); };
       });
-      signal.cancelTimer = null;
+      signal.cancelTimer = null as any;
     }
   })();
   if (ctx && ctx.waitUntil) ctx.waitUntil(task);
