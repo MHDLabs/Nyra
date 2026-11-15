@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-f38020.svg)](https://workers.cloudflare.com)
-[![Runtime](https://img.shields.io/badge/runtime-Nodeless%20JS-33cc33.svg)](src/index.js)
+[![Runtime](https://img.shields.io/badge/runtime-Nodeless%20JS-33cc33.svg)](src/index.ts)
 
 [English](README.md) · فارسی
 
