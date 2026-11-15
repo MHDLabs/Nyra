@@ -11,13 +11,13 @@ describe("admin block helpers", () => {
   });
 
   it("admin-panel router uses blockUser helper", () => {
-    const src = readFileSync(new URL("../src/admin-panel/router.js", import.meta.url), "utf8");
+    const src = readFileSync(new URL("../src/admin-panel/router.ts", import.meta.url), "utf8");
     assert.match(src, /blockUser\(env/);
     assert.doesNotMatch(src, /created_at\) VALUES/);
   });
 
   it("createSession refuses missing KV", () => {
-    const src = readFileSync(new URL("../src/admin-panel/auth.js", import.meta.url), "utf8");
+    const src = readFileSync(new URL("../src/admin-panel/auth.ts", import.meta.url), "utf8");
     assert.match(src, /KV_UNAVAILABLE/);
     assert.match(src, /if \(!env\.KV\) throw/);
   });

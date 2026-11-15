@@ -17,7 +17,7 @@ describe("queue ordering and telegram retries", () => {
   });
 
   it("fast path takes a per-user lock before inline AI", () => {
-    const src = readFileSync(new URL("../src/handlers/webhook.js", import.meta.url), "utf8");
+    const src = readFileSync(new URL("../src/handlers/webhook.ts", import.meta.url), "utf8");
     assert.match(src, /fastlock:/);
     assert.match(src, /fall through to queue/);
   });

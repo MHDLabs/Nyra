@@ -14,12 +14,12 @@ describe("group command policy", () => {
     assert.equal(r.command, "/help");
   });
   it("commands.js defines GROUP_COMMANDS allowlist", () => {
-    const src = readFileSync(new URL("../src/commands.js", import.meta.url), "utf8");
+    const src = readFileSync(new URL("../src/commands.ts", import.meta.url), "utf8");
     assert.match(src, /GROUP_COMMANDS/);
     assert.match(src, /if \(isGroup\) return;/);
   });
   it("onboarding version is 2 with custom_intro", () => {
-    const src = readFileSync(new URL("../src/handlers/onboarding.js", import.meta.url), "utf8");
+    const src = readFileSync(new URL("../src/handlers/onboarding.ts", import.meta.url), "utf8");
     assert.match(src, /ONBOARDING_VERSION = 2/);
     assert.match(src, /custom_intro/);
     assert.match(src, /romantic/);
