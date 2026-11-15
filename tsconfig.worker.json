@@ -23,17 +23,9 @@
     "types": []
   },
   "include": [
-    "src/index.ts",
-    "src/telegram.ts",
-    "src/db/**/*.ts",
-    "src/providers/**/*.ts",
-    "src/core/**/*.ts",
-    "src/ts-smoke/**/*.ts",
+    "src/**/*.ts",
     "types/**/*.ts",
-    "worker-configuration.d.ts",
-    "src/reminders/**/*.ts",
-    "src/schedules/**/*.ts",
-    "types/reminders.ts"
+    "worker-configuration.d.ts"
   ],
   "exclude": [
     "node_modules",

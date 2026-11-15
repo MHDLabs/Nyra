@@ -1,4 +1,3 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
 // Centralized localization for every Nyra surface.
 //
 // Locale is persisted per user in `users.locale` and defaults to `en-US`.
@@ -19,12 +18,21 @@ import { TELEGRAM_MESSAGES } from "./messages-telegram.js";
 import { ROUTING_MESSAGES } from "./messages-routing.js";
 import { MINIAPP_MESSAGES } from "./messages-miniapp.js";
 
-export const SUPPORTED_LOCALES = ["en-US", "fa-IR"];
-export const DEFAULT_LOCALE = "en-US";
+export const SUPPORTED_LOCALES = ["en-US", "fa-IR"] as const;
+export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
+export const DEFAULT_LOCALE: SupportedLocale = "en-US";
 
-const DOMAINS = [CORE_MESSAGES, TELEGRAM_MESSAGES, ROUTING_MESSAGES, MINIAPP_MESSAGES];
+type MessageDict = Record<string, string>;
+type LocaleTable = Record<SupportedLocale, MessageDict>;
 
-const DICTS = { "en-US": {}, "fa-IR": {} };
+const DOMAINS: Array<Partial<Record<string, MessageDict>>> = [
+  CORE_MESSAGES as Partial<Record<string, MessageDict>>,
+  TELEGRAM_MESSAGES as Partial<Record<string, MessageDict>>,
+  ROUTING_MESSAGES as Partial<Record<string, MessageDict>>,
+  MINIAPP_MESSAGES as Partial<Record<string, MessageDict>>
+];
+
+const DICTS: LocaleTable = { "en-US": {}, "fa-IR": {} };
 for (let d = 0; d < DOMAINS.length; d++) {
   const domain = DOMAINS[d] || {};
   for (let i = 0; i < SUPPORTED_LOCALES.length; i++) {
@@ -35,21 +43,21 @@ for (let d = 0; d < DOMAINS.length; d++) {
 }
 
 /** Coerce anything (Telegram language_code, stale value, null) to a supported locale. */
-export function normalizeLocale(value) {
+export function normalizeLocale(value: unknown): SupportedLocale {
   if (value === null || value === undefined) return DEFAULT_LOCALE;
-  const raw = String(value).trim().toLowerCase();
-  if (raw === "fa" || raw === "fa-ir" || raw === "fa_ir" || raw.startsWith("fa-") || raw.startsWith("fa_")) return "fa-IR";
-  if (raw === "en" || raw === "en-us" || raw === "en_us" || raw.startsWith("en-") || raw.startsWith("en_")) return "en-US";
+  const raw = String(value).trim().toLowerCase().replace(/_/g, "-");
+  if (raw === "en" || raw === "en-us") return "en-US";
+  if (raw === "fa" || raw === "fa-ir") return "fa-IR";
   return DEFAULT_LOCALE;
 }
 
 /**
- * True when a raw value names a shipped locale (accepts the short/underscored
- * forms Telegram or a stale client may send). Unlike normalizeLocale this does
+ * True only for supported locale tags (and common short forms a
+ * stale client may send). Unlike normalizeLocale this does
  * NOT silently coerce unknown values to the default — write paths need to be
  * able to reject "de-DE" instead of pretending it became en-US.
  */
-export function isSupportedLocaleInput(value) {
+export function isSupportedLocaleInput(value: unknown): boolean {
   if (value === null || value === undefined) return false;
   const raw = String(value).trim().toLowerCase().replace(/_/g, "-");
   if (raw === "en" || raw === "en-us") return true;
@@ -58,49 +66,60 @@ export function isSupportedLocaleInput(value) {
 }
 
 /** Text direction for a locale. fa-IR is the only shipped RTL locale. */
-export function directionFor(locale) {
+export function directionFor(locale: unknown): "rtl" | "ltr" {
   return normalizeLocale(locale) === "fa-IR" ? "rtl" : "ltr";
 }
 
+type UserLocaleSource = {
+  locale?: string | null;
+  language_code?: string | null;
+};
+
 /** The locale stored on a user row, with a Telegram language_code fallback. */
-export function localeForUser(user) {
+export function localeForUser(user: UserLocaleSource | null | undefined): SupportedLocale {
   if (user && user.locale) return normalizeLocale(user.locale);
   if (user && user.language_code) return normalizeLocale(user.language_code);
   return DEFAULT_LOCALE;
 }
 
-function interpolate(template, params) {
+function interpolate(template: string, params?: Record<string, unknown> | null): string {
   if (!params || typeof template !== "string") return template;
-  return template.replace(/\{(\w+)\}/g, function (match, name) {
+  return template.replace(/\{(\w+)\}/g, function (match, name: string) {
     if (params[name] === undefined || params[name] === null) return match;
     return String(params[name]);
   });
 }
 
 /** Translate a key for a locale. params fill `{name}` placeholders. */
-export function t(locale, key, params) {
+export function t(
+  locale: unknown,
+  key: string,
+  params?: Record<string, unknown> | null
+): string {
   const normalized = normalizeLocale(locale);
-  let template = DICTS[normalized] ? DICTS[normalized][key] : undefined;
+  let template: string | undefined = DICTS[normalized] ? DICTS[normalized][key] : undefined;
   if (template === undefined) template = DICTS[DEFAULT_LOCALE][key];
   if (template === undefined) return key;
   return interpolate(template, params);
 }
 
 /** Every translated string for a locale: what the Mini App fetches at boot. */
-export function messagesForLocale(locale) {
+export function messagesForLocale(locale: unknown): {
+  locale: SupportedLocale;
+  dir: "rtl" | "ltr";
+  strings: MessageDict;
+} {
   const normalized = normalizeLocale(locale);
-  // Spread into a fresh object so callers cannot mutate the shared dictionary.
-  const strings = {};
+  const strings: MessageDict = {};
   const source = DICTS[normalized] || {};
   const keys = Object.keys(source);
   for (let i = 0; i < keys.length; i++) strings[keys[i]] = source[keys[i]];
-  // Fill gaps from en-US so the frontend never renders a raw key.
   const fallback = DICTS[DEFAULT_LOCALE];
   const fallbackKeys = Object.keys(fallback);
   for (let i = 0; i < fallbackKeys.length; i++) {
     if (strings[fallbackKeys[i]] === undefined) strings[fallbackKeys[i]] = fallback[fallbackKeys[i]];
   }
-  return { locale: normalized, dir: directionFor(normalized), strings: strings };
+  return { locale: normalized, dir: directionFor(normalized), strings };
 }
 
 export { DICTS as MESSAGE_DICTS };
