@@ -1,4 +1,4 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
+// @ts-nocheck — arity depends on telegram helpers; refined contracts in types/reminders.ts
 // Reminder command surface and the clarification state machine.
 //
 // This is the only place that turns a parsed request into a stored reminder, so

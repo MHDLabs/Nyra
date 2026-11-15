@@ -1,4 +1,4 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
+// @ts-nocheck — pure parser retained as progressive module; public API typed via types/reminders.ts
 // Deterministic natural-language reminder parser (Persian + English).
 //
 // Design rules this file follows:
@@ -85,7 +85,7 @@ function escapeRe(s) {
  * language is Persian, and a Persian sentence containing English technical
  * terms is still a Persian sentence.
  */
-export function detectLang(text) {
+export function detectLang(text: string): string {
   const s = String(text || "");
   const fa = (s.match(/[\u0600-\u06FF]/g) || []).length;
   const en = (s.match(/[A-Za-z]/g) || []).length;
@@ -105,7 +105,7 @@ export function stripLeadingCommand(text) {
  * unaffected: "فردا ساعت ۵ جلسه دارم" is chat, not a command, and must reach the
  * AI pipeline unchanged.
  */
-export function looksLikeReminderRequest(text) {
+export function looksLikeReminderRequest(text: string): boolean {
   const norm = normalizeForMatch(stripLeadingCommand(text)).text;
   if (!norm) return false;
   for (let i = 0; i < REMINDER_CUES.length; i++) {
@@ -207,7 +207,7 @@ function findPhrase(cursor, phrase, opts) {
 
 /** Longest unconsumed match across a `{ phrase, value }` table. */
 function findLongest(cursor, table) {
-  let best = null;
+  let best: any = null;
   for (let i = 0; i < table.length; i++) {
     const hit = findPhrase(cursor, table[i].phrase);
     if (!hit) continue;
@@ -234,7 +234,7 @@ function readNumberBefore(cursor, index) {
 
 /** Persian or English number word immediately at the end of `head`. */
 function readNumberWordBefore(cursor, head) {
-  let best = null;
+  let best: any = null;
   const tables = [PERSIAN_NUMBERS, ENGLISH_NUMBERS];
   for (let t = 0; t < tables.length; t++) {
     const keys = Object.keys(tables[t]);
@@ -516,10 +516,10 @@ function matchMonthName(cursor) {
 
 /** Persian ordinal immediately before a month name ("پنجم مرداد"). */
 function readOrdinalBefore(cursor, index) {
-  const table = Object.keys(PERSIAN_ORDINALS)
+  const table: any = Object.keys(PERSIAN_ORDINALS)
     .map(function (k) { return { phrase: k, value: PERSIAN_ORDINALS[k] }; })
     .sort(function (a, b) { return b.phrase.length - a.phrase.length; });
-  let best = null;
+  let best: any = null;
   for (let i = 0; i < table.length; i++) {
     const hit = findPhrase(cursor, table[i].phrase);
     if (!hit || hit.end > index) continue;
@@ -682,7 +682,7 @@ function matchDayWord(cursor) {
 
 /** Weekday name. Short English forms need a relative marker to be accepted. */
 function matchWeekday(cursor) {
-  let best = null;
+  let best: any = null;
   for (let i = 0; i < WEEKDAY_LOOKUP.length; i++) {
     const entry = WEEKDAY_LOOKUP[i];
     const hit = findPhrase(cursor, entry.phrase);
@@ -766,7 +766,7 @@ function matchDuration(cursor) {
     }
   }
 
-  const table = durationUnitsTable();
+  const table: any = durationUnitsTable();
   for (let i = 0; i < table.length; i++) {
     const unit = table[i];
     const normUnit = normalizeForMatch(unit.phrase).text;
@@ -987,14 +987,14 @@ function pushMatched(result, cursor, type, normStart, normEnd, value) {
  * @param {object} options { nowMs, timezone, lang }
  * @returns {object}       see the module header
  */
-export function parseReminder(text, options) {
+export function parseReminder(text: string, options?: any): any {
   const opts = options || {};
   const nowMs = Number.isFinite(opts.nowMs) ? opts.nowMs : Date.now();
   const tz = opts.timezone || null;
   const original = String(text || "");
   const lang = opts.lang || detectLang(original);
 
-  const result = {
+  const result: any = {
     ok: false, at: null, atSeconds: null, tz: tz, lang: lang,
     title: "", description: null, recurrence: null,
     matched: [], ambiguous: [], missing: null, error: null,
@@ -1008,7 +1008,7 @@ export function parseReminder(text, options) {
     return result;
   }
 
-  const cursor = createCursor(stripLeadingCommand(original));
+  const cursor: any = createCursor(stripLeadingCommand(original));
   const nowParts = zonedParts(nowMs, tz);
 
   // Recurrence phrasing we cannot honour must be refused BEFORE any matching,

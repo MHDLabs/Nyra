@@ -1,4 +1,3 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
 // Timezone math for the reminders subsystem.
 //
 // Everything here is pure and dependency-free: it only uses the platform
@@ -41,7 +40,7 @@ function baseFormatter(timeZone) {
  * short, printable zone-shaped string before handing it to `Intl`, so a
  * malformed value can never reach the formatter in a hot path.
  */
-export function isValidTimeZone(tz) {
+export function isValidTimeZone(tz: string): boolean {
   if (!tz || typeof tz !== "string") return false;
   const name = tz.trim();
   if (!name || name.length > TZ_NAME_MAX) return false;
@@ -120,9 +119,9 @@ export function daysInGregorianMonth(y, mo) {
  * Seconds are included because some zones have a non-whole-minute offset in
  * historical data; comparisons below use the seconds field, not just h/m.
  */
-export function zonedParts(ms, tz) {
+export function zonedParts(ms: number, tz: string): import("../../types/reminders.js").ZonedParts {
   const parts = baseFormatter(tz).formatToParts(new Date(ms));
-  const o = {};
+  const o: any = {};
   for (let i = 0; i < parts.length; i++) {
     if (parts[i].type !== "literal") o[parts[i].type] = parts[i].value;
   }

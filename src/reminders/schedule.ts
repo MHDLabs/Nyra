@@ -1,4 +1,3 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
 // Recurrence arithmetic.
 //
 // A recurrence is stored as plain data so it survives every restart and cannot
@@ -65,8 +64,8 @@ export function normalizeRecurrence(input) {
   let interval = input.interval === undefined || input.interval === null ? 1 : parseInt(input.interval, 10);
   if (!Number.isFinite(interval) || interval < 1) interval = 1;
   if (interval > MAX_RECURRENCE_INTERVAL) interval = MAX_RECURRENCE_INTERVAL;
-  let weekday = input.weekday === undefined || input.weekday === null ? null : parseInt(input.weekday, 10);
-  if (!Number.isFinite(weekday) || weekday < 0 || weekday > 6) weekday = null;
+  let weekday: number | null = input.weekday === undefined || input.weekday === null ? null : parseInt(input.weekday, 10);
+  if (weekday === null || !Number.isFinite(weekday) || weekday < 0 || weekday > 6) weekday = null;
   if (bucket !== "week") weekday = null;
   return { bucket: bucket, interval: interval, weekday: weekday };
 }

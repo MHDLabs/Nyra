@@ -1,4 +1,3 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
 // Reminder delivery: the cron-driven worker side of the subsystem.
 //
 // Shape of one tick:

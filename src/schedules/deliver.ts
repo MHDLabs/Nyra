@@ -1,4 +1,4 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
+// @ts-nocheck — delivery loop; contracts in db/schedules
 // Deliver due personal schedules. Runs on the shared 5-minute Cron.
 import { escapeHtml, now } from "../utils.js";
 import { sendMessageReturn, sendRichMessageSafe } from "../telegram.js";
