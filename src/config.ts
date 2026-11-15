@@ -1,4 +1,3 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
 // Nyra — configuration: shared constants, prompt rules, default personalities.
 
 // Temporary switch: when true the Mini App (HTML + /api/* + Telegram menu button)
@@ -28,7 +27,7 @@ export const AI_PRIMARY_ATTEMPT_TIMEOUT_MS = 120000;
 export const AI_MAX_PRIMARY_ATTEMPTS = 1;
 // No per-connection retries for transient faults — one shot, high timeout.
 export const AI_MAX_RETRYABLE_ATTEMPTS = 1;
-export const AI_RETRY_DELAYS_MS: any[] = [];
+export const AI_RETRY_DELAYS_MS: number[] = [];
 export const AI_STREAM_STALL_TIMEOUT_MS = 120000;
 export const AI_STREAM_TOTAL_BUDGET_MS = 180000;
 export const AI_TEST_TIMEOUT_MS = 8000;
@@ -133,18 +132,18 @@ export const REMINDER_MAX_ATTEMPTS = 3;
 // returned to the pending pool. Must exceed the worst-case send timeout.
 export const REMINDER_CLAIM_LEASE_S = 300;
 // Delivery retry backoff in seconds, indexed by attempt number (0-based).
-export const REMINDER_RETRY_BACKOFF_S = [60, 300, 900];
+export const REMINDER_RETRY_BACKOFF_S: number[] = [60, 300, 900];
 // How long a pending "which time did you mean?" clarification stays armed.
 export const REMINDER_CLARIFY_TTL = 1800;
-export const REMINDER_TIME_BUCKETS = ["minute", "hour", "day", "week", "month", "year"];
-export const REMINDER_STATUSES = ["pending", "processing", "sent", "completed", "cancelled", "failed"];
+export const REMINDER_TIME_BUCKETS: string[] = ["minute", "hour", "day", "week", "month", "year"];
+export const REMINDER_STATUSES: string[] = ["pending", "processing", "sent", "completed", "cancelled", "failed"];
 // Offered as one-tap timezone buttons. Never applied automatically: a user with
 // no stored timezone is always asked before their first reminder is scheduled.
-export const REMINDER_TZ_SUGGESTIONS = [
+export const REMINDER_TZ_SUGGESTIONS: string[] = [
   "Asia/Tehran", "Asia/Kabul", "Asia/Baghdad", "Asia/Dubai",
   "Europe/Istanbul", "Europe/London", "Europe/Berlin", "America/New_York", "UTC"
 ];
-export const REMINDER_TZ_HINT_FOR_LANGUAGE = { fa: "Asia/Tehran", ps: "Asia/Kabul", ar: "Asia/Riyadh", tr: "Europe/Istanbul" };
+export const REMINDER_TZ_HINT_FOR_LANGUAGE: Record<string, string> = { fa: "Asia/Tehran", ps: "Asia/Kabul", ar: "Asia/Riyadh", tr: "Europe/Istanbul" };
 
 // --- Workers AI error brain ------------------------------------------------
 // The brain reads a provider error and picks the recovery action (retry the
@@ -202,7 +201,14 @@ export const SETTING_DEFAULT_LOCALE = "default_locale";
 // on every incoming message.
 export const MAINTENANCE_NOTICE_TTL_S = 3600;
 
-export const DEFAULT_PERSONALITIES = [
+
+export type PersonalityDefinition = {
+  id: string;
+  name: string;
+  prompt: string;
+};
+
+export const DEFAULT_PERSONALITIES: PersonalityDefinition[] = [
   {
     id: "default",
     name: "Everyday Nyra",
@@ -226,4 +232,4 @@ export const DEFAULT_PERSONALITIES = [
 // schema migrations delete them, and runtime lookups filter them out.
 // `professional` and `coder` were retired because they duplicated `default`
 // with a different tone and no behavioural difference.
-export const RETIRED_PERSONALITY_IDS = ["sarcastic", "teacher", "researcher", "debater", "minimal", "calm", "professional", "coder"];
+export const RETIRED_PERSONALITY_IDS: string[] = ["sarcastic", "teacher", "researcher", "debater", "minimal", "calm", "professional", "coder"];
