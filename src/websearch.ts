@@ -1,14 +1,37 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
 // Built-in zero-key web search for Nyra.
 // Adapted from Yrobot/cloudflare-search (MIT): HTML scraping of DuckDuckGo and Bing.
 // No API keys required. Parallel engines with fault tolerance.
 
 const SEARCH_TIMEOUT_MS = 7000;
 const MAX_RESULTS = 8;
+const MAX_HTML_CHARS = 2_000_000;
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-function decodeHtmlEntities(text) {
+export type WebSearchSource = "DuckDuckGo" | "Bing";
+
+export type WebSearchItem = {
+  title: string;
+  url: string;
+  snippet: string;
+  source: WebSearchSource;
+};
+
+export type WebSearchResponse = {
+  query: string;
+  results: WebSearchItem[];
+  engines: WebSearchSource[];
+};
+
+type RawSearchFields = {
+  title?: unknown;
+  url?: unknown;
+  snippet?: unknown;
+  description?: unknown;
+  content?: unknown;
+};
+
+function decodeHtmlEntities(text: unknown): string {
   if (!text) return "";
   let s = String(text);
   // Decode non-amp entities first, then &amp; last, so we never create double-unescape pairs.
@@ -20,11 +43,11 @@ function decodeHtmlEntities(text) {
     .replace(/&#0*39;/g, "'")
     .replace(/&#x0*27;/gi, "'")
     .replace(/&#x0*2f;/gi, "/")
-    .replace(/&#(\d+);/g, function (_, n) {
+    .replace(/&#(\d+);/g, function (_: string, n: string) {
       const code = parseInt(n, 10);
       return Number.isFinite(code) && code > 0 ? String.fromCharCode(code) : "";
     })
-    .replace(/&#x([0-9a-f]+);/gi, function (_, h) {
+    .replace(/&#x([0-9a-f]+);/gi, function (_: string, h: string) {
       const code = parseInt(h, 16);
       return Number.isFinite(code) && code > 0 ? String.fromCharCode(code) : "";
     })
@@ -33,7 +56,7 @@ function decodeHtmlEntities(text) {
 }
 
 /** Strip HTML tags until stable, then decode entities, then strip again (entity→tag). */
-function stripTags(html) {
+function stripTags(html: unknown): string {
   let s = String(html || "");
   let prev = "";
   while (s !== prev) {
@@ -50,22 +73,22 @@ function stripTags(html) {
 }
 
 /** Prefer Persian region when the query contains Persian/Arabic script. */
-function duckDuckGoLocale(query) {
+function duckDuckGoLocale(query: string): string {
   if (/[\u0600-\u06FF]/.test(query)) return "ir-fa";
   return "wt-wt";
 }
 
 /** Allow only http(s) URLs via the URL parser (blocks javascript:, data:, vbscript:, etc.). */
-function isSafeHttpUrl(raw) {
+function isSafeHttpUrl(raw: unknown): boolean {
   try {
     const u = new URL(String(raw || "").trim());
     return u.protocol === "http:" || u.protocol === "https:";
-  } catch (_) {
+  } catch {
     return false;
   }
 }
 
-function normalizeItem(item, source) {
+function normalizeItem(item: RawSearchFields, source: WebSearchSource): WebSearchItem | null {
   const title = stripTags(item.title || "").slice(0, 200);
   const url = String(item.url || "").trim().slice(0, 1000);
   const snippet = stripTags(item.snippet || item.description || item.content || "").slice(0, 700);
@@ -73,14 +96,53 @@ function normalizeItem(item, source) {
   return { title, url, snippet, source };
 }
 
+/** Read response text with a hard character budget; oversize bodies yield "". */
+async function readTextBounded(response: Response, maxChars: number): Promise<string> {
+  try {
+    if (!response.body) {
+      const text = await response.text();
+      if (!text || text.length > maxChars) return "";
+      return text;
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let out = "";
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        out += decoder.decode(value, { stream: true });
+        if (out.length > maxChars) {
+          try {
+            await reader.cancel();
+          } catch {
+            /* ignore */
+          }
+          return "";
+        }
+      }
+      out += decoder.decode();
+      if (!out || out.length > maxChars) return "";
+      return out;
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch {
+    return "";
+  }
+}
+
 // ─── DuckDuckGo HTML ─────────────────────────────────────────────────────────
 
-function extractDuckDuckGoResults(html) {
-  const results: any[] = [];
-  // html.duckduckgo.com result blocks
+function extractDuckDuckGoResults(html: string): WebSearchItem[] {
+  const results: WebSearchItem[] = [];
   const resultRegex =
     /<div[^>]*class="[^"]*result[^"]*"[^>]*>([\s\S]*?)<div class="clear"><\/div>/gi;
-  let match;
+  let match: RegExpExecArray | null;
   while ((match = resultRegex.exec(html)) !== null) {
     const block = match[1];
     const titleMatch = block.match(
@@ -88,7 +150,6 @@ function extractDuckDuckGoResults(html) {
     );
     const title = titleMatch ? stripTags(titleMatch[1]) : "";
 
-    // Redirect form: //duckduckgo.com/l/?uddg=<encoded>
     let url = "";
     const uddg = block.match(
       /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="\/\/duckduckgo\.com\/l\/\?uddg=([^"&]+)/i
@@ -96,7 +157,7 @@ function extractDuckDuckGoResults(html) {
     if (uddg) {
       try {
         url = decodeURIComponent(uddg[1]);
-      } catch (_) {
+      } catch {
         url = "";
       }
     }
@@ -116,10 +177,10 @@ function extractDuckDuckGoResults(html) {
   return results;
 }
 
-async function searchDuckDuckGo(query, signal) {
+async function searchDuckDuckGo(query: string, signal: AbortSignal): Promise<WebSearchItem[]> {
   const params = new URLSearchParams({
     q: query,
-    kl: duckDuckGoLocale(query),
+    kl: duckDuckGoLocale(query)
   });
   const url = "https://html.duckduckgo.com/html/?" + params.toString();
   const response = await fetch(url, {
@@ -128,20 +189,20 @@ async function searchDuckDuckGo(query, signal) {
       "User-Agent": UA,
       Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       "Accept-Language": "en-US,en;q=0.9,fa;q=0.8",
-      Referer: "https://duckduckgo.com/",
+      Referer: "https://duckduckgo.com/"
     },
     redirect: "follow",
-    cache: "no-store",
+    cache: "no-store"
   });
   if (!response.ok) return [];
-  const html = await response.text();
-  if (!html || html.length > 2_000_000) return [];
+  const html = await readTextBounded(response, MAX_HTML_CHARS);
+  if (!html) return [];
   return extractDuckDuckGoResults(html);
 }
 
 // ─── Bing HTML ───────────────────────────────────────────────────────────────
 
-function extractBingRealUrl(bingUrl) {
+function extractBingRealUrl(bingUrl: string): string {
   if (!bingUrl.includes("bing.com/ck/a?")) return bingUrl;
   try {
     const decoded = bingUrl.replace(/&amp;/g, "&");
@@ -149,20 +210,19 @@ function extractBingRealUrl(bingUrl) {
     const param = u.searchParams.get("u");
     if (!param || !param.startsWith("a1")) return bingUrl;
     const b64 = param.slice(2);
-    // Workers support atob
     const raw = atob(b64);
     if (/^https?:\/\//i.test(raw)) return raw;
-  } catch (_) {
+  } catch {
     /* keep original */
   }
   return bingUrl;
 }
 
-function extractBingResults(html) {
-  const results: any[] = [];
+function extractBingResults(html: string): WebSearchItem[] {
+  const results: WebSearchItem[] = [];
   const resultRegex =
     /<li class="b_algo"[^>]*>[\s\S]*?<h2[^>]*><a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a><\/h2>[\s\S]*?<div class="b_caption"[^>]*>[\s\S]*?<p[^>]*>([\s\S]*?)<\/p>/g;
-  let match;
+  let match: RegExpExecArray | null;
   while ((match = resultRegex.exec(html)) !== null) {
     const url = extractBingRealUrl(match[1]);
     const title = stripTags(match[2]);
@@ -173,7 +233,7 @@ function extractBingResults(html) {
   return results;
 }
 
-async function searchBing(query, signal) {
+async function searchBing(query: string, signal: AbortSignal): Promise<WebSearchItem[]> {
   const url =
     "https://www.bing.com/search?q=" +
     encodeURIComponent(query) +
@@ -183,14 +243,14 @@ async function searchBing(query, signal) {
     headers: {
       "User-Agent": UA,
       Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "en-US,en;q=0.9,fa;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9,fa;q=0.8"
     },
     redirect: "follow",
-    cache: "no-store",
+    cache: "no-store"
   });
   if (!response.ok) return [];
-  const html = await response.text();
-  if (!html || html.length > 2_000_000) return [];
+  const html = await readTextBounded(response, MAX_HTML_CHARS);
+  if (!html) return [];
   return extractBingResults(html);
 }
 
@@ -198,10 +258,8 @@ async function searchBing(query, signal) {
 
 /**
  * Zero-key web search. Tries DuckDuckGo and Bing in parallel; merges unique URLs.
- * @param {string} query
- * @returns {Promise<{ query: string, results: Array<{title,url,snippet,source}>, engines: string[] }>}
  */
-export async function searchWeb(query) {
+export async function searchWeb(query: unknown): Promise<WebSearchResponse> {
   const q = String(query || "").trim().slice(0, 300);
   if (!q) throw new Error("Search query is empty");
 
@@ -211,12 +269,12 @@ export async function searchWeb(query) {
   try {
     const settled = await Promise.allSettled([
       searchDuckDuckGo(q, controller.signal),
-      searchBing(q, controller.signal),
+      searchBing(q, controller.signal)
     ]);
 
-    const seen = new Set();
-    const results: any[] = [];
-    const engines: any[] = [];
+    const seen = new Set<string>();
+    const results: WebSearchItem[] = [];
+    const engines: WebSearchSource[] = [];
 
     for (const outcome of settled) {
       if (outcome.status !== "fulfilled" || !Array.isArray(outcome.value)) continue;
@@ -231,7 +289,7 @@ export async function searchWeb(query) {
     return {
       query: q,
       results: results.slice(0, MAX_RESULTS),
-      engines,
+      engines
     };
   } finally {
     clearTimeout(timer);
@@ -239,6 +297,19 @@ export async function searchWeb(query) {
 }
 
 /** Always available — no API key required. */
-export function isWebSearchAvailable() {
+export function isWebSearchAvailable(): boolean {
   return true;
 }
+
+// Test-only exports (used by deterministic unit tests; not part of the AI tool contract).
+export const __websearchTest = {
+  stripTags,
+  decodeHtmlEntities,
+  isSafeHttpUrl,
+  normalizeItem,
+  extractDuckDuckGoResults,
+  extractBingResults,
+  extractBingRealUrl,
+  MAX_HTML_CHARS,
+  MAX_RESULTS
+};
