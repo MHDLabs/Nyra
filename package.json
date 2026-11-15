@@ -6,6 +6,13 @@
   "license": "MIT",
   "scripts": {
     "test": "node --test test/*.test.js",
+    "test:ts": "tsx --test test/ts-smoke.test.ts",
+    "test:all": "node --test test/*.test.js && tsx --test test/ts-smoke.test.ts",
+    "typecheck": "npm run typecheck:worker && npm run typecheck:web",
+    "typecheck:worker": "tsc -p tsconfig.worker.json",
+    "typecheck:web": "tsc -p tsconfig.web.json",
+    "types:worker": "wrangler types",
+    "types:check": "wrangler types --check",
     "deploy": "node scripts/postdeploy.mjs",
     "deploy:worker": "wrangler deploy"
   },
@@ -26,6 +33,9 @@
     }
   },
   "devDependencies": {
-    "wrangler": "^4.0.0"
+    "@types/node": "22.10.5",
+    "tsx": "4.19.2",
+    "typescript": "5.7.3",
+    "wrangler": "4.42.0"
   }
 }
