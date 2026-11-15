@@ -19,16 +19,22 @@ jobs:
   test:
     name: Pre-deploy tests
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Syntax check
-        run: find src test -name '*.js' -print0 | xargs -0 -n1 node --check
-      - name: Unit tests
-        run: node --test test/*.test.js
+          cache: npm
+          registry-url: "https://registry.npmjs.org"
+      - name: Install dependencies (npm ci)
+        run: npm ci --no-audit --no-fund
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Full tests
+        run: npm run test:all
+      - name: Wrangler dry-run
+        run: ./node_modules/.bin/wrangler deploy --dry-run
 
   deploy:
     name: Deploy Worker (OTA)

@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, "feat/**", "fix/**"]
+    branches: [main, "feat/**", "fix/**", "maintenance/**", "migration/**"]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -11,10 +11,10 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: Unit & integration tests
+  verify:
+    name: Install, typecheck, test, dry-run
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,14 +23,29 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          registry-url: "https://registry.npmjs.org"
 
-      # Tests use only Node builtins + repo source — skip npm ci.
-      # Full wrangler install is reserved for the Deploy workflow.
-      - name: Syntax check (src)
-        run: find src -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Install dependencies (npm ci)
+        run: npm ci --no-audit --no-fund
 
-      - name: Syntax check (test)
-        run: find test -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Typecheck Worker
+        run: npm run typecheck:worker
 
-      - name: Run tests
-        run: node --test test/*.test.js
+      - name: Typecheck Web
+        run: npm run typecheck:web
+
+      - name: Typecheck (aggregate)
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: TypeScript smoke tests
+        run: npm run test:ts
+
+      - name: Full test suite
+        run: npm run test:all
+
+      - name: Wrangler deploy dry-run
+        run: ./node_modules/.bin/wrangler deploy --dry-run
