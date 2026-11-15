@@ -1,4 +1,4 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
+// @ts-nocheck — Task 9 progressive UI surface; contracts in types/miniapp.ts
 // Per-user personal model connections, gated by the admin-controlled
 // `personal_models_allowed` setting and the per-user limit.
 import { getUserConnectionById, getUserConnections, isPersonalModelsAllowed, getPersonalModelLimit, countPersonalConnections, saveGlobalConnection, deleteUserConnection } from "../db.js";

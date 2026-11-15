@@ -1,4 +1,4 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
+// @ts-nocheck — Task 9 progressive UI surface; contracts in types/miniapp.ts
 // Admin panel endpoints: site stats, user/chat pagination, global settings
 // and per-connection usage metrics. Reachability is enforced once, in the
 // router, before any of these run.

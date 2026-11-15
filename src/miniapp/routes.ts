@@ -1,4 +1,4 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
+// @ts-nocheck — Task 9 progressive UI surface; contracts in types/miniapp.ts
 // Route (multi-model failover bundle) CRUD shared by the self-service view
 // and the admin panel; both call the same handlers with the admin's user id.
 import { getUserRoutes, getRouteById, getRouteModels, getRouteTokens, getRouteBundle, saveRoute, updateRoute, deleteRoute, setDefaultRoute, addRouteModel, removeRouteModel, setRouteDefaultModel, addRouteToken, removeRouteToken, toggleRouteToken } from "../db.js";

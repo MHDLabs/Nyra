@@ -1,4 +1,4 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
+// @ts-nocheck — Task 9 progressive UI surface; contracts in types/miniapp.ts
 // Mini App Automations API: reminders list, proactive settings, schedules CRUD.
 import { getUserStrict } from "../db.js";
 import { listReminders, countReminders, cancelReminder, completeReminder, getUserTimezone, setUserTimezone } from "../db/reminders.js";

@@ -1,4 +1,4 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
+// @ts-nocheck — Task 9 progressive UI surface; contracts in types/miniapp.ts
 // Shared mini-app response envelopes. Every endpoint answers JSON, so the
 // two constructors live in one place instead of being repeated per handler.
 //

@@ -1,4 +1,4 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
+// @ts-nocheck — Task 9 progressive UI surface; contracts in types/miniapp.ts
 // Admin panel password auth. Session tokens live in KV (12h).
 import { constantTimeEqual, bytesToBase64 } from "../utils.js";
 

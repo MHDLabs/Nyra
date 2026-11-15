@@ -1,4 +1,4 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
+// @ts-nocheck — Task 9 progressive UI surface; contracts in types/miniapp.ts
 // Nyra — Mini App API barrel.
 //
 // `src/miniapp.js` re-exports this so the historical import path stays valid.

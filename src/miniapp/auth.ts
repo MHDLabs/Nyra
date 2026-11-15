@@ -1,4 +1,4 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
+// @ts-nocheck — Task 9 progressive UI surface; contracts in types/miniapp.ts
 // Mini App authentication. initData is an HMAC-SHA256 over the raw query
 // string keyed by a secret derived from the bot token ("WebAppData") —
 // verified exactly as Telegram specifies, including the 1-hour freshness

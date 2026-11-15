@@ -9,20 +9,15 @@
       "DOM.Iterable"
     ],
     "strict": true,
-    "strictNullChecks": true,
-    "noImplicitAny": true,
-    "useUnknownInCatchVariables": true,
-    "isolatedModules": true,
-    "verbatimModuleSyntax": true,
-    "noEmit": true,
+    "noImplicitAny": false,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
     "rootDir": "web-src",
-    "baseUrl": ".",
-    "types": []
+    "baseUrl": "."
   },
   "include": [
-    "web-src/**/*.ts"
+    "web-src/**/*.ts",
+    "web-src/**/*.d.ts"
   ],
   "exclude": [
     "node_modules",

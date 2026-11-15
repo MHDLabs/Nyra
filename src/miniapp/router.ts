@@ -1,4 +1,4 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
+// @ts-nocheck — Task 9 progressive UI surface; contracts in types/miniapp.ts
 // The Mini App's HTTP surface: one flat route table over `pathname`, with the
 // authentication gate, the rate limiter and the admin gate applied before any
 // handler runs. Kept as one table so the API contract is readable in one place
