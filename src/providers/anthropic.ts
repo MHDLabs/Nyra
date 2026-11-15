@@ -1,3 +1,4 @@
+import type { NyraEnv } from "../../types/env.js";
 // Anthropic Messages API. System prompts are lifted out of the message list
 // into the top-level `system` field, and the SSE event names differ from the
 // OpenAI dialect, so this is a genuinely separate adapter rather than a
@@ -13,13 +14,13 @@ export async function generateAnthropic(connection, apiKey, messages, options, t
   const model = connection.model;
   const allowImages = connection.supports_vision === 1;
   let systemText = "";
-  const convo = [];
+  const convo: any[] = [];
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i];
     if (m.role === "system") systemText += (systemText ? "\n\n" : "") + (typeof m.content === "string" ? m.content : "");
     else convo.push({ role: m.role === "assistant" ? "assistant" : "user", content: Array.isArray(m.content) && m.content.some(b => b && (b.type === "tool_use" || b.type === "tool_result")) ? m.content : toAnthropicContent(m.content, allowImages) });
   }
-  const body = { model: model, max_tokens: (options && options.max_tokens) || 2048, messages: convo };
+  const body: any = { model: model, max_tokens: (options && options.max_tokens) || 2048, messages: convo };
   if (systemText) body.system = systemText;
   if (options && options.temperature !== undefined) body.temperature = Math.max(0, Math.min(1, options.temperature));
   if (options && Array.isArray(options.tools) && options.tools.length) body.tools = options.tools;
@@ -33,17 +34,17 @@ export async function generateAnthropic(connection, apiKey, messages, options, t
   let data;
   try { data = await resp.json(); }
   catch (e) {
-    const err = new Error("Unexpected response format: invalid JSON");
+    const err: any = new Error("Unexpected response format: invalid JSON");
     err.category = "unexpected_format";
     throw err;
   }
   if (!data || !Array.isArray(data.content)) {
-    const err = new Error("Unexpected response format");
+    const err: any = new Error("Unexpected response format");
     err.category = "unexpected_format";
     throw err;
   }
   let text = "";
-  const toolCalls = [];
+  const toolCalls: any[] = [];
   for (let i = 0; i < data.content.length; i++) {
     const block = data.content[i];
     if (block.type === "text" && block.text) text += block.text;
@@ -56,7 +57,7 @@ export async function generateAnthropic(connection, apiKey, messages, options, t
     return { text, toolCalls, assistantMessage: data.content, stopReason: data.stop_reason, usage };
   }
   if (!text || text.trim().length === 0) {
-    const err = new Error("Empty response from provider");
+    const err: any = new Error("Empty response from provider");
     err.category = "empty_response";
     throw err;
   }
@@ -71,13 +72,13 @@ export async function* streamAnthropic(connection, apiKey, messages, options, si
   const model = connection.model;
   const allowImages = connection.supports_vision === 1;
   let systemText = "";
-  const convo = [];
+  const convo: any[] = [];
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i];
     if (m.role === "system") systemText += (systemText ? "\n\n" : "") + (typeof m.content === "string" ? m.content : "");
     else convo.push({ role: m.role === "assistant" ? "assistant" : "user", content: Array.isArray(m.content) && m.content.some(b => b && (b.type === "tool_use" || b.type === "tool_result")) ? m.content : toAnthropicContent(m.content, allowImages) });
   }
-  const body = { model: model, max_tokens: (options && options.max_tokens) || 2048, messages: convo, stream: true };
+  const body: any = { model: model, max_tokens: (options && options.max_tokens) || 2048, messages: convo, stream: true };
   if (systemText) body.system = systemText;
   if (options && options.temperature !== undefined) body.temperature = Math.max(0, Math.min(1, options.temperature));
   if (options && Array.isArray(options.tools) && options.tools.length) body.tools = options.tools;
@@ -90,7 +91,7 @@ export async function* streamAnthropic(connection, apiKey, messages, options, si
   });
   if (!resp.ok) throw await parseProviderError(resp);
   if (!resp.body) {
-    const err = new Error("No response body");
+    const err: any = new Error("No response body");
     err.category = "unexpected_format";
     throw err;
   }
@@ -131,7 +132,7 @@ export async function* streamAnthropic(connection, apiKey, messages, options, si
     try { reader.releaseLock(); } catch (e) {}
   }
   if (!hasContent) {
-    const err = new Error("Empty response from provider");
+    const err: any = new Error("Empty response from provider");
     err.category = "empty_response";
     throw err;
   }
@@ -139,7 +140,7 @@ export async function* streamAnthropic(connection, apiKey, messages, options, si
 }
 
 export async function fetchAnthropicModels(base, headers) {
-  const all = [];
+  const all: any[] = [];
   let afterId = null;
   let pageCount = 0;
   const maxPages = 5;

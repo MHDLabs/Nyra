@@ -1,3 +1,4 @@
+import type { NyraEnv } from "../../types/env.js";
 // Fallback orchestration. `tryStreamWithFallback` is the only streaming entry
 // point the rest of the app uses: it resolves the user's route (or, failing
 // that, their ordered connections), walks the plan, and reports terminal
@@ -15,7 +16,7 @@ import { generateAnthropic } from "./anthropic.js";
 import { streamProviderResponse } from "./stream.js";
 import { executeAgentTool, configuredToolDefinitions, isWebSearchConfigured } from "../tools.js";
 
-export async function generateWithConnection(env, connection, messages, options, timeoutMs) {
+export async function generateWithConnection(env: NyraEnv, connection, messages, options, timeoutMs) {
   const timeout = timeoutMs || AI_PRIMARY_ATTEMPT_TIMEOUT_MS;
   if (connection.provider === "workers-ai" || connection.provider === "cloudflare") {
     if (!env.AI || typeof env.AI.run !== "function") throw new Error("Workers AI binding unavailable");
@@ -43,7 +44,7 @@ export async function generateWithConnection(env, connection, messages, options,
 }
 
 /** Execute native tool requests and continue the same provider conversation. */
-export async function generateAgentWithConnection(env, user, connection, messages, options) {
+export async function generateAgentWithConnection(env: NyraEnv, user, connection, messages, options) {
   const provider = connection.provider === "anthropic" ? "anthropic" : "openai-compatible";
   if (provider === "openai-compatible" && /(^|[-/])(o[1-9]|gpt-5)/i.test(connection.model || "")) {
     const unsupported = messages.map(message => ({ ...message }));
@@ -52,7 +53,7 @@ export async function generateAgentWithConnection(env, user, connection, message
   }
   const definitions = (connection.supports_tools === 0)
     ? []
-    : configuredToolDefinitions(provider, env, { allowReact: !!(user && user.is_group) });
+    : (configuredToolDefinitions as any)(provider, env, { allowReact: !!(user && user.is_group) });
   const conversation = messages.map(message => ({ ...message }));
   // When live search is unavailable the model must be told so explicitly. Left
   // to itself it will happily answer "let me search…" and then produce a reply
@@ -101,7 +102,7 @@ export async function generateAgentWithConnection(env, user, connection, message
 
     if (provider === "anthropic") {
       conversation.push({ role: "assistant", content: result.assistantMessage });
-      const toolResults = [];
+      const toolResults: any[] = [];
       for (let callIndex = 0; callIndex < calls.length; callIndex++) {
         const call = calls[callIndex];
         let content;
@@ -153,7 +154,7 @@ export async function* tryAgentWithFallback(env, user, messages, options) {
   }
   const fallbackEnabled = !user || user.fallback_enabled !== 0;
   if (!fallbackEnabled && candidates.length > 1) candidates = candidates.slice(0, 1);
-  let lastError = null;
+  let lastError: any = null;
   for (let i = 0; i < candidates.length; i++) {
     const connection = candidates[i];
     if (Date.now() + 1000 >= deadline) break;
@@ -233,16 +234,16 @@ export async function* tryStreamWithFallback(env, user, messages, options) {
       if (conns[i].is_global === 1 && conns[i].is_default === 1) { primaryConn = conns[i]; break; }
     }
   }
-  const ordered = [];
+  const ordered: any[] = [];
   if (primaryConn) ordered.push(primaryConn);
   for (let i = 0; i < conns.length; i++) {
     if (ordered.indexOf(conns[i]) === -1) ordered.push(conns[i]);
   }
 
-  let lastError = null;
+  let lastError: any = null;
   let lastCategory = "unknown";
-  let lastConn = null;
-  let totalAttempts = 0;
+  let lastConn: any = null;
+  let totalAttempts: number = 0;
   const totalResources = ordered.length;
 
   for (let i = 0; i < ordered.length; i++) {
@@ -250,7 +251,7 @@ export async function* tryStreamWithFallback(env, user, messages, options) {
     const isPrimary = i === 0;
     if (!isPrimary) {
       if (!fallbackEnabled && !isRetryableCategory(lastCategory)) break;
-      if ((conn.consecutive_failures || 0) >= UNHEALTHY_FAILURE_THRESHOLD) continue;
+      if (Number(conn.consecutive_failures || 0) >= Number(UNHEALTHY_FAILURE_THRESHOLD)) continue;
     }
     const budgetRemaining = totalBudgetMs - (Date.now() - budgetStart);
     if (budgetRemaining < 3000) break;
@@ -269,7 +270,7 @@ export async function* tryStreamWithFallback(env, user, messages, options) {
       }
       totalAttempts++;
       const stallTimeout = Math.min(stallTimeoutBase, totalBudgetMs - (Date.now() - budgetStart));
-      let currentUsage = null;
+      let currentUsage: any = null;
       let attemptYielded = false;
 
       try {
@@ -326,21 +327,21 @@ export async function* streamViaRoute(env, user, bundle, messages, options, tota
     yield { type: "error", category: "no_connection", error: null, connection: null, attempts: 0, fallbackUsed: false, partial: false };
     return;
   }
-  const modelIds = [];
+  const modelIds: any[] = [];
   for (let i = 0; i < bundle.models.length; i++) if (modelIds.indexOf(bundle.models[i].model_id) === -1) modelIds.push(bundle.models[i].model_id);
-  const tokenIds = [];
+  const tokenIds: any[] = [];
   for (let i = 0; i < bundle.tokens.length; i++) if (bundle.tokens[i].enabled === 1) tokenIds.push(bundle.tokens[i].token_id);
 
-  let lastError = null;
+  let lastError: any = null;
   let lastCategory = "unknown";
-  let lastConn = null;
-  let totalAttempts = 0;
+  let lastConn: any = null;
+  let totalAttempts: number = 0;
 
   for (let i = 0; i < plan.length; i++) {
     const conn = plan[i];
     const isPrimary = i === 0;
     if (!isPrimary && !fallbackEnabled && !isRetryableCategory(lastCategory)) break;
-    if ((conn.consecutive_failures || 0) >= UNHEALTHY_FAILURE_THRESHOLD) continue;
+    if (Number(conn.consecutive_failures || 0) >= Number(UNHEALTHY_FAILURE_THRESHOLD)) continue;
     if (totalBudgetMs - (Date.now() - budgetStart) < 3000) break;
 
     const maxAttemptsForConn = AI_MAX_RETRYABLE_ATTEMPTS;
@@ -351,7 +352,7 @@ export async function* streamViaRoute(env, user, bundle, messages, options, tota
       if (attempt > 0) await sleep(AI_RETRY_DELAYS_MS[attempt - 1] || 1000);
       totalAttempts++;
       const stallTimeout = Math.min(stallTimeoutBase, totalBudgetMs - (Date.now() - budgetStart));
-      let currentUsage = null;
+      let currentUsage: any = null;
       let attemptYielded = false;
 
       try {
@@ -401,7 +402,7 @@ export async function* streamViaRoute(env, user, bundle, messages, options, tota
   yield { type: "error", category: lastCategory, error: lastError, connection: lastConn, attempts: totalAttempts, fallbackUsed: false, partial: false };
 }
 
-export async function notifyAdminOnError(env, opts) {
+export async function notifyAdminOnError(env: NyraEnv, opts) {
   try {
     const admins = getAdminIds(env);
     if (admins.length === 0) return;
@@ -413,7 +414,7 @@ export async function notifyAdminOnError(env, opts) {
       if (existing === "1") return;
       await env.KV.put(throttleKey, "1", { expirationTtl: ADMIN_NOTIFY_THROTTLE_TTL });
     } catch (err) {}
-    const lines = [];
+    const lines: any[] = [];
     lines.push("🚨 <b>Nyra Error Alert</b>");
     lines.push("");
     if (opts.connection_label) lines.push("<b>Connection:</b> " + escapeHtml(opts.connection_label));

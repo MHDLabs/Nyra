@@ -1,3 +1,4 @@
+import type { NyraEnv } from "../../types/env.js";
 // Nyra — provider layer barrel.
 //
 // `src/ai.js` re-exports this file, so importing "./ai.js" still yields the

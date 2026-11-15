@@ -1,3 +1,4 @@
+import type { NyraEnv } from "../../types/env.js";
 // Provider error taxonomy: turn an opaque network/provider failure into one
 // of a fixed set of categories, and map that category to text the user can
 // actually act on. Kept dependency-free so every other module can import it.
@@ -106,9 +107,9 @@ export function shouldNotifyAdmin(category) {
 export async function parseProviderError(resp) {
   let errText = "";
   try { errText = await resp.text(); } catch (e) {}
-  let parsed = null;
+  let parsed: any = null;
   try { parsed = JSON.parse(errText); } catch (e) {}
-  const err = new Error("HTTP " + resp.status + ": " + truncate(errText, 200));
+  const err: any = new Error("HTTP " + resp.status + ": " + truncate(errText, 200));
   err.status = resp.status;
 
   // Extract Retry-After header for 429/503 responses

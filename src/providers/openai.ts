@@ -1,3 +1,4 @@
+import type { NyraEnv } from "../../types/env.js";
 // OpenAI-compatible provider: /chat/completions (buffered and streamed) and
 // the paginated /models listing. Covers OpenAI itself, OpenRouter, Groq,
 // Together, Fireworks, DeepSeek, Ollama and anything else speaking the same
@@ -8,7 +9,7 @@ import { parseProviderError, normalizeError } from "./errors.js";
 import { toOpenAIContent } from "./content.js";
 
 export function buildProviderHeaders(provider, apiKey, baseUrl) {
-  const headers = { "Content-Type": "application/json" };
+  const headers: any = { "Content-Type": "application/json" };
   if (provider === "anthropic") {
     headers["x-api-key"] = apiKey;
     headers["anthropic-version"] = ANTHROPIC_VERSION;
@@ -27,14 +28,14 @@ export async function generateOpenAICompatible(connection, apiKey, messages, opt
   const model = connection.model;
   const isReasoning = /(^|[-/])(o[1-9]|gpt-5)/i.test(model);
   const allowImages = connection.supports_vision === 1;
-  const finalMessages = messages.map(function (m) {
+  const finalMessages = messages.map(function (m: any) {
     const role = isReasoning && m.role === "system" ? "developer" : m.role;
-    const mapped = { role: role, content: toOpenAIContent(m.content, allowImages) };
+    const mapped: any = { role: role, content: toOpenAIContent(m.content, allowImages) };
     if (Array.isArray(m.tool_calls)) mapped.tool_calls = m.tool_calls;
     if (m.tool_call_id) mapped.tool_call_id = m.tool_call_id;
     return mapped;
   });
-  const body = { model: model, messages: finalMessages };
+  const body: any = { model: model, messages: finalMessages };
   if (options && options.max_tokens) {
     if (isReasoning) body.max_completion_tokens = options.max_tokens;
     else body.max_tokens = options.max_tokens;
@@ -54,12 +55,12 @@ export async function generateOpenAICompatible(connection, apiKey, messages, opt
   let data;
   try { data = await resp.json(); }
   catch (e) {
-    const err = new Error("Unexpected response format: invalid JSON");
+    const err: any = new Error("Unexpected response format: invalid JSON");
     err.category = "unexpected_format";
     throw err;
   }
   if (!data || !data.choices || !data.choices[0] || !data.choices[0].message) {
-    const err = new Error("Unexpected response format");
+    const err: any = new Error("Unexpected response format");
     err.category = "unexpected_format";
     throw err;
   }
@@ -67,7 +68,7 @@ export async function generateOpenAICompatible(connection, apiKey, messages, opt
   const toolCalls = Array.isArray(assistant.tool_calls) ? assistant.tool_calls : [];
   const text = assistant.content;
   if (toolCalls.length) {
-    const usage = { in: 0, out: 0, source: "unavailable" };
+    const usage: any = { in: 0, out: 0, source: "unavailable" };
     if (data.usage) {
       usage.in = data.usage.prompt_tokens || 0;
       usage.out = data.usage.completion_tokens || 0;
@@ -76,11 +77,11 @@ export async function generateOpenAICompatible(connection, apiKey, messages, opt
     return { text: typeof text === "string" ? text : "", toolCalls, assistantMessage: assistant, usage };
   }
   if (!text || (typeof text === "string" && text.trim().length === 0)) {
-    const err = new Error("Empty response from provider");
+    const err: any = new Error("Empty response from provider");
     err.category = "empty_response";
     throw err;
   }
-  const usage = { in: 0, out: 0, source: "unavailable" };
+  const usage: any = { in: 0, out: 0, source: "unavailable" };
   if (data.usage) {
     if (data.usage.prompt_tokens !== undefined || data.usage.completion_tokens !== undefined) {
       usage.in = data.usage.prompt_tokens || 0;
@@ -98,14 +99,14 @@ export async function* streamOpenAICompatible(connection, apiKey, messages, opti
   const model = connection.model;
   const isReasoning = /(^|[-/])(o[1-9]|gpt-5)/i.test(model);
   const allowImages = connection.supports_vision === 1;
-  const finalMessages = messages.map(function (m) {
+  const finalMessages = messages.map(function (m: any) {
     const role = isReasoning && m.role === "system" ? "developer" : m.role;
-    const mapped = { role: role, content: toOpenAIContent(m.content, allowImages) };
+    const mapped: any = { role: role, content: toOpenAIContent(m.content, allowImages) };
     if (Array.isArray(m.tool_calls)) mapped.tool_calls = m.tool_calls;
     if (m.tool_call_id) mapped.tool_call_id = m.tool_call_id;
     return mapped;
   });
-  const body = { model: model, messages: finalMessages, stream: true };
+  const body: any = { model: model, messages: finalMessages, stream: true };
   if (options && options.max_tokens) {
     if (isReasoning) body.max_completion_tokens = options.max_tokens;
     else body.max_tokens = options.max_tokens;
@@ -124,14 +125,14 @@ export async function* streamOpenAICompatible(connection, apiKey, messages, opti
   });
   if (!resp.ok) throw await parseProviderError(resp);
   if (!resp.body) {
-    const err = new Error("No response body");
+    const err: any = new Error("No response body");
     err.category = "unexpected_format";
     throw err;
   }
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  const usage = { in: 0, out: 0, source: "unavailable" };
+  const usage: any = { in: 0, out: 0, source: "unavailable" };
   let hasContent = false;
   try {
     while (true) {
@@ -165,7 +166,7 @@ export async function* streamOpenAICompatible(connection, apiKey, messages, opti
     try { reader.releaseLock(); } catch (e) {}
   }
   if (!hasContent) {
-    const err = new Error("Empty response from provider");
+    const err: any = new Error("Empty response from provider");
     err.category = "empty_response";
     throw err;
   }
@@ -173,7 +174,7 @@ export async function* streamOpenAICompatible(connection, apiKey, messages, opti
 }
 
 export async function fetchOpenAICompatibleModels(base, headers) {
-  const all = [];
+  const all: any[] = [];
   let afterId = null;
   let pageCount = 0;
   const maxPages = 5;
@@ -192,7 +193,7 @@ export async function fetchOpenAICompatibleModels(base, headers) {
       let data;
       try { data = await resp.json(); }
       catch (e) { break; }
-      let raw = [];
+      let raw: any[] = [];
       if (Array.isArray(data)) raw = data;
       else if (data && Array.isArray(data.data)) raw = data.data;
       else if (data && Array.isArray(data.models)) raw = data.models;
