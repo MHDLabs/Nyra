@@ -1,3 +1,4 @@
+import type { NyraEnv } from "../../types/env.js";
 // Internal content -> provider wire shapes. The contract is documented on
 // `toOpenAIContent` below; `toAnthropicContent` reshapes the same internal
 // form for the Anthropic Messages API.
@@ -13,7 +14,7 @@
 export function toOpenAIContent(content, allowImages) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return typeof content === "string" ? content : "";
-  const parts = [];
+  const parts: any[] = [];
   for (let i = 0; i < content.length; i++) {
     const p = content[i];
     if (!p) continue;
@@ -33,7 +34,7 @@ export function toOpenAIContent(content, allowImages) {
 export function toAnthropicContent(content, allowImages) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
-  const parts = [];
+  const parts: any[] = [];
   for (let i = 0; i < content.length; i++) {
     const p = content[i];
     if (!p) continue;

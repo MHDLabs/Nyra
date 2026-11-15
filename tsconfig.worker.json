@@ -32,7 +32,8 @@
     "src/core/**/*.ts",
     "src/ts-smoke/**/*.ts",
     "types/**/*.ts",
-    "worker-configuration.d.ts"
+    "worker-configuration.d.ts",
+    "src/providers/**/*.ts"
   ],
   "exclude": [
     "node_modules",
