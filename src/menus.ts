@@ -243,28 +243,33 @@ export function sourceSuffix(source) {
   return source === "adm" ? ":adm" : "";
 }
 
-export function sourceBackButton(source) {
-  if (source === "adm") return { text: "◀ Admin", callback_data: "adm:main" };
-  return { text: "Back", callback_data: "set:menu" };
+export function sourceBackButton(source, fa) {
+  if (source === "adm") return { text: fa ? "◀ مدیریت" : "◀ Admin", callback_data: "adm:main" };
+  return { text: fa ? "بازگشت" : "Back", callback_data: "set:menu" };
 }
 
 export async function showMyConnections(env, chatId, messageId, userId, source) {
+  const user = await getUser(env, userId);
+  const fa = !!(user && String(user.locale || "").indexOf("fa") === 0);
+  const rtl = fa ? "\u200F" : "";
   if (!isAdmin(env, userId)) {
-    await editMessage(env, chatId, messageId, "Only administrators can manage models.", buildInlineKeyboard([[sourceBackButton(source)]]), "HTML");
+    await editMessage(env, chatId, messageId, rtl + (fa ? "فقط مدیران می‌توانند مدل‌ها را مدیریت کنند." : "Only administrators can manage models."), buildInlineKeyboard([[sourceBackButton(source, fa)]]), "HTML");
     return;
   }
   const sfx = sourceSuffix(source);
   const conns = await getUserConnections(env, userId);
-  const lines = ["<b>Manage Models</b>", "", "<i>These models are shared with all users.</i>", "<i>⚡ Fast marks a model as high-speed: its replies skip the queue and answer immediately.</i>", ""];
+  const lines = fa
+    ? ["<b>مدیریت مدل‌ها</b>", "", "<i>این مدل‌ها با همه کاربران به‌اشتراک گذاشته می‌شوند.</i>", "<i>⚡ پرچسب سریع یعنی پاسخ بدون صف و فوری.</i>", ""]
+    : ["<b>Manage Models</b>", "", "<i>These models are shared with all users.</i>", "<i>⚡ Fast marks a model as high-speed: its replies skip the queue and answer immediately.</i>", ""];
   const rows: any[] = [];
   if (conns.length === 0) {
-    lines.push("No models yet.");
-    rows.push([{ text: "➕ Add Model", callback_data: "myconn:add" + sfx }]);
+    lines.push(fa ? "هنوز مدلی نیست." : "No models yet.");
+    rows.push([{ text: fa ? "➕ افزودن مدل" : "➕ Add Model", callback_data: "myconn:add" + sfx }]);
   } else {
     for (let i = 0; i < conns.length; i++) {
       const c = conns[i];
       const enabledMark = c.enabled === 1 ? "✓" : "✗";
-      const globalMark = c.is_global === 1 ? " [Global]" : " [Personal]";
+      const globalMark = c.is_global === 1 ? (fa ? " [عمومی]" : " [Global]") : (fa ? " [شخصی]" : " [Personal]");
       const defaultMark = c.is_default === 1 ? " ★" : "";
       const fastMark = c.is_fast === 1 ? " ⚡" : "";
       const visionMark = c.supports_vision === 1 ? " 🖼" : "";
@@ -273,20 +278,20 @@ export async function showMyConnections(env, chatId, messageId, userId, source) 
       lines.push("   " + escapeHtml(c.provider) + " / <code>" + escapeHtml(c.model) + "</code>");
       const shortId = safeCallbackId(c.connection_id);
       rows.push([
-        { text: "🧪 Test", callback_data: "myconn:test:" + shortId + sfx },
-        { text: "✏️ Edit", callback_data: "myconn:edit:" + shortId + sfx },
-        { text: c.enabled === 1 ? "⏸ Disable" : "▶️ Enable", callback_data: "myconn:tog:" + shortId + sfx }
+        { text: fa ? "🧪 تست" : "🧪 Test", callback_data: "myconn:test:" + shortId + sfx },
+        { text: fa ? "✏️ ویرایش" : "✏️ Edit", callback_data: "myconn:edit:" + shortId + sfx },
+        { text: c.enabled === 1 ? (fa ? "⏸ غیرفعال" : "⏸ Disable") : (fa ? "▶️ فعال" : "▶️ Enable"), callback_data: "myconn:tog:" + shortId + sfx }
       ]);
       const row2: any[] = [];
-      if (c.is_global === 1 && c.is_default !== 1) row2.push({ text: "⭐ Set Default", callback_data: "myconn:def:" + shortId + sfx });
-      row2.push({ text: c.is_fast === 1 ? "⚡ Fast: On" : "⚡ Fast: Off", callback_data: "myconn:fast:" + shortId + sfx });
-      row2.push({ text: c.supports_vision === 1 ? "🖼 Images: On" : "🖼 Images: Off", callback_data: "myconn:vision:" + shortId + sfx });
+      if (c.is_global === 1 && c.is_default !== 1) row2.push({ text: fa ? "⭐ پیش‌فرض" : "⭐ Set Default", callback_data: "myconn:def:" + shortId + sfx });
+      row2.push({ text: c.is_fast === 1 ? (fa ? "⚡ سریع: روشن" : "⚡ Fast: On") : (fa ? "⚡ سریع: خاموش" : "⚡ Fast: Off"), callback_data: "myconn:fast:" + shortId + sfx });
+      row2.push({ text: c.supports_vision === 1 ? (fa ? "🖼 تصویر: روشن" : "🖼 Images: On") : (fa ? "🖼 تصویر: خاموش" : "🖼 Images: Off"), callback_data: "myconn:vision:" + shortId + sfx });
       rows.push(row2);
       rows.push([{ text: "🗑 Delete", callback_data: "myconn:del:" + shortId + sfx }]);
     }
     rows.push([{ text: "➕ Add Model", callback_data: "myconn:add" + sfx }]);
   }
-  rows.push([sourceBackButton(source)]);
+  rows.push([sourceBackButton(source, fa)]);
   await editMessage(env, chatId, messageId, lines.join("\n"), buildInlineKeyboard(rows), "HTML");
 }
 
@@ -298,7 +303,7 @@ export async function resolveUserConnectionShortId(env, userId, shortId) {
 
 export async function showRoutesList(env, chatId, messageId, userId, source) {
   if (!isAdmin(env, userId)) {
-    await editMessage(env, chatId, messageId, "Only administrators can manage routes.", buildInlineKeyboard([[sourceBackButton(source)]]), "HTML");
+    await editMessage(env, chatId, messageId, "Only administrators can manage routes.", buildInlineKeyboard([[sourceBackButton(source, false)]]), "HTML");
     return;
   }
   const user = await getUser(env, userId);
@@ -324,13 +329,13 @@ export async function showRoutesList(env, chatId, messageId, userId, source) {
     }
     rows.push([{ text: "➕ Add Route", callback_data: "route:add" }]);
   }
-  rows.push([sourceBackButton(source)]);
+  rows.push([sourceBackButton(source, fa)]);
   await editMessage(env, chatId, messageId, lines.join("\n"), buildInlineKeyboard(rows), "HTML");
 }
 
 export async function showRouteDetail(env, chatId, messageId, userId, routeId, source) {
   if (!isAdmin(env, userId)) {
-    await editMessage(env, chatId, messageId, "Only administrators can manage routes.", buildInlineKeyboard([[sourceBackButton(source)]]), "HTML");
+    await editMessage(env, chatId, messageId, "Only administrators can manage routes.", buildInlineKeyboard([[sourceBackButton(source, false)]]), "HTML");
     return;
   }
   const route = await getRouteById(env, userId, routeId);
@@ -383,31 +388,34 @@ export async function resolveRouteItemShortId(env, routeId, shortId) {
 }
 
 export async function showPersonalModelsMenu(env, chatId, messageId, userId) {
+  const user = await getUser(env, userId);
+  const fa = !!(user && String(user.locale || "").indexOf("fa") === 0);
+  const rtl = fa ? "\u200F" : "";
   if (isAdmin(env, userId)) {
-    await editMessage(env, chatId, messageId, "Administrators manage shared models via Manage Models.", buildInlineKeyboard([[{ text: "Back", callback_data: "set:menu" }]]), "HTML");
+    await editMessage(env, chatId, messageId, rtl + (fa ? "مدیران مدل‌های اشتراکی را از «مدیریت مدل‌ها» تنظیم می‌کنند." : "Administrators manage shared models via Manage Models."), buildInlineKeyboard([[{ text: fa ? "بازگشت" : "Back", callback_data: "set:menu" }]]), "HTML");
     return;
   }
   const allowed = await isPersonalModelsAllowed(env);
-  const lines = ["<b>My Personal Models</b>", ""];
+  const lines = [fa ? "<b>مدل‌های شخصی من</b>" : "<b>My Personal Models</b>", ""];
   const rows: any[] = [];
   if (!allowed) {
-    lines.push("Personal models are currently disabled by the administrator.");
-    rows.push([{ text: "Back", callback_data: "set:menu" }]);
-    await editMessage(env, chatId, messageId, lines.join("\n"), buildInlineKeyboard(rows), "HTML");
+    lines.push(fa ? "مدل‌های شخصی فعلاً توسط مدیر غیرفعال است." : "Personal models are currently disabled by the administrator.");
+    rows.push([{ text: fa ? "بازگشت" : "Back", callback_data: "set:menu" }]);
+    await editMessage(env, chatId, messageId, rtl + lines.join("\n"), buildInlineKeyboard(rows), "HTML");
     return;
   }
   const limit = await getPersonalModelLimit(env);
   const mine = (await getUserConnections(env, userId)).filter(function (c) { return c.is_global === 0; });
-  lines.push("You can add up to " + limit + " personal models. Used: " + mine.length + "/" + limit + ".");
+  lines.push(fa ? ("تا " + limit + " مدل شخصی می‌توانید اضافه کنید. استفاده‌شده: " + mine.length + "/" + limit + ".") : ("You can add up to " + limit + " personal models. Used: " + mine.length + "/" + limit + "."));
   lines.push("");
-  if (mine.length === 0) lines.push("No personal models yet.");
+  if (mine.length === 0) lines.push(fa ? "هنوز مدل شخصی ندارید." : "No personal models yet.");
   for (let i = 0; i < mine.length; i++) {
     const c = mine[i];
     lines.push((c.enabled === 1 ? "✓ " : "✗ ") + "<b>" + escapeHtml(c.label) + "</b> — <code>" + escapeHtml(c.model) + "</code>");
     const shortId = safeCallbackId(c.connection_id);
     rows.push([{ text: "✏️ " + truncate(c.label, 24), callback_data: "mypersonal:edit:" + shortId }, { text: "🗑", callback_data: "mypersonal:del:" + shortId }]);
   }
-  if (mine.length < limit) rows.push([{ text: "➕ Add Personal Model", callback_data: "mypersonal:add" }]);
-  rows.push([{ text: "Back", callback_data: "set:menu" }]);
+  if (mine.length < limit) rows.push([{ text: fa ? "➕ افزودن مدل شخصی" : "➕ Add Personal Model", callback_data: "mypersonal:add" }]);
+  rows.push([{ text: fa ? "بازگشت" : "Back", callback_data: "set:menu" }]);
   await editMessage(env, chatId, messageId, lines.join("\n"), buildInlineKeyboard(rows), "HTML");
 }
