@@ -298,3 +298,178 @@ test("an array JSON body is treated as an empty object", async () => {
     "/api/user/memory");
   assert.notEqual(res.status, 500);
 });
+
+
+/** Recording D1 stub for proving invalid query input never reaches a handler. */
+function recordingDB() {
+  const calls = [];
+  return {
+    calls,
+    prepare(sql) {
+      let args = [];
+      return {
+        bind(...values) { args = values; return this; },
+        async first() {
+          calls.push({ kind: "first", sql, args: args.slice() });
+          if (/COUNT\\(\\*\\) as count/i.test(sql)) return { count: 0 };
+          if (/COUNT\\(\\*\\) as total/i.test(sql)) return { total: 0 };
+          return null;
+        },
+        async all() {
+          calls.push({ kind: "all", sql, args: args.slice() });
+          return { results: [] };
+        },
+        async run() {
+          calls.push({ kind: "run", sql, args: args.slice() });
+          return { success: true, meta: { changes: 1 } };
+        }
+      };
+    }
+  };
+}
+
+const PAGE_QUERY_ROUTES = [
+  ["/api/admin/users", 50],
+  ["/api/admin/chats", 50],
+  ["/api/admin/broadcasts", 20],
+  ["/api/admin/failed-updates", 200]
+];
+
+async function callAdminRoute(pathAndQuery, path, env) {
+  return routeMiniAppAPI(
+    env,
+    ctx,
+    req(pathAndQuery, { initData: initDataFor(ADMIN_ID) }),
+    path
+  );
+}
+
+test("admin pagination rejects malformed, signed, fractional, and unsafe page values", async () => {
+  const invalidValues = ["2abc", "1.5", "-1", "+2", "2e1", "NaN", "9007199254740992"];
+  for (const [path] of PAGE_QUERY_ROUTES) {
+    for (const value of invalidValues) {
+      const db = recordingDB();
+      const env = fakeEnv();
+      env.DB = db;
+      const queryPath = path + "?page=" + encodeURIComponent(value);
+      const response = await callAdminRoute(queryPath, path, env);
+      assert.equal(response.status, 400, queryPath);
+      assert.deepEqual(await response.json(), { error: "Invalid page" }, queryPath);
+      assert.equal(db.calls.length, 0, "invalid page must be rejected before database access: " + queryPath);
+    }
+
+    const db = recordingDB();
+    const env = fakeEnv();
+    env.DB = db;
+    const duplicatePath = path + "?page=1&page=2";
+    const duplicate = await callAdminRoute(duplicatePath, path, env);
+    assert.equal(duplicate.status, 400, duplicatePath);
+    assert.equal(db.calls.length, 0, "duplicate page parameter must not reach the database");
+  }
+});
+
+test("DLQ pagination rejects invalid limits and unsafe offsets", async () => {
+  for (const value of ["0", "-1", "+5", "1.5", "50items", "9007199254740992"]) {
+    const db = recordingDB();
+    const env = fakeEnv();
+    env.DB = db;
+    const queryPath = "/api/admin/failed-updates?limit=" + encodeURIComponent(value);
+    const response = await callAdminRoute(queryPath, "/api/admin/failed-updates", env);
+    assert.equal(response.status, 400, queryPath);
+    assert.deepEqual(await response.json(), { error: "Invalid limit" }, queryPath);
+    assert.equal(db.calls.length, 0, "invalid limit must be rejected before database access");
+  }
+
+  const duplicateEnv = fakeEnv();
+  const duplicateDb = recordingDB();
+  duplicateEnv.DB = duplicateDb;
+  const duplicate = await callAdminRoute(
+    "/api/admin/failed-updates?limit=50&limit=100",
+    "/api/admin/failed-updates",
+    duplicateEnv
+  );
+  assert.equal(duplicate.status, 400);
+  assert.deepEqual(await duplicate.json(), { error: "Invalid limit" });
+  assert.equal(duplicateDb.calls.length, 0);
+
+  const overflowEnv = fakeEnv();
+  const overflowDb = recordingDB();
+  overflowEnv.DB = overflowDb;
+  const overflow = await callAdminRoute(
+    "/api/admin/failed-updates?page=45035996273705&limit=200",
+    "/api/admin/failed-updates",
+    overflowEnv
+  );
+  assert.equal(overflow.status, 400);
+  assert.deepEqual(await overflow.json(), { error: "Invalid page" });
+  assert.equal(overflowDb.calls.length, 0);
+});
+
+test("admin usage reports reject invalid and excessive days values", async () => {
+  const routes = ["/api/admin/connection-usage", "/api/admin/shared-usage"];
+  const invalidValues = ["0", "-1", "1.5", "7days", "3651", "9007199254740992"];
+  for (const path of routes) {
+    for (const value of invalidValues) {
+      const db = recordingDB();
+      const env = fakeEnv();
+      env.DB = db;
+      const queryPath = path + "?days=" + encodeURIComponent(value);
+      const response = await callAdminRoute(queryPath, path, env);
+      assert.equal(response.status, 400, queryPath);
+      assert.deepEqual(await response.json(), { error: "Invalid days" }, queryPath);
+      assert.equal(db.calls.length, 0, "invalid days must be rejected before database access");
+    }
+
+    const db = recordingDB();
+    const env = fakeEnv();
+    env.DB = db;
+    const duplicatePath = path + "?days=7&days=30";
+    const duplicate = await callAdminRoute(duplicatePath, path, env);
+    assert.equal(duplicate.status, 400, duplicatePath);
+    assert.equal(db.calls.length, 0);
+  }
+});
+
+test("valid page and limit values reach pagination handlers as bounded integers", async () => {
+  const cases = [
+    { path: "/api/admin/users?page=2", route: "/api/admin/users", expected: [50, 100], sql: "FROM users" },
+    { path: "/api/admin/chats?page=2", route: "/api/admin/chats", expected: [50, 100], sql: "FROM chats" },
+    { path: "/api/admin/broadcasts?page=2", route: "/api/admin/broadcasts", expected: [20, 40], sql: "FROM broadcasts" },
+    { path: "/api/admin/failed-updates?page=2&limit=201", route: "/api/admin/failed-updates", expected: [200, 400], sql: "FROM failed_updates" }
+  ];
+
+  for (const item of cases) {
+    const db = recordingDB();
+    const env = fakeEnv();
+    env.DB = db;
+    const response = await callAdminRoute(item.path, item.route, env);
+    assert.equal(response.status, 200, item.path);
+    const listQuery = db.calls.find(call => call.kind === "all" && call.sql.includes(item.sql) && call.sql.includes("LIMIT"));
+    assert.ok(listQuery, "expected paginated query for " + item.path);
+    assert.deepEqual(listQuery.args, item.expected, item.path);
+  }
+});
+
+test("empty pagination values preserve the default page", async () => {
+  const db = recordingDB();
+  const env = fakeEnv();
+  env.DB = db;
+  const response = await callAdminRoute("/api/admin/users?page=", "/api/admin/users", env);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.page, 0);
+  const listQuery = db.calls.find(call => call.kind === "all" && call.sql.includes("FROM users") && call.sql.includes("LIMIT"));
+  assert.deepEqual(listQuery.args, [50, 0]);
+});
+
+test("usage day limit accepts its documented upper bound", async () => {
+  for (const path of ["/api/admin/connection-usage", "/api/admin/shared-usage"]) {
+    const db = recordingDB();
+    const env = fakeEnv();
+    env.DB = db;
+    const response = await callAdminRoute(path + "?days=3650", path, env);
+    assert.equal(response.status, 200, path);
+    const body = await response.json();
+    assert.equal(body.days, 3650, path);
+  }
+});
