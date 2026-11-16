@@ -37,7 +37,8 @@ test("safeErrorMessage redacts credentials and caps public messages", () => {
   const safe = safeErrorMessage("Provider rejected " + FAKE_API_KEY, 502);
   assert.ok(!safe.includes(FAKE_API_KEY));
   assert.ok(safe.includes("[REDACTED]"));
-  const long = safeErrorMessage("x".repeat(MAX_ERROR_MESSAGE_LENGTH + 20), 400);
+  // Spaced words avoid matching the long-token redaction rules.
+  const long = safeErrorMessage("ordinary words ".repeat(30), 400);
   assert.equal(long.length, MAX_ERROR_MESSAGE_LENGTH);
   assert.ok(long.endsWith("…"));
 });
