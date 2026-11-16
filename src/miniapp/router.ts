@@ -1,8 +1,8 @@
-// @ts-nocheck — Task 9 progressive UI surface; contracts in types/miniapp.ts
 // The Mini App's HTTP surface: one flat route table over `pathname`, with the
 // authentication gate, the rate limiter and the admin gate applied before any
 // handler runs. Kept as one table so the API contract is readable in one place
 // — the handlers themselves are grouped by domain in sibling files.
+import type { NyraEnv } from "../../types/env.js";
 import { isAdmin, checkRateLimit } from "../utils.js";
 import { RATE_LIMIT_ADMIN_PER_MIN, RATE_LIMIT_USER_PER_MIN } from "../config.js";
 import { extractInitData, handleAuth } from "./auth.js";
@@ -22,15 +22,55 @@ import {
 } from "./automations.js";
 import { jsonOk, jsonError } from "./respond.js";
 
-/** Read a JSON body without throwing on malformed input. */
-async function readBody(request) {
+const DEFAULT_PAGE = 0;
+const DEFAULT_DLQ_LIMIT = 50;
+const MAX_DLQ_LIMIT = 200;
+const MAX_USAGE_DAYS = 3650;
+
+type JsonBody = Record<string, unknown>;
+
+/** Read a JSON object body without throwing on malformed input. */
+async function readBody(request: Request): Promise<JsonBody> {
   try {
-    const body = await request.json();
+    const body: unknown = await request.json();
     if (!body || typeof body !== "object" || Array.isArray(body)) return {};
-    return body;
-  } catch (err) {
+    return body as JsonBody;
+  } catch {
     return {};
   }
+}
+
+/**
+ * Parse one unsigned decimal query parameter.
+ * Missing/empty values retain the route's historical default. Repeated,
+ * partially numeric, fractional, signed, and unsafe integer values are rejected.
+ */
+function parseQueryInteger(url: URL, name: string, fallback: number): number | null {
+  const values = url.searchParams.getAll(name);
+  if (values.length === 0 || (values.length === 1 && values[0] === "")) return fallback;
+  if (values.length !== 1) return null;
+
+  const raw = values[0];
+  if (!/^\d+$/.test(raw)) return null;
+
+  const value = Number(raw);
+  return Number.isSafeInteger(value) ? value : null;
+}
+
+/** Validate that page * pageSize and the end offset remain safe integers. */
+function parsePage(url: URL, pageSize: number): number | null {
+  const page = parseQueryInteger(url, "page", DEFAULT_PAGE);
+  if (page === null) return null;
+
+  const maxPage = Math.floor((Number.MAX_SAFE_INTEGER - pageSize) / pageSize);
+  return page <= maxPage ? page : null;
+}
+
+/** Validate a positive bounded usage-report window. */
+function parseUsageDays(url: URL): number | null {
+  const days = parseQueryInteger(url, "days", 7);
+  if (days === null || days < 1 || days > MAX_USAGE_DAYS) return null;
+  return days;
 }
 
 /**
@@ -40,7 +80,7 @@ async function readBody(request) {
  * collapsed, encoded separators rejected) so a stray slash reaches the same
  * handler while a crafted path can never bypass the admin gate.
  */
-export async function routeMiniAppAPI(env, ctx, request, pathname) {
+export async function routeMiniAppAPI(env: NyraEnv, ctx: ExecutionContext, request: Request, pathname?: string): Promise<Response> {
   const url = new URL(request.url);
   let path = pathname || url.pathname || "";
   // Reject encoded path separators/dot segments instead of decoding them into a
@@ -67,7 +107,7 @@ export async function routeMiniAppAPI(env, ctx, request, pathname) {
     const validated = extractInitData(request, env);
     if (!validated) return jsonError(401, "Unauthorized");
 
-    const userId = validated.userId;
+    const userId: string | number = validated.userId;
 
     // Localization dictionary for the Mini App
     if (path === "/api/i18n" && request.method === "GET") {
@@ -179,18 +219,21 @@ export async function routeMiniAppAPI(env, ctx, request, pathname) {
       }
 
       if (path === "/api/admin/users" && request.method === "GET") {
-        const page = parseInt(url.searchParams.get("page") || "0", 10);
+        const page = parsePage(url, 50);
+        if (page === null) return jsonError(400, "Invalid page");
         return await handleAdminUsers(env, page);
       }
 
       if (path === "/api/admin/chats" && request.method === "GET") {
-        const page = parseInt(url.searchParams.get("page") || "0", 10);
+        const page = parsePage(url, 50);
+        if (page === null) return jsonError(400, "Invalid page");
         return await handleAdminChats(env, page);
       }
 
       // Broadcast management
       if (path === "/api/admin/broadcasts" && request.method === "GET") {
-        const page = parseInt(url.searchParams.get("page") || "0", 10);
+        const page = parsePage(url, 20);
+        if (page === null) return jsonError(400, "Invalid page");
         return await handleAdminBroadcasts(env, page);
       }
 
@@ -221,8 +264,11 @@ export async function routeMiniAppAPI(env, ctx, request, pathname) {
 
       // Failed updates (DLQ) management
       if (path === "/api/admin/failed-updates" && request.method === "GET") {
-        const page = parseInt(url.searchParams.get("page") || "0", 10);
-        const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+        const limit = parseQueryInteger(url, "limit", DEFAULT_DLQ_LIMIT);
+        if (limit === null || limit < 1) return jsonError(400, "Invalid limit");
+        const effectiveLimit = Math.min(limit, MAX_DLQ_LIMIT);
+        const page = parsePage(url, effectiveLimit);
+        if (page === null) return jsonError(400, "Invalid page");
         return await handleAdminFailedUpdates(env, page, limit);
       }
 
@@ -233,14 +279,16 @@ export async function routeMiniAppAPI(env, ctx, request, pathname) {
 
       // Connection usage metrics
       if (path === "/api/admin/connection-usage" && request.method === "GET") {
-        const days = parseInt(url.searchParams.get("days") || "7", 10);
+        const days = parseUsageDays(url);
+        if (days === null) return jsonError(400, "Invalid days");
         return await handleAdminConnectionUsage(env, days);
       }
 
       // Shared-service quota usage (per-user daily requests and tokens)
       if (path === "/api/admin/shared-usage" && request.method === "GET") {
-        const days = parseInt(url.searchParams.get("days") || "7", 10);
-        return await handleAdminSharedUsage(env, Number.isFinite(days) ? days : 7);
+        const days = parseUsageDays(url);
+        if (days === null) return jsonError(400, "Invalid days");
+        return await handleAdminSharedUsage(env, days);
       }
 
       // Fast / vision capability switches for global connections
