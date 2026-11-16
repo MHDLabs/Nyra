@@ -11,6 +11,15 @@ import { isWebSearchConfigured, configuredToolDefinitions } from "../src/tools.j
 
 const originalFetch = globalThis.fetch;
 
+function requestHost(input) {
+  try {
+    return new URL(String(input)).hostname;
+  } catch {
+    return "";
+  }
+}
+
+
 function restoreFetch() {
   globalThis.fetch = originalFetch;
 }
@@ -157,10 +166,10 @@ test("searchWeb merges engines, dedupes URLs, and tolerates one failure", async 
 
   globalThis.fetch = async (input) => {
     const u = String(input);
-    if (u.includes("duckduckgo")) {
+    if (requestHost(u).includes("duckduckgo") || String(input).includes("duckduckgo")) {
       return new Response(ddgBody, { status: 200, headers: { "Content-Type": "text/html" } });
     }
-    if (u.includes("bing.com")) {
+    if (requestHost(u) === "www.bing.com" || requestHost(u).endsWith(".bing.com") || requestHost(u) === "bing.com") {
       return new Response(bingBody, { status: 200, headers: { "Content-Type": "text/html" } });
     }
     return new Response("nope", { status: 404 });
@@ -181,8 +190,8 @@ test("searchWeb merges engines, dedupes URLs, and tolerates one failure", async 
 test("searchWeb returns Bing results when DuckDuckGo fails", async () => {
   globalThis.fetch = async (input) => {
     const u = String(input);
-    if (u.includes("duckduckgo")) throw new Error("network");
-    if (u.includes("bing.com")) {
+    if (requestHost(u).includes("duckduckgo") || String(input).includes("duckduckgo")) throw new Error("network");
+    if (requestHost(u) === "www.bing.com" || requestHost(u).endsWith(".bing.com") || requestHost(u) === "bing.com") {
       const body = `<li class="b_algo"><h2><a href="https://only-bing.example/">B</a></h2>
 <div class="b_caption"><p>ok</p></div></li>`;
       return new Response(body, { status: 200 });

@@ -153,7 +153,8 @@ test("encoding helpers", () => {
 test("provider url helpers", () => {
   assert.equal(isOpenRouterUrl("https://openrouter.ai/api/v1"), true);
   assert.equal(isOpenRouterUrl("https://example.com"), false);
-  assert.ok(normalizeBaseUrl("openai", "https://api.openai.com/v1/chat/completions").includes("api.openai.com"));
+  const normalized = normalizeBaseUrl("openai", "https://api.openai.com/v1/chat/completions");
+  assert.equal(new URL(normalized).hostname, "api.openai.com");
 });
 
 test("text helpers stripTelegramHtml containsNyraWord escapeRegex", () => {
