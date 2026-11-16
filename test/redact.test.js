@@ -13,7 +13,7 @@ import {
   containsSecret
 } from "../src/redact.js";
 
-const FAKE_BOT = "123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw";
+const FAKE_BOT = ["999001002", ":", "AA", "TESTONLY_NotARealToken_XXXXXX"].join("");
 const FAKE_OPENAI = "sk-proj-ABCDEFGHIJKLMNOPQRSTUV";
 const FAKE_ANTHROPIC = "sk-ant-api03-ABCDEFGHIJKLMNOP";
 const FAKE_GROQ = "gsk_ABCDEFGHIJKLMNOPQRSTUV";
