@@ -51,7 +51,7 @@ function parseQueryInteger(url: URL, name: string, fallback: number): number | n
   if (values.length !== 1) return null;
 
   const raw = values[0];
-  if (!/^\\d+$/.test(raw)) return null;
+  if (!/^\d+$/.test(raw)) return null;
 
   const value = Number(raw);
   return Number.isSafeInteger(value) ? value : null;
