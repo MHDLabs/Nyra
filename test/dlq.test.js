@@ -141,7 +141,7 @@ import { cleanupOldFailedUpdates, logFailedUpdate } from "../src/dlq.js";
 import { REDACTED } from "../src/redact.js";
 
 test("listFailedUpdates redacts secrets in message_text and error_info", async () => {
-  const secret = "123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw";
+  const secret = ["999001002", ":", "AA", "TESTONLY_NotARealToken_XXXXXX"].join("");
   const body = { update_id: 1, message: { text: "token " + secret } };
   const env = fakeEnv([
     row({
@@ -154,7 +154,7 @@ test("listFailedUpdates redacts secrets in message_text and error_info", async (
   const storedBefore = env.store[0].error_info;
   const { items } = await listFailedUpdates(env, 20, 0);
   assert.ok(!items[0].message_text.includes(secret));
-  assert.ok(items[0].message_text.includes(REDACTED) || items[0].message_text.indexOf("123456789") === -1);
+  assert.ok(items[0].message_text.includes(REDACTED) || items[0].message_text.indexOf("999001002") === -1);
   assert.ok(!items[0].error_info.includes(secret));
   assert.equal(env.store[0].error_info, storedBefore, "stored payload must remain intact for replay");
 });
