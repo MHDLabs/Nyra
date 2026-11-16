@@ -1,4 +1,3 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
 // Nyra — SSRF-safe URL validation and URL privacy helpers.
 //
 // Every user/admin-supplied Base URL ("endpoint") is a potential SSRF vector:
@@ -53,16 +52,16 @@ const PRIVATE_SUFFIXES = [
   ".corp"
 ];
 
-function isDigitsOnly(value) {
+function isDigitsOnly(value: string): boolean {
   return typeof value === "string" && /^[0-9]+$/.test(value);
 }
 
 /** Parse a canonical dotted-quad string into 4 numbers, or null. */
-function parseIPv4(host) {
+function parseIPv4(host: string): number[] | null {
   if (!isDigitsOnly(host.replace(/\./g, ""))) return null;
   const parts = host.split(".");
   if (parts.length !== 4) return null;
-  const nums: any[] = [];
+  const nums: number[] = [];
   for (let i = 0; i < 4; i++) {
     if (!isDigitsOnly(parts[i]) || parts[i].length === 0 || parts[i].length > 3) return null;
     const n = Number(parts[i]);
@@ -72,7 +71,7 @@ function parseIPv4(host) {
   return nums;
 }
 
-function isPrivateIPv4(host) {
+function isPrivateIPv4(host: string): boolean {
   const n = parseIPv4(host);
   if (!n) return false;
   const [a, b] = n;
@@ -92,7 +91,7 @@ function isPrivateIPv4(host) {
 }
 
 /** Expand an IPv6 literal ("::ffff:7f00:1", "fd00:ec2::254") to 8 groups. */
-function parseIPv6(groups) {
+function parseIPv6(groups: string): number[] | null {
   const parts = groups.split("::");
   if (parts.length > 2) return null;
   const head = parts[0] ? parts[0].split(":") : [];
@@ -102,12 +101,12 @@ function parseIPv6(groups) {
   } else if (head.length !== 8) {
     return null;
   }
-  const filled: any[] = [];
+  const filled: string[] = [];
   for (let i = 0; i < head.length; i++) filled.push(head[i]);
   for (let i = 0; i < (8 - head.length - tail.length); i++) filled.push("0");
   for (let i = 0; i < tail.length; i++) filled.push(tail[i]);
   if (filled.length !== 8) return null;
-  const nums: any[] = [];
+  const nums: number[] = [];
   for (let i = 0; i < 8; i++) {
     if (!/^[0-9a-f]{1,4}$/i.test(filled[i])) return null;
     nums.push(parseInt(filled[i], 16));
@@ -115,7 +114,7 @@ function parseIPv6(groups) {
   return nums;
 }
 
-function isPrivateIPv6(host) {
+function isPrivateIPv6(host: string): boolean {
   const g = parseIPv6(host);
   if (!g) return false;
   // :: (unspecified) and ::1 (loopback)
@@ -147,7 +146,7 @@ function isPrivateIPv6(host) {
   return false;
 }
 
-function normalizeHostname(raw) {
+function normalizeHostname(raw: string | null | undefined): string {
   let host = String(raw || "").trim().toLowerCase();
   while (host.length > 1 && host.charAt(host.length - 1) === ".") host = host.slice(0, -1);
   return host;
@@ -157,7 +156,7 @@ function normalizeHostname(raw) {
  * True when the hostname can only resolve to loopback/private/link-local/
  * metadata space. Accepts a URL `hostname` (IPv6 literals keep their brackets).
  */
-export function isPrivateHost(hostname) {
+export function isPrivateHost(hostname: string | null | undefined): boolean {
   const host = normalizeHostname(hostname);
   if (!host) return true;
   if (host.charAt(0) === "[" && host.charAt(host.length - 1) === "]") {
@@ -178,7 +177,7 @@ export function isPrivateHost(hostname) {
   return false;
 }
 
-function isValidScheme(protocol) {
+function isValidScheme(protocol: string): boolean {
   return protocol === "https:" || protocol === "http:";
 }
 
@@ -192,7 +191,17 @@ function isValidScheme(protocol) {
  * Sync, dependency-free. The return value is a string so callers can write
  * `const base = validateBaseUrl(input); if (!base) reject;`.
  */
-export function validateBaseUrl(raw, options) {
+export type ValidateBaseUrlOptions = {
+  allowHttp?: boolean;
+};
+
+export type ValidateBaseUrlResult = {
+  ok: boolean;
+  url: string | null;
+  reason: string | null;
+};
+
+export function validateBaseUrl(raw: unknown, options?: ValidateBaseUrlOptions): string | null {
   const result = validateBaseUrlDetailed(raw, options);
   return result.ok ? result.url : null;
 }
@@ -204,7 +213,7 @@ export function validateBaseUrl(raw, options) {
  *
  * @returns {{ ok: boolean, url: string|null, reason: string|null }}
  */
-export function validateBaseUrlDetailed(raw, options) {
+export function validateBaseUrlDetailed(raw: unknown, options?: ValidateBaseUrlOptions): ValidateBaseUrlResult {
   const opts = options || {};
   if (raw === null || raw === undefined) return { ok: false, url: null, reason: "empty" };
   const text = String(raw).trim();
@@ -215,7 +224,7 @@ export function validateBaseUrlDetailed(raw, options) {
   if (/[\s\u0000-\u001f\u007f]/.test(text)) return { ok: false, url: null, reason: "invalid_url" };
 
   let url;
-  try { url = new URL(text); } catch (err) { return { ok: false, url: null, reason: "invalid_url" }; }
+  try { url = new URL(text); } catch { return { ok: false, url: null, reason: "invalid_url" }; }
 
   if (!isValidScheme(url.protocol)) {
     return { ok: false, url: null, reason: "unsupported_scheme" };
@@ -249,7 +258,7 @@ export function validateBaseUrlDetailed(raw, options) {
  * capped. Credentials, query strings and fragments are dropped so an API key
  * pasted into a URL can never end up in logs. Never throws.
  */
-export function safeUrlForLog(raw, maxLength) {
+export function safeUrlForLog(raw: unknown, maxLength?: number): string {
   const cap = typeof maxLength === "number" && maxLength > 0 ? maxLength : MAX_LOGGED_URL_LENGTH;
   try {
     const url = new URL(String(raw === null || raw === undefined ? "" : raw).trim());
@@ -257,7 +266,7 @@ export function safeUrlForLog(raw, maxLength) {
     out = out.replace(/\/{2,}/g, "/").replace(":/", "://");
     if (out.length > cap) out = out.slice(0, cap) + "…";
     return out;
-  } catch (err) {
+  } catch {
     return "[invalid-url]";
   }
 }
