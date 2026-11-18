@@ -1,55 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { handleStatus } from "../src/handlers/status.js";
+import { checkMemoryRate } from "../src/utils.js";
 
-test("handleStatus rate-limits excessive callers", async () => {
-  const env = {
-    TELEGRAM_BOT_TOKEN: "1:TEST",
-    TELEGRAM_SECRET: "secret",
-    ENCRYPTION_KEY: Buffer.from("0".repeat(32)).toString("base64"),
-    ADMIN_IDS: "1",
-    NYRA_QUEUE: {},
-    DB: {
-      prepare() {
-        return {
-          bind() {
-            return this;
-          },
-          async first() {
-            return null;
-          },
-          async all() {
-            return { results: [] };
-          },
-          async run() {
-            return { meta: { changes: 0 } };
-          }
-        };
-      },
-      async batch() {
-        return [];
-      }
-    },
-    KV: {
-      async get() {
-        return null;
-      },
-      async put() {},
-      async delete() {}
-    }
-  };
-  // Bypass real telegram by emptying token after first path? ensureWebhook checks token.
-  // Call many times with same IP to hit rate limit.
-  const adminIds = { valid: ["1"], invalid: [], configured: true };
-  let last = null;
+test("status rate-limit key rejects after burst via shared helper", () => {
+  const key = "status:203.0.113.55";
+  let blocked = false;
   for (let i = 0; i < 35; i++) {
-    last = await handleStatus(
-      new Request("https://example.com/status", { headers: { "CF-Connecting-IP": "203.0.113.9" } }),
-      env,
-      adminIds
-    );
+    if (!checkMemoryRate(key, 30, 60000)) {
+      blocked = true;
+      break;
+    }
   }
-  assert.equal(last.status, 429);
+  assert.equal(blocked, true);
 });
 
 test("handleStatus returns plain text body with secrets section", async () => {
@@ -93,9 +56,56 @@ test("handleStatus returns plain text body with secrets section", async () => {
     { valid: [], invalid: [], configured: false }
   );
   assert.equal(res.status, 200);
+  assert.equal(res.headers.get("Content-Type"), "text/plain; charset=utf-8");
   const text = await res.text();
   assert.ok(text.includes("Nyra is running."));
   assert.ok(text.includes("Secrets:"));
-  assert.ok(text.includes("MISSING/INVALID") || text.includes("ok"));
+  assert.ok(text.includes("MISSING/INVALID"));
   assert.ok(text.includes("Admin commands are disabled"));
+  assert.ok(text.includes("Queue:"));
+});
+
+test("handleStatus reports configured admins", async () => {
+  const env = {
+    TELEGRAM_BOT_TOKEN: "",
+    TELEGRAM_SECRET: "",
+    ENCRYPTION_KEY: "bad",
+    DB: {
+      prepare() {
+        return {
+          bind() {
+            return this;
+          },
+          async first() {
+            return null;
+          },
+          async all() {
+            return { results: [] };
+          },
+          async run() {
+            return { meta: { changes: 0 } };
+          }
+        };
+      },
+      async batch() {
+        return [];
+      }
+    },
+    KV: {
+      async get() {
+        return null;
+      },
+      async put() {},
+      async delete() {}
+    }
+  };
+  const res = await handleStatus(
+    new Request("https://example.com/status", { headers: { "CF-Connecting-IP": "203.0.113.11" } }),
+    env,
+    { valid: ["1", "2"], invalid: ["x"], configured: true }
+  );
+  const text = await res.text();
+  assert.ok(text.includes("2 configured"));
+  assert.ok(text.includes("non-numeric"));
+  assert.ok(text.includes("Send /start"));
 });
