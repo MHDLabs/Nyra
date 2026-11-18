@@ -1,40 +1,58 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
 // POST /webhook. This is the durability boundary: the update is
 // deduplicated by update_id and enqueued *before* the 200, so a Telegram
 // retry never double-processes and a failed enqueue releases the dedup slot.
-import { now, okResponse, constantTimeEqual } from "../utils.js";
+import type { NyraEnv } from "../../types/env.js";
+import type { CallbackQuery, TelegramMessage, TelegramUpdate } from "../../types/telegram.js";
+import { okResponse, constantTimeEqual } from "../utils.js";
 import { getMasterKey, getWebhookSecret } from "../crypto.js";
 import { ensureSchema } from "../db.js";
 import { processMessage } from "./message.js";
 import { handleCallbackQuery } from "./callback.js";
 import { isFastMessage } from "./fast-path.js";
 
-async function safeProcessMessage(env, ctx, message) {
+type WorkerCtx = { waitUntil?(promise: Promise<unknown>): void };
+
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message || String(err);
+  return String(err);
+}
+
+function errorStack(err: unknown): string {
+  if (err instanceof Error && err.stack) return err.stack;
+  return errorMessage(err);
+}
+
+async function safeProcessMessage(env: NyraEnv, ctx: WorkerCtx, message: TelegramMessage): Promise<void> {
   try {
     await processMessage(env, ctx, message);
   } catch (err) {
-    console.error("processMessage failed:", err && err.stack ? err.stack : err);
+    console.error("processMessage failed:", errorStack(err));
     try {
       const chatId = message && message.chat && message.chat.id;
-      if (chatId) {
+      if (chatId != null) {
         const { sendMessage } = await import("../telegram.js");
-        await sendMessage(env, chatId, "Sorry — something went wrong handling that message. Please try again.");
+        await sendMessage(env, chatId, "Sorry — something went wrong handling that message. Please try again.", {});
       }
     } catch (e2) {
-      console.error("processMessage failure notify failed:", e2 && e2.message ? e2.message : e2);
+      console.error("processMessage failure notify failed:", errorMessage(e2));
     }
   }
 }
 
-async function safeCallback(env, ctx, cb) {
+async function safeCallback(env: NyraEnv, ctx: WorkerCtx, cb: CallbackQuery): Promise<void> {
   try {
     await handleCallbackQuery(env, ctx, cb);
   } catch (err) {
-    console.error("handleCallbackQuery failed:", err && err.stack ? err.stack : err);
+    console.error("handleCallbackQuery failed:", errorStack(err));
   }
 }
 
-export async function handleWebhook(request, env, ctx) {
+function asTelegramUpdate(value: unknown): TelegramUpdate | null {
+  if (!value || typeof value !== "object") return null;
+  return value as TelegramUpdate;
+}
+
+export async function handleWebhook(request: Request, env: NyraEnv, ctx: WorkerCtx): Promise<Response> {
   const secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "";
   const expectedSecret = await getWebhookSecret(env);
   if (!expectedSecret || !constantTimeEqual(secret, expectedSecret)) {
@@ -45,10 +63,19 @@ export async function handleWebhook(request, env, ctx) {
     console.error("ENCRYPTION_KEY missing or invalid. Refusing to process requests.");
     return new Response("Service Unavailable", { status: 503 });
   }
-  let update;
-  try { update = await request.json(); } catch (err) { return new Response("Bad Request", { status: 400 }); }
-  try { await ensureSchema(env); } catch (err) {
-    console.error("ensureSchema failed:", err.message);
+  let updateRaw: unknown;
+  try {
+    updateRaw = await request.json();
+  } catch {
+    return new Response("Bad Request", { status: 400 });
+  }
+  const update = asTelegramUpdate(updateRaw);
+  if (!update) return new Response("Bad Request", { status: 400 });
+
+  try {
+    await ensureSchema(env);
+  } catch (err) {
+    console.error("ensureSchema failed:", errorMessage(err));
     return new Response("Service Unavailable", { status: 503 });
   }
   if (!env.NYRA_QUEUE) {
@@ -63,10 +90,12 @@ export async function handleWebhook(request, env, ctx) {
     try {
       const inserted = await env.DB.prepare(
         "INSERT INTO processed_updates (update_id, received_at) VALUES (?, ?) ON CONFLICT(update_id) DO NOTHING RETURNING update_id"
-      ).bind(updateId, Math.floor(Date.now() / 1000)).first();
+      )
+        .bind(updateId, Math.floor(Date.now() / 1000))
+        .first();
       firstDelivery = inserted != null;
     } catch (err) {
-      console.error("update dedup insert failed:", err.message);
+      console.error("update dedup insert failed:", errorMessage(err));
       return new Response("Service Unavailable", { status: 503 });
     }
     if (!firstDelivery) return okResponse();
@@ -110,24 +139,31 @@ export async function handleWebhook(request, env, ctx) {
               return okResponse();
             } finally {
               if (locked && env.KV) {
-                try { await env.KV.delete(lockKey); } catch (e) {}
+                try {
+                  await env.KV.delete(lockKey);
+                } catch {
+                  /* ignore */
+                }
               }
             }
           }
           // Lock held: fall through to queue so order is preserved by processChain.
         }
       } catch (err) {
-        console.error("fast path failed, using queue:", err.message);
+        console.error("fast path failed, using queue:", errorMessage(err));
       }
     }
   }
   try {
     await env.NYRA_QUEUE.send({ update: update });
   } catch (err) {
-    console.error("update enqueue failed:", err.message);
+    console.error("update enqueue failed:", errorMessage(err));
     if (updateId !== null) {
-      try { await env.DB.prepare("DELETE FROM processed_updates WHERE update_id = ?").bind(updateId).run(); }
-      catch (e) { console.error("dedup rollback failed:", e.message); }
+      try {
+        await env.DB.prepare("DELETE FROM processed_updates WHERE update_id = ?").bind(updateId).run();
+      } catch (e) {
+        console.error("dedup rollback failed:", errorMessage(e));
+      }
     }
     return new Response("Service Unavailable", { status: 503 });
   }
