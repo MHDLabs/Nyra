@@ -1,7 +1,8 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
 // Incoming message pipeline: group access checks, onboarding interception,
 // flow-state interception (setup wizards own the next message), command dispatch,
 // maintenance check, and the group trigger / reaction logic that decides whether Nyra answers at all.
+import type { TelegramMessage, TelegramUser, TelegramChat } from "../../types/telegram.js";
+import type { NyraEnv } from "../../types/env.js";
 import { MAX_MODEL_LENGTH, MAX_API_KEY_LENGTH } from "../config.js";
 import { now, escapeHtml, isAdmin } from "../utils.js";
 import { tg, sendMessage, deleteMessage, buildInlineKeyboard } from "../telegram.js";
@@ -18,7 +19,13 @@ import { t } from "../i18n/index.js";
 import { handleReminderClarification } from "../reminders/commands.js";
 import { touchLastInbound } from "../db/users.js";
 
-export async function processMessage(env, ctx, message) {
+type WorkerCtx = { waitUntil?(promise: Promise<unknown>): void };
+
+export async function processMessage(
+  env: NyraEnv,
+  ctx: WorkerCtx,
+  message: TelegramMessage
+): Promise<void> {
   const from = message.from;
   const chat = message.chat;
   if (!from || from.is_bot) return;
@@ -37,7 +44,7 @@ export async function processMessage(env, ctx, message) {
   // Private inbound activity advances the proactive inactivity clock.
   // Group traffic, bot messages, and blocked users never reset it.
   if (!isGroup) {
-    ctx.waitUntil(touchLastInbound(env, from.id).catch(function () {}));
+    if (ctx.waitUntil) ctx.waitUntil(touchLastInbound(env, from.id).catch(function () {}));
   }
 
   if (!isGroup) {
@@ -137,7 +144,7 @@ export async function processMessage(env, ctx, message) {
         const delResult = await deleteMessage(env, chat.id, message.message_id);
         if (!delResult || !delResult.ok) await sendMessage(env, chat.id, "⚠ I could not delete your API key message. Please delete it manually.");
         if (key.length === 0 || key.length > MAX_API_KEY_LENGTH) { await sendMessage(env, chat.id, "API key length is invalid."); return; }
-        await addRouteToken(env, from.id, flowState.routeId, key);
+        await addRouteToken(env, from.id, String(flowState.routeId || ""), key, "");
         await clearFlowState(env, from.id);
         await sendMessage(env, chat.id, "✅ Token added to route.", { reply_markup: buildInlineKeyboard([[{ text: "Back to Route", callback_data: "route:list" }]]) });
         return;
@@ -165,7 +172,7 @@ export async function processMessage(env, ctx, message) {
   if (text.startsWith("/")) {
     const identity = await getBotIdentity(env);
     // Pass the full message so bot_command entities (and caption_entities) are used.
-    const parsed = parseCommand(message, identity);
+    const parsed = parseCommand(message, { username: identity.username || undefined });
     if (!parsed) return;
     await handleUserCommand(env, ctx, parsed.command, parsed.args, message, from, chat);
     return;
@@ -189,7 +196,7 @@ export async function processMessage(env, ctx, message) {
       trySetReaction(env, ctx, chat, message.message_id, extractMessageText(message), from.id);
     }
     const triggerCfg = await getTriggerConfig(env);
-    const trigger = isGroupTrigger(message, identity, triggerCfg);
+    const trigger = isGroupTrigger(message, { username: identity.username || undefined, id: identity.id }, triggerCfg);
     if (!trigger.trigger) return;
     const threadId = await determineThreadId(env, chat.id, message, identity, trigger.mode);
     await handleAIMessage(env, ctx, message, from, chat, true, threadId);
@@ -200,7 +207,7 @@ export async function processMessage(env, ctx, message) {
 }
 
 
-function mapReplyMenuText(text) {
+function mapReplyMenuText(text: string): string | null {
   const s = String(text || "").trim();
   if (s === "⚙️ تنظیمات" || s === "⚙️ Settings") return "settings";
   if (s === "🎭 شخصیت" || s === "🎭 Personality") return "personality";

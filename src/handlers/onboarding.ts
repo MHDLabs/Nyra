@@ -1,6 +1,7 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
 // Onboarding: language → name → personality → custom_intro (optional) → disclosure → welcome.
 // State survives restarts. Bot message ids are tracked so setup chat can be cleaned up.
+import type { TelegramUser } from "../../types/telegram.js";
+import type { NyraEnv } from "../../types/env.js";
 import { now, escapeHtml, isAdmin } from "../utils.js";
 import { sendMessage, sendMessageReturn, answerCallback, editMessage, deleteMessage, buildInlineKeyboard, buildMainReplyKeyboard } from "../telegram.js";
 import { getUser, upsertUser } from "../db.js";
@@ -13,33 +14,46 @@ const ONBOARDING_VERSION = 2;
 // Romantic first (default pick order); everyday = id "default".
 const PERSONALITIES = ["romantic", "default", "friendly", "funny", "creative"];
 
-export async function getOnboardingState(env, userId) {
+export type OnboardingState = {
+  step?: string;
+  botMsgs?: number[];
+  locale?: string;
+  personality?: string;
+  [key: string]: unknown;
+};
+
+export async function getOnboardingState(env: NyraEnv, userId: string | number): Promise<OnboardingState | null> {
   const user = await getUser(env, userId);
   if (!user || !user.onboarding_state) return null;
-  try { return JSON.parse(user.onboarding_state); }
-  catch (e) { return null; }
+  try {
+    const parsed: unknown = JSON.parse(String(user.onboarding_state));
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed as OnboardingState;
+  } catch {
+    return null;
+  }
 }
 
-export async function setOnboardingState(env, userId, state) {
+export async function setOnboardingState(env: NyraEnv, userId: string | number, state: OnboardingState): Promise<void> {
   await env.DB.prepare(
     "UPDATE users SET onboarding_state = ?, onboarding_started_at = COALESCE(onboarding_started_at, ?), updated_at = ? WHERE telegram_id = ?"
   ).bind(JSON.stringify(state), now(), now(), userId).run();
 }
 
-export async function clearOnboardingState(env, userId) {
+export async function clearOnboardingState(env: NyraEnv, userId: string | number): Promise<void> {
   await env.DB.prepare(
     "UPDATE users SET onboarding_state = NULL, onboarding_completed = 1, onboarding_version = ?, updated_at = ? WHERE telegram_id = ?"
   ).bind(ONBOARDING_VERSION, now(), userId).run();
 }
 
-function trackMsg(state, messageId) {
-  if (!messageId) return;
-  if (!state.botMsgs) state.botMsgs = [];
-  state.botMsgs.push(messageId);
-  if (state.botMsgs.length > 30) state.botMsgs = state.botMsgs.slice(-30);
+function trackMsg(state: OnboardingState, messageId: unknown): void {
+  if (typeof messageId !== "number") return;
+  const list = Array.isArray(state.botMsgs) ? state.botMsgs.slice() : [];
+  list.push(messageId);
+  state.botMsgs = list.length > 30 ? list.slice(-30) : list;
 }
 
-async function sendTracked(env, chatId, state, userId, text, options) {
+async function sendTracked(env: NyraEnv, chatId: string | number, state: OnboardingState, userId: string | number, text: string, options?: Record<string, unknown>): Promise<unknown> {
   const r = await sendMessageReturn(env, chatId, text, options || {});
   const mid = r && r.ok && r.result ? r.result.message_id : null;
   trackMsg(state, mid);
@@ -47,14 +61,14 @@ async function sendTracked(env, chatId, state, userId, text, options) {
   return mid;
 }
 
-async function cleanupOnboardingMessages(env, chatId, state) {
+async function cleanupOnboardingMessages(env: NyraEnv, chatId: string | number, state: OnboardingState | null | undefined): Promise<void> {
   const ids = (state && state.botMsgs) || [];
   for (let i = 0; i < ids.length; i++) {
     try { await deleteMessage(env, chatId, ids[i]); } catch (e) {}
   }
 }
 
-export async function startOnboarding(env, chatId, userId, from) {
+export async function startOnboarding(env: NyraEnv, chatId: string | number, userId: string | number, from: TelegramUser): Promise<void> {
   await upsertUser(env, from);
   const user = await getUser(env, userId);
 
@@ -83,9 +97,9 @@ export async function startOnboarding(env, chatId, userId, from) {
     { reply_markup: keyboard });
 }
 
-async function continueOnboarding(env, chatId, userId, step) {
+async function continueOnboarding(env: NyraEnv, chatId: string | number, userId: string | number, step: string): Promise<void> {
   const state = await getOnboardingState(env, userId);
-  if (!state) { await startOnboarding(env, chatId, userId, { id: userId }); return; }
+  if (!state) { await startOnboarding(env, chatId, userId, { id: Number(userId) }); return; }
 
   if (step === "language") {
     const keyboard = buildInlineKeyboard([
@@ -106,12 +120,12 @@ async function continueOnboarding(env, chatId, userId, step) {
   }
 }
 
-export async function handleOnboardingCallback(env, chatId, userId, messageId, action, value, queryId) {
+export async function handleOnboardingCallback(env: NyraEnv, chatId: string | number, userId: string | number, messageId: number | null | undefined, action: string, value: string, queryId: string): Promise<void> {
   const state = await getOnboardingState(env, userId);
   if (!state) {
     await answerCallback(env, queryId, "");
-    await editMessage(env, chatId, messageId, t("en-US", "onboarding.restart"));
-    await startOnboarding(env, chatId, userId, { id: userId });
+    await editMessage(env, chatId, Number(messageId), t("en-US", "onboarding.restart"));
+    await startOnboarding(env, chatId, userId, { id: Number(userId) });
     return;
   }
 
@@ -124,7 +138,7 @@ export async function handleOnboardingCallback(env, chatId, userId, messageId, a
     await setOnboardingState(env, userId, state);
     await env.DB.prepare("UPDATE users SET locale = ?, updated_at = ? WHERE telegram_id = ?")
       .bind(value, now(), userId).run();
-    await editMessage(env, chatId, messageId, value === "fa-IR" ? "🇮🇷 زبان: فارسی" : "🇺🇸 Language: English");
+    await editMessage(env, chatId, Number(messageId), value === "fa-IR" ? "🇮🇷 زبان: فارسی" : "🇺🇸 Language: English");
     await sendTracked(env, chatId, state, userId, t(state.locale, "onboarding.name.prompt", { max: MAX_NAME_LENGTH }));
   } else if (action === "personality") {
     if (!PERSONALITIES.includes(value)) return;
@@ -134,22 +148,22 @@ export async function handleOnboardingCallback(env, chatId, userId, messageId, a
     await env.DB.prepare("UPDATE users SET personality_id = ?, updated_at = ? WHERE telegram_id = ?")
       .bind(value, now(), userId).run();
     const pname = t(state.locale, "onboarding.personality." + value + ".name");
-    await editMessage(env, chatId, messageId, t(state.locale, "onboarding.personality.prompt") + "\n\n✓ " + pname);
+    await editMessage(env, chatId, Number(messageId), t(state.locale, "onboarding.personality.prompt") + "\n\n✓ " + pname);
     await promptCustomIntro(env, chatId, userId, state);
   } else if (action === "intro_skip") {
     state.step = "disclosure";
     await setOnboardingState(env, userId, state);
-    await editMessage(env, chatId, messageId, t(state.locale, "onboarding.custom_intro.skip"));
+    await editMessage(env, chatId, Number(messageId), t(state.locale, "onboarding.custom_intro.skip"));
     await promptDisclosure(env, chatId, userId, state);
   } else if (action === "intro_paste") {
     state.awaitingIntro = true;
     await setOnboardingState(env, userId, state);
-    await editMessage(env, chatId, messageId, t(state.locale, "onboarding.custom_intro.paste"));
+    await editMessage(env, chatId, Number(messageId), t(state.locale, "onboarding.custom_intro.paste"));
     await sendTracked(env, chatId, state, userId, t(state.locale, "onboarding.custom_intro.prompt"));
   } else if (action === "intro_import") {
     state.awaitingIntro = true;
     await setOnboardingState(env, userId, state);
-    await editMessage(env, chatId, messageId, t(state.locale, "onboarding.custom_intro.import"));
+    await editMessage(env, chatId, Number(messageId), t(state.locale, "onboarding.custom_intro.import"));
     await sendTracked(env, chatId, state, userId, t(state.locale, "onboarding.custom_intro.import_prompt"));
   } else if (action === "accept") {
     state.accepted = true;
@@ -174,7 +188,7 @@ export async function handleOnboardingCallback(env, chatId, userId, messageId, a
   }
 }
 
-export async function handleOnboardingMessage(env, chatId, userId, text) {
+export async function handleOnboardingMessage(env: NyraEnv, chatId: string | number, userId: string | number, text: string): Promise<boolean> {
   const state = await getOnboardingState(env, userId);
   if (!state) return false;
 
@@ -212,7 +226,7 @@ export async function handleOnboardingMessage(env, chatId, userId, text) {
   return false;
 }
 
-async function promptPersonality(env, chatId, userId, state) {
+async function promptPersonality(env: NyraEnv, chatId, userId, state) {
   const locale = state.locale || "en-US";
   const buttons = PERSONALITIES.map(function (p) {
     return [{ text: t(locale, "onboarding.personality." + p + ".name"), callback_data: "onboard:personality:" + p }];
@@ -222,7 +236,7 @@ async function promptPersonality(env, chatId, userId, state) {
   });
 }
 
-async function promptCustomIntro(env, chatId, userId, state) {
+async function promptCustomIntro(env: NyraEnv, chatId, userId, state) {
   const locale = state.locale || "en-US";
   const keyboard = buildInlineKeyboard([
     [{ text: t(locale, "onboarding.custom_intro.skip"), callback_data: "onboard:intro_skip:1" }],
@@ -234,7 +248,7 @@ async function promptCustomIntro(env, chatId, userId, state) {
   });
 }
 
-async function promptDisclosure(env, chatId, userId, state) {
+async function promptDisclosure(env: NyraEnv, chatId, userId, state) {
   const locale = state.locale || "en-US";
   const enabled = await getSharedServiceEnabled(env);
   const reqLimit = await getSharedRequestLimit(env);
