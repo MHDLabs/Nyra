@@ -47,8 +47,49 @@ async function safeCallback(env: NyraEnv, ctx: WorkerCtx, cb: CallbackQuery): Pr
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object";
+}
+
+function isTelegramUser(value: unknown): value is { id: number | string; is_bot?: boolean } {
+  if (!isRecord(value)) return false;
+  const id = value.id;
+  return typeof id === "number" || typeof id === "string";
+}
+
+function isTelegramChat(value: unknown): value is { id: number | string; type?: string } {
+  if (!isRecord(value)) return false;
+  const id = value.id;
+  return typeof id === "number" || typeof id === "string";
+}
+
+function isTelegramMessage(value: unknown): value is TelegramMessage {
+  if (!isRecord(value)) return false;
+  if (typeof value.message_id !== "number") return false;
+  if (!isTelegramChat(value.chat)) return false;
+  if (value.from !== undefined && !isTelegramUser(value.from)) return false;
+  return true;
+}
+
+function isCallbackQuery(value: unknown): value is CallbackQuery {
+  if (!isRecord(value)) return false;
+  if (typeof value.id !== "string" && typeof value.id !== "number") return false;
+  if (!isTelegramUser(value.from)) return false;
+  if (value.message !== undefined && !isTelegramMessage(value.message)) return false;
+  return true;
+}
+
+/**
+ * Accept a Telegram update envelope. Requires a finite update_id.
+ * Message / callback payloads used on the fast path are structurally checked;
+ * other update kinds remain allowed so Telegram can deliver them to the queue.
+ */
 function asTelegramUpdate(value: unknown): TelegramUpdate | null {
-  if (!value || typeof value !== "object") return null;
+  if (!isRecord(value)) return null;
+  if (typeof value.update_id !== "number" || !Number.isFinite(value.update_id)) return null;
+  if (value.message !== undefined && !isTelegramMessage(value.message)) return null;
+  if (value.callback_query !== undefined && !isCallbackQuery(value.callback_query)) return null;
+  if (value.edited_message !== undefined && !isTelegramMessage(value.edited_message)) return null;
   return value as TelegramUpdate;
 }
 
