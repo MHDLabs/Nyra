@@ -1,68 +1,49 @@
-# Nyra
+# ⚡ Nyra
 
-**A lightweight AI assistant for Telegram, running on Cloudflare Workers.**
+**A lightweight AI assistant for Telegram, powered by Cloudflare Workers.**
 
-Maintained by **MHDLabs**.  
-**Keep it simple.**
+[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-f38020.svg)](https://workers.cloudflare.com)
+[![TypeScript](https://img.shields.io/badge/TypeScript-3178c6.svg)](src/index.ts)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-[English](README.md) · [فارسی](README.fa.md)
+English · [فارسی](README.fa.md)
 
-## Project status
+Nyra brings AI chat to Telegram with a lightweight serverless runtime. Built and maintained by **MHDLabs**.
 
-Nyra is being simplified around a Telegram-first experience and one centrally configured AI model. The current main branch still contains the legacy implementation; this documentation change defines the target and does not remove runtime features by itself.
+## 🚀 Deploy to Cloudflare
 
-The target product contract is documented in [Product Scope](docs/PRODUCT-SCOPE.md). Treat it as the source of truth for the next implementation phase.
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/MHDLabs/Nyra)
 
-## Target product
+Create a bot with [@BotFather](https://t.me/BotFather), deploy it to Cloudflare, and complete the required setup prompts. Then open your bot and send `/start`.
 
-- One shared, administrator-configured OpenAI-compatible API endpoint and model.
-- No user-owned API keys, provider connections, multi-model setup, or route management.
-- Telegram chat, memory, personalities, custom instructions, web search, supported image input, and group support.
-- A separate **web admin panel** remains available at /admin-panel.
-- No Mini App, reminders, voice transcription, or speech generation.
+> ℹ️ Nyra is being simplified around one centrally configured OpenAI-compatible model. See the [Product Scope](docs/PRODUCT-SCOPE.md) for the upcoming changes. The current runtime still contains the legacy setup flow.
 
-The old Mini App and the web admin panel are different products. Removing the Mini App must **not** remove the web admin panel or its static assets.
+## ✨ Features
 
-## Runtime
+- 💬 AI conversations with streaming replies
+- 🧠 Per-user memory and customizable personalities
+- 🌐 Built-in web search
+- 👥 Private and group chats
+- 🛠️ Telegram admin tools and a separate [web admin panel](/admin-panel)
+- ☁️ Serverless deployment on Cloudflare Workers
 
-Nyra runs as a TypeScript Cloudflare Worker. Telegram updates flow through the webhook and Cloudflare Queues. D1 stores persistent application data; KV handles short-lived state and caches. Cloudflare static assets serve the web admin panel.
+## 🧰 Development
 
-Main code areas:
-
-| Path | Purpose |
-| --- | --- |
-| src/ | Worker, Telegram handlers, AI pipeline, admin interfaces, and persistence |
-| src/admin-panel/ | Web admin API and routes |
-| public/admin-panel/ | Web admin panel assets; preserve these |
-| types/ | Shared TypeScript contracts |
-| test/ | Automated tests |
-| .specify/ | GitHub Spec Kit configuration and project constitution |
-| .pi/prompts/ | Pi commands for the Spec Kit workflow |
-| docs/PRODUCT-SCOPE.md | Target product requirements and acceptance criteria |
-
-## Development
-
-Use Node.js 22 and the repository lockfile:
+Requires Node.js 22.
 
 ~~~bash
 npm ci
 npm run typecheck
-npm run typecheck:worker
-npm run typecheck:web
 npm run test:all
 ./node_modules/.bin/wrangler deploy --dry-run
 ~~~
 
-Run the checks relevant to your change. Do not deploy to a production Worker unless explicitly asked.
+See [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md) before contributing.
 
-## Configuration
+## 📄 License
 
-The current branch still uses the legacy provider-connection setup. Its deployment inputs and local examples are documented in .dev.vars.example and wrangler.toml. The target single-model configuration is specified in [Product Scope](docs/PRODUCT-SCOPE.md); do not assume it is already implemented.
-
-## Contributing
-
-Read [AGENTS.md](AGENTS.md), [CONTRIBUTING.md](CONTRIBUTING.md), and [SECURITY.md](SECURITY.md) before changing runtime or deployment behavior.
+[MIT](LICENSE) © MHDLabs
 
 ---
 
-© MHDLabs · Keep it simple.
+Made with ❤️ by **MHDLabs** · Keep it simple :)
