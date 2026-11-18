@@ -1,8 +1,9 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
 // Button taps: menu navigation and the full admin/self-service callback
 // surface. Bundled as one unit because the dispatch switch and the shared
 // helpers it uses are tightly coupled and split apart would only add
 // indirection.
+import type { CallbackQuery } from "../../types/telegram.js";
+import type { NyraEnv } from "../../types/env.js";
 import { RATE_LIMIT_ADMIN_PER_MIN, RATE_LIMIT_CALLBACK_PER_MIN, RATE_LIMIT_CONN_TEST_PER_MIN, MAX_PERSONALITY_PROMPT, MAX_PERSONALITY_DESC, MAX_CUSTOM_INSTRUCTIONS, OPENAI_DEFAULT_URL, ANTHROPIC_DEFAULT_URL, RETIRED_PERSONALITY_IDS } from "../config.js";
 import { now, truncate, escapeHtml, isAdmin, checkRateLimit } from "../utils.js";
 import { sendMessage, answerCallback, editMessage, buildInlineKeyboard } from "../telegram.js";
@@ -15,13 +16,24 @@ import { setConfiguredReactions, clearConfiguredReactions } from "../reactions.j
 import { handleOnboardingCallback } from "./onboarding.js";
 import { handleReminderCallback } from "../reminders/commands.js";
 
-export async function handleCallbackQuery(env, ctx, query) {
+type WorkerCtx = { waitUntil?(promise: Promise<unknown>): void };
+
+export async function handleCallbackQuery(
+  env: NyraEnv,
+  ctx: WorkerCtx,
+  query: CallbackQuery
+): Promise<void> {
   const data = query.data || "";
   const userId = query.from.id;
-  const chatId = query.message ? query.message.chat.id : query.from.id;
-  const messageId = query.message ? query.message.message_id : null;
   const rateOk = await checkRateLimit(env, "cb:" + userId, RATE_LIMIT_CALLBACK_PER_MIN, 60);
   if (!rateOk) { await answerCallback(env, query.id, "Slow down."); return; }
+  // Inline-menu callbacks in Nyra always originate from a bot message.
+  if (!query.message) {
+    await answerCallback(env, query.id, "");
+    return;
+  }
+  const chatId = query.message.chat.id;
+  const messageId = query.message.message_id;
   const parts = data.split(":");
   const namespace = parts[0];
 
@@ -302,7 +314,7 @@ export async function handleCallbackQuery(env, ctx, query) {
     if (action === "add") { await startAddConnectionFlow(env, chatId, userId, source); return; }
     const shortId = parts[2];
     const connId = await resolveUserConnectionShortId(env, userId, shortId);
-    if (!connId) { await editMessage(env, chatId, messageId, "Connection not found.", buildInlineKeyboard([[sourceBackButton(source)]]), "HTML"); return; }
+    if (!connId) { await editMessage(env, chatId, messageId, "Connection not found.", buildInlineKeyboard([[sourceBackButton(source, false)]]), "HTML"); return; }
     if (action === "tog") { await toggleUserConnection(env, userId, connId); await showMyConnections(env, chatId, messageId, userId, source); return; }
     if (action === "fast") { await setConnectionFast(env, userId, connId); await showMyConnections(env, chatId, messageId, userId, source); return; }
     if (action === "vision") { await setConnectionVision(env, userId, connId); await showMyConnections(env, chatId, messageId, userId, source); return; }

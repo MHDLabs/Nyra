@@ -120,7 +120,7 @@ export async function saveThreadMessage(env: NyraEnv, chatId, threadId, messageI
   } catch (err) { console.error("saveThreadMessage failed:", (err instanceof Error ? err.message : String(err))); }
 }
 
-export async function getThreadContext(env: NyraEnv, chatId, threadId, limit) {
+export async function getThreadContext(env: NyraEnv, chatId: string | number, threadId: string | number | null | undefined, limit?: number) {
   const lim = (typeof limit === "number" && limit > 0) ? limit : MAX_CONTEXT_MESSAGES;
   try {
     const result = await env.DB.prepare(
@@ -180,15 +180,21 @@ export async function determineThreadId(env: NyraEnv, chatId, message, identity,
   return message.message_id;
 }
 
-export async function getFlowState(env: NyraEnv, userId) {
-  try { return await env.KV.get("flow:" + userId, "json"); } catch (err) { return null; }
+export async function getFlowState(env: NyraEnv, userId: string | number): Promise<Record<string, unknown> | null> {
+  try {
+    const raw = await env.KV.get("flow:" + userId, "json");
+    if (!raw || typeof raw !== "object") return null;
+    return raw as Record<string, unknown>;
+  } catch {
+    return null;
+  }
 }
 
-export async function setFlowState(env: NyraEnv, userId, state) {
+export async function setFlowState(env: NyraEnv, userId: string | number, state: Record<string, unknown>): Promise<void> {
   try { await env.KV.put("flow:" + userId, JSON.stringify(state), { expirationTtl: FLOW_TTL }); }
   catch (err) { console.error("setFlowState failed:", (err instanceof Error ? err.message : String(err))); }
 }
 
-export async function clearFlowState(env: NyraEnv, userId) {
+export async function clearFlowState(env: NyraEnv, userId: string | number): Promise<void> {
   try { await env.KV.delete("flow:" + userId); } catch (err) {}
 }

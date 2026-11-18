@@ -222,7 +222,7 @@ export async function setRouteDefaultModel(env: NyraEnv, userId, routeId, modelI
   } catch (err) { return false; }
 }
 
-export async function addRouteToken(env: NyraEnv, userId, routeId, apiKey, label) {
+export async function addRouteToken(env: NyraEnv, userId: string | number, routeId: string, apiKey: string, label?: string | null) {
   const route = await getRouteById(env, userId, routeId);
   if (!route) return false;
   const ts = now();

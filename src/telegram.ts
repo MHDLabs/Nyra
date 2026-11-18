@@ -307,7 +307,7 @@ export async function downloadTelegramFile(env: NyraEnv, fileId) {
   }
 }
 
-export async function sendMessageReturn(env: NyraEnv, chatId, text, options) {
+export async function sendMessageReturn(env: NyraEnv, chatId: string | number, text: string, options?: Record<string, unknown> | null) {
   const opts = options || {};
   const safeText = truncate(text || "", 40000);
   const chunks = splitForTelegram(safeText, MAX_TELEGRAM_LENGTH);
@@ -373,12 +373,12 @@ export async function sendRichMessageSafe(env: NyraEnv, chatId, text, options) {
   return result;
 }
 
-export async function sendMessage(env: NyraEnv, chatId, text, options) {
+export async function sendMessage(env: NyraEnv, chatId: string | number, text: string, options?: Record<string, unknown> | null) {
   const result = await sendMessageReturn(env, chatId, text, options);
   return result && result.ok;
 }
 
-export async function sendMessageSafeResult(env: NyraEnv, chatId, text, options) {
+export async function sendMessageSafeResult(env: NyraEnv, chatId: string | number, text: string, options?: Record<string, unknown> | null) {
   const opts = options || {};
   let result = await sendMessageReturn(env, chatId, text, opts);
   if (result && result.ok) return result;
@@ -395,7 +395,7 @@ export async function sendMessageSafeResult(env: NyraEnv, chatId, text, options)
  * @param {string} [text] Optional toast text (max 200 chars)
  * @param {{ show_alert?: boolean, cache_time?: number, url?: string }} [options]
  */
-export async function answerCallback(env: NyraEnv, callbackId, text, options) {
+export async function answerCallback(env: NyraEnv, callbackId: string, text?: string | null, options?: Record<string, unknown> | null) {
   const opts = options || {};
   const payload: any = { callback_query_id: callbackId };
   if (text) payload.text = String(text).slice(0, 200);
@@ -406,7 +406,7 @@ export async function answerCallback(env: NyraEnv, callbackId, text, options) {
   catch (err) { console.error("answerCallback failed:", err.message); }
 }
 
-export async function editMessage(env: NyraEnv, chatId, messageId, text, replyMarkup, parseMode, options) {
+export async function editMessage(env: NyraEnv, chatId: string | number, messageId: number, text: string, replyMarkup?: unknown, parseMode?: string | null, options?: Record<string, unknown> | null) {
   const extra = options || {};
   if (!messageId) {
     const opts: any = {};
