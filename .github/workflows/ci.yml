@@ -11,10 +11,13 @@ permissions:
   contents: read
 
 jobs:
-  verify:
-    name: Verify
+  verify-and-deploy:
+    name: Verify and deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
 
@@ -36,17 +39,8 @@ jobs:
       - name: Wrangler dry-run
         run: ./node_modules/.bin/wrangler deploy --dry-run
 
-  deploy:
-    name: Deploy Worker (OTA)
-    needs: verify
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    concurrency:
-      group: deploy-production
-      cancel-in-progress: true
-    steps:
       - name: Check Cloudflare credentials
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         id: creds
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -59,30 +53,7 @@ jobs:
             echo "present=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/checkout@v4
-        if: steps.creds.outputs.present == 'true'
-
-      - uses: actions/setup-node@v4
-        if: steps.creds.outputs.present == 'true'
-        with:
-          node-version: "22"
-          cache: npm
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Install dependencies
-        if: steps.creds.outputs.present == 'true'
-        env:
-          npm_config_registry: "https://registry.npmjs.org"
-          npm_config_fund: "false"
-          npm_config_audit: "false"
-          npm_config_fetch_timeout: "120000"
-          npm_config_fetch_retries: "5"
-        run: |
-          set -e
-          npm ci --no-audit --no-fund
-          ./node_modules/.bin/wrangler --version
-
-      - name: Deploy Worker
+      - name: Deploy Worker (OTA)
         if: steps.creds.outputs.present == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
