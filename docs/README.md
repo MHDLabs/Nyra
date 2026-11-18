@@ -1,22 +1,19 @@
 # Nyra documentation
 
-Canonical technical documentation for the Nyra Worker project.
+This folder contains the product contract and historical references.
 
-## Engineering notes
+## Start here
 
-Task records and hardening notes live under [`engineering/`](./engineering/).
+- [Product Scope](./PRODUCT-SCOPE.md) — authoritative target behavior, removals, preserved features, migration boundaries, and acceptance criteria.
+- [TypeScript baseline](./archive/TYPESCRIPT-BASELINE.md) — historical JavaScript baseline and recovery tag; not a description of the current architecture.
 
-Recent themes:
+## Repository guidance
 
-- TypeScript migration and progressive `@ts-nocheck` removal
-- Secret redaction and web-search security boundaries
-- Utility decomposition (`src/utils/`)
-- Crypto and DLQ hardening
-- Mini App API validation
+- [README](../README.md) — project overview
+- [Persian README](../README.fa.md) — Persian overview
+- [AGENTS.md](../AGENTS.md) — instructions for Pi and coding agents
+- [CONTRIBUTING.md](../CONTRIBUTING.md) — development and review workflow
+- [SECURITY.md](../SECURITY.md) — vulnerability reporting and security practices
+- [Spec Kit constitution](../.specify/memory/constitution.md) — architectural principles enforced during planning
 
-## Related root documents
-
-- [CONTRIBUTING.md](../CONTRIBUTING.md) — contribution workflow
-- [SECURITY.md](../SECURITY.md) — vulnerability reporting
-- [AGENTS.md](../AGENTS.md) — guidance for coding agents
-- [README.md](../README.md) — project overview
+Avoid creating duplicate wiki pages or long-lived task logs. Keep the product contract concise and update it when the accepted scope changes.

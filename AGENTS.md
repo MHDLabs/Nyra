@@ -1,53 +1,77 @@
-# Agent guide for Nyra
+# Agent Guide
 
-Instructions for automated coding agents working in this repository.
+Instructions for Pi and other automated coding agents working in Nyra.
 
-## Purpose
+## Product direction
 
-Nyra is a Cloudflare Worker Telegram assistant with Mini App, admin panel, D1, Queues, and AI provider integrations.
+Nyra is a Telegram-first AI assistant on Cloudflare Workers, maintained by MHDLabs.
 
-## Important directories
+**Keep it simple.** Prefer the smallest complete change. Avoid speculative abstractions, unnecessary dependencies, duplicate configuration, and unrelated refactors.
+
+Read [docs/PRODUCT-SCOPE.md](docs/PRODUCT-SCOPE.md) before product work. It defines the target architecture and the approved removal scope.
+
+## Non-negotiable product boundaries
+
+- Use one centrally configured OpenAI-compatible API endpoint, API key, and model for all users.
+- Do not reintroduce per-user API keys, provider connections, Anthropic Messages API, multiple models, or route management.
+- The Telegram bot is the primary user interface. Do not add a Mini App.
+- The separate web admin panel at /admin-panel **must remain**.
+- Removing the Mini App must not remove src/admin-panel/, public/admin-panel/, /admin-panel, /admin-api/*, or the Cloudflare Assets binding needed by the web panel.
+- Do not reintroduce reminders, voice transcription, or text-to-speech.
+- Preserve user conversations, memory, profiles, groups, and admin data when removing legacy feature tables.
+
+## Important paths
 
 | Path | Role |
-|------|------|
-| `src/` | Application source |
-| `src/utils/` | Shared utilities (import via `src/utils.ts` facade) |
-| `src/miniapp/` | Mini App API handlers |
-| `src/admin-panel/` | External admin panel routes |
-| `types/` | Shared TypeScript contracts |
-| `test/` | `node:test` suites |
-| `docs/engineering/` | Engineering task records |
-| `public/` | Static assets |
+| --- | --- |
+| src/ | Cloudflare Worker application |
+| src/admin-panel/ | Separate web admin panel |
+| public/admin-panel/ | Web admin static assets |
+| types/ | Shared TypeScript contracts |
+| test/ | Node test suites |
+| .specify/memory/constitution.md | Project architecture principles |
+| .pi/prompts/ | Pi Spec Kit commands |
+| docs/PRODUCT-SCOPE.md | Product scope and acceptance criteria |
 
-## Canonical commands
+The Mini App and the web admin panel are not interchangeable. Keep the latter.
 
-```bash
+## Development commands
+
+Node.js 22; use repository-local tools:
+
+~~~bash
 npm ci
 npm run typecheck
 npm run typecheck:worker
 npm run typecheck:web
 npm run test:all
 ./node_modules/.bin/wrangler deploy --dry-run
-```
+~~~
 
-Use repository-local binaries after `npm ci`. Node.js 22 matches CI.
+Do not invent npm scripts. Check package.json before using an unfamiliar command.
 
-## Workflow rules
+## Working rules
 
-1. Sync to latest `origin/main` before new work.
-2. One independent Issue → one branch → one PR per root cause.
-3. All GitHub content in **English**.
-4. Prefer the smallest complete fix (`/simple-code` principles).
-5. Never force-push, never rewrite published history, never push to `main` directly.
-6. Never commit secrets or real tokens.
-7. Do not deploy to production unless explicitly instructed.
-8. Do not remove `@ts-nocheck` from large modules without scoped tests.
-9. Preserve Telegram, queue, and crypto compatibility unless the Issue requires a change.
+1. Sync with the latest origin/main before starting new work.
+2. Use one focused branch and PR for a coherent change.
+3. Never push directly to main, force-push, or rewrite published history.
+4. Do not deploy to production unless explicitly instructed.
+5. Keep technical documentation, issues, PRs, and commits in English. Keep README.fa.md in Persian.
+6. Do not add dependencies without a demonstrated need.
+7. Do not weaken or delete tests just to make CI pass.
+8. Update both English and Persian user-facing docs when product behavior changes.
 
-## Testing
+## Data and migrations
 
-Add regression tests next to the change. Do not weaken tests to hide product failures.
+- Preserve chats, message history, user profiles, memory, groups, and admin records.
+- Remove only data belonging to explicitly retired features, using a versioned and tested migration.
+- Never reset D1, wipe production data, or change production secrets as a shortcut.
+- Audit every use of a secret before removing its binding or configuration.
+- Never log, return, or commit API keys or other secrets.
 
-## Security
+## Security and testing
 
-Use `redactSecrets` / `safeErrorDetail` for logs. Prefer `jsonErrorFromException` in Mini App handlers. Report sensitive findings privately when possible.
+- Validate untrusted Telegram updates and API input at boundaries.
+- Use existing redaction helpers for logs and errors.
+- Add focused regression tests for changed behavior.
+- Run typechecks, relevant tests, the full test suite, and Wrangler dry-run before proposing a merge.

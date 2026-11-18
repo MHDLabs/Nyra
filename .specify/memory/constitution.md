@@ -1,39 +1,84 @@
 # Nyra Constitution
 
-A Cloudflare Worker Telegram assistant with Mini App, admin panel, D1, Queues, and AI provider integrations.
+**MHDLabs principle: Keep it simple.**
 
-*This document is pending maintainer approval for ratification.*
+This constitution defines the target architecture for Nyra after the approved simplification. It supersedes previous principles that required Mini App, BYOK, Anthropic, multiple AI connections, or route management.
+
+**Status:** Approved by project maintainer  
+**Version:** 2.0.0  
+**Ratified:** 2026-11-18  
+**Last Amended:** 2026-11-18
 
 ## Core Principles
 
-### I. Cloudflare Workers Runtime
-Nyra runs as a Cloudflare Worker. D1 (database), KV (key-value storage), and Queues resources and bindings must be provisioned and configured per deployment requirements. Workers AI is an optional binding. All three deployment secrets (TELEGRAM_BOT_TOKEN, TELEGRAM_SECRET, ENCRYPTION_KEY) require explicit configuration. No deployment secret is derived from another deployment secret.
+### I. Simplicity Over Feature Count
 
-### II. Multi-Provider AI Integration
-Support OpenAI-compatible APIs and Anthropic Messages API with streaming responses. Users add provider connections via Mini App. Automatic fallback within time budget when primary connection fails. Connections encrypted with AES-256-GCM using HKDF-derived per-owner keys from master ENCRYPTION_KEY.
+Nyra must remain a small, understandable Telegram assistant. Prefer the smallest design that fully solves the problem. Avoid speculative abstractions, duplicate systems, unnecessary dependencies, and features without a clear user need. YAGNI is a requirement, not a suggestion.
 
-### III. Test-First Development
-Behavioral changes require appropriate regression tests. Run `npm run test:all` before merging. Run `npm run typecheck`, `npm run typecheck:worker`, `npm run typecheck:web`, and `./node_modules/.bin/wrangler deploy --dry-run` as part of verification. Prefer Red-Green-Refactor where practical. Never weaken tests merely to make CI pass.
+### II. Telegram-First Product
 
-### IV. Security-First Architecture
-Deployment secrets (TELEGRAM_BOT_TOKEN, TELEGRAM_SECRET, ENCRYPTION_KEY) must be manually configured; never derive one from another. Use `redactSecrets`/`safeErrorDetail` from `src/redact.ts` to scrub sensitive data from logs and error details. Use authorization headers for provider credentials where supported. Never expose credentials in user-facing output. Fail-closed on missing/invalid secrets (HTTP 500). Constant-time comparison for webhook verification. KV-based rate limits fail-open for availability over strictness.
+Telegram is the primary user interface. Do not add or restore a Telegram Mini App. Keep the existing bot commands, inline interactions, and Persian/English user experience where useful.
 
-### V. Backward-Compatible Evolution
-Existing user data must not be lost. Database changes must be forward-safe and tested. Prefer additive migrations. Destructive schema changes require explicit compatibility and migration strategy. Preserve Telegram API and existing user-facing behavior unless intentional. The `schema_migrations` table tracks applied migrations. Changes are versioned by build SHA via `src/version.ts`.
+The separate web admin panel at /admin-panel is a required product surface and must remain. It is not the Mini App. Preserve src/admin-panel/, public/admin-panel/, /admin-api/*, and the Cloudflare Assets binding required by the panel.
 
-### VI. Runtime Boundaries
-`ctx.waitUntil` provides up to 30 seconds after response completion/disconnect. Fast-path streaming: 25-second total budget, 15-second stall timeout (see `src/config.ts`). Queue consumers run separately with long wall time for AI pipeline. Streaming responses must respect platform limits; use actual config values for defaults.
+### III. One Shared OpenAI-Compatible Model
 
-## Security Requirements
+All users use one centrally configured OpenAI-compatible API endpoint and one model:
 
-All API keys encrypted with AES-256-GCM using HKDF-derived per-owner keys from master `ENCRYPTION_KEY`. Secrets in URLs are rejected for `/setup`; webhook verification uses `X-Telegram-Bot-Api-Secret-Token` header. Never log Telegram token-bearing URLs. KV-based rate limits fail-open for availability over strictness.
+- AI_BASE_URL — endpoint base URL
+- AI_MODEL — model identifier
+- AI_API_KEY — Cloudflare Worker secret
+
+The central credentials belong to the operator, not individual users. Never expose the API key to users or client-side code. Do not implement user-owned API keys, multiple provider connections, Anthropic Messages API, model discovery, model switching, route management, token rotation, or cross-model fallback.
+
+Use a simple provider adapter. Retry the same endpoint only when a bounded retry is safe for a transient failure. Normal per-user rate limits remain necessary because all users share the operator's API account and costs.
+
+### IV. Preserve User Data
+
+Product simplification is not permission to erase unrelated data. Preserve conversations, chat archives, user memories, profiles, group settings, admin records, and useful usage data.
+
+Use forward-only, versioned migrations. Remove only state that belongs to explicitly retired features. Never reset a production database or perform destructive production operations during implementation. Test migration safety with representative fixtures.
+
+### V. Secure by Default
+
+Keep secrets in Cloudflare Worker secrets or private environment configuration. Never store the central API key in D1, expose it through the web admin panel, return it from an API, or write it to logs.
+
+Validate Telegram and HTTP input at boundaries. Retain webhook authentication, admin authorization, secret redaction, and appropriate rate limits. Remove an encryption secret only after all retained encryption use has been audited.
+
+### VI. Keep the Runtime Lean
+
+Keep Cloudflare Workers, D1, KV, and Queues where they provide real value. Keep the webhook and queue processing model, status endpoint, operational recovery, and DLQ where still required.
+
+Remove reminder delivery, voice transcription, speech generation, Mini App APIs/assets, schedules, proactive check-ins, and their orphaned cron jobs and settings. Do not replace them with new UI or framework layers.
+
+### VII. Test Before Merge
+
+Every behavior change requires focused regression tests. Migrations require tests proving that retained user data survives. Never delete or weaken tests merely to get a green CI run.
+
+Before merge, run the relevant checks, including:
+
+- npm run typecheck
+- npm run typecheck:worker
+- npm run typecheck:web
+- npm run test:all
+- ./node_modules/.bin/wrangler deploy --dry-run
+
+Use the repository-local toolchain and verify the actual scripts in package.json.
 
 ## Development Workflow
 
-Code review required for all changes. Tests must pass before merge via `npm run test:all`. Complexity must be justified. Simplicity (YAGNI) preferred. One Issue → one branch → one PR per root cause. Never force-push, never rewrite published history, never push to main directly. Sync to `origin/main` before new work.
+- Read docs/PRODUCT-SCOPE.md before implementation.
+- One coherent change per branch and pull request.
+- Branch from the latest main; do not push directly to main.
+- Never force-push or rewrite published history.
+- Do not deploy to production unless explicitly authorized.
+- Keep technical documentation, code comments, issues, PRs, and commits in English; keep the Persian README in Persian.
+- Prefer existing utilities and patterns. Add dependencies only when a clear need is demonstrated.
 
 ## Governance
 
-All constitutional amendments require maintainer approval before incorporation. Amendments must document their rationale, version impact, and amendment date. This constitution is pending ratification; it has not yet been approved by maintainers.
+The maintainer may amend this constitution. Amendments must update the version, rationale, and amendment date. The product scope in docs/PRODUCT-SCOPE.md must remain consistent with this constitution.
 
-**Version**: 1.0.0 | **Ratified**: TBD | **Last Amended**: 2026-11-18
+---
+
+**MHDLabs — Keep it simple.**

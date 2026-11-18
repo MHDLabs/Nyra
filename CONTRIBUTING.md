@@ -1,66 +1,74 @@
 # Contributing to Nyra
 
-Thank you for contributing. This document describes the practical workflow used by this repository.
+Thanks for helping improve Nyra.
 
-## Project overview
+## Project principles
 
-Nyra is a Cloudflare Workers Telegram bot with Mini App and admin surfaces, D1 storage, Queues, and optional Workers AI bindings.
+Nyra is a Telegram-first AI assistant running on Cloudflare Workers.
+
+**Keep it simple.** Prefer small, understandable changes over new layers, frameworks, or dependencies.
+
+The target product behavior is defined in [docs/PRODUCT-SCOPE.md](docs/PRODUCT-SCOPE.md). Read it before implementing features or removing legacy code.
 
 ## Development setup
 
-Requirements:
+- Node.js 22
+- npm (the repository lockfile is authoritative)
 
-- Node.js 22 (matches CI)
-- npm (lockfile is authoritative)
-
-```bash
+~~~bash
 npm ci
 npm run typecheck
+npm run typecheck:worker
+npm run typecheck:web
 npm run test:all
 ./node_modules/.bin/wrangler deploy --dry-run
-```
+~~~
 
-Do not invent scripts. Canonical npm scripts live in `package.json`:
+Check package.json for the authoritative list of scripts.
 
-| Script | Purpose |
-|--------|---------|
-| `typecheck` / `typecheck:worker` / `typecheck:web` | TypeScript checks |
-| `test` / `test:ts` / `test:all` | Test suites |
-| `deploy` / `deploy:worker` | Deployment (maintainers) |
+## Architecture boundaries
 
-## Architecture (practical)
+- src/ — Cloudflare Worker application and Telegram bot
+- src/admin-panel/ — separate web admin API and routes
+- public/admin-panel/ — static web admin assets
+- types/ — shared TypeScript contracts
+- test/ — automated tests
+- .specify/ — Spec Kit configuration and constitution
+- .pi/prompts/ — Pi Spec Kit commands
 
-- `src/` — Worker application code
-- `types/` — shared TypeScript contracts
-- `public/` — static Mini App / admin assets
-- `test/` — `node:test` suites
-- `docs/engineering/` — task and design notes
+The web admin panel at /admin-panel is retained. It is **not** the Telegram Mini App. Do not delete the web panel or its asset binding while removing Mini App code.
 
-## Branch and issue workflow
+## Branch and review workflow
 
-1. Open or update a focused GitHub Issue (English).
-2. Branch from latest `main`: `fix/issue-N-short-description` or `security/...` / `docs/...`.
-3. Implement the smallest complete fix with regression tests.
-4. Run typecheck and `npm run test:all`.
-5. Open a PR against `main`. Do not push directly to `main`.
-6. Merge only when required checks pass. Prefer squash merge when available.
-7. Delete the temporary branch after merge.
+1. Start from the latest main.
+2. Make one focused change on a descriptive branch.
+3. Add or update regression tests.
+4. Run the relevant typechecks and tests.
+5. Open a pull request against main.
+6. Merge only after required checks pass.
+
+Do not push directly to main, force-push, or deploy to production without explicit authorization.
 
 ## Coding standards
 
-- Prefer the smallest correct change; avoid unrelated refactors.
-- Reuse existing utilities (`src/utils/`, `src/redact.ts`, `src/miniapp/respond.ts`).
-- Do not add dependencies without a demonstrated need.
-- Do not introduce `@ts-nocheck`, `@ts-ignore`, or broad `any` in new code.
-- Keep runtime behavior stable unless the issue requires a change.
+- Prefer the smallest correct implementation.
+- Reuse existing utilities and patterns where they are appropriate.
+- Avoid unrelated refactors and speculative abstractions.
+- Do not add dependencies without a clear need.
+- Do not introduce new @ts-nocheck, @ts-ignore, or broad any shortcuts.
+- Keep runtime and data compatibility unless a planned change explicitly requires otherwise.
+
+## Data safety
+
+Preserve user conversations, memory, profiles, groups, and administrative data. Retired feature data may be removed only through a versioned, tested migration. Never reset a production database to simplify a migration.
 
 ## Security
 
-- Never commit real tokens, API keys, or encryption keys.
-- Use synthetic fixtures in tests only.
-- See [SECURITY.md](./SECURITY.md) for vulnerability reporting.
+- Never commit real tokens, API keys, passwords, or encryption keys.
+- Use synthetic credentials in tests.
+- Redact secrets from logs and error responses.
+- Follow [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
 ## Documentation
 
-- GitHub Issues, PRs, commits, and technical docs are written in **English**.
-- Localized user docs such as `README.fa.md` may remain bilingual where they already exist.
+Technical documentation, issues, pull requests, and commits are written in English. The Persian user guide remains in README.fa.md.
