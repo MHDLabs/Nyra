@@ -10,7 +10,6 @@ function baseEnv(overrides = {}) {
   return {
     TELEGRAM_BOT_TOKEN: "1:TEST",
     TELEGRAM_SECRET: "webhook-secret-token-value",
-    ENCRYPTION_KEY: Buffer.from("0".repeat(32)).toString("base64"),
     NYRA_QUEUE: {
       async send(body) {
         if (overrides.queueError) throw new Error("queue down");
