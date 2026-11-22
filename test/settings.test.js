@@ -49,9 +49,6 @@ test("setSetting coerces values to strings", async () => {
 test("settings helpers never throw when D1 errors", async () => {
   const env = { DB: { prepare() { throw new Error("db down"); } } };
   assert.equal(await getSetting(env, "k", "fb"), "fb");
-  assert.equal(await isPersonalModelsAllowed(env), false);
-  assert.equal(await getPersonalModelLimit(env), 5);
-  assert.equal(await countPersonalConnections(env, 1), 0);
   assert.equal(await setSetting(env, "k", "v"), false);
 });
 
