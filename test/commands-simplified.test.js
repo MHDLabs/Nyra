@@ -29,4 +29,6 @@ describe("Commands surface", () => {
       assert.ok(!src.includes(feature), "unexpected legacy feature " + feature);
     }
   });;
+  const telegram = readFileSync(new URL("../src/telegram.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(telegram, /command:\s*"reminders"/);
 });
