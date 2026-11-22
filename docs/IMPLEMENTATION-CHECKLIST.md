@@ -11,10 +11,10 @@ Tracking file for the Nyra product simplification. See [SIMPLIFICATION-ROADMAP.m
 
 ## Phase 1 — Mini App removal
 
-- [ ] Remove Mini App routes, APIs, auth, UI, assets, settings, types, and tests.
-- [ ] Remove Mini App menu-button setup while retaining Telegram bot commands.
-- [ ] Preserve `/admin-panel`, `/admin-api/*`, `src/admin-panel/`, `public/admin-panel/**`, and Assets binding.
-- [ ] Verify admin panel routing and authorization.
+- [x] Remove Mini App routes, APIs, auth, UI, assets, settings, types, and tests.
+- [x] Remove Mini App menu-button setup while retaining Telegram bot commands.
+- [x] Preserve `/admin-panel`, `/admin-api/*`, `src/admin-panel/`, `public/admin-panel/**`, and Assets binding.
+- [x] Verify admin panel routing and authorization (admin-panel auth tests and Wrangler dry-run pass in CI run [#45035340497](https://github.com/MHDLabs/Nyra/actions/runs/45035340497)).
 
 ## Phase 2 — Central AI architecture
 
