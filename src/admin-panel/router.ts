@@ -1,5 +1,5 @@
-// @ts-nocheck — Task 9 progressive UI surface; contracts in types/miniapp.ts
-// Admin panel HTTP API — password-gated, separate from Mini App.
+// @ts-nocheck — existing panel API contracts are progressively typed.
+// Standalone web admin panel HTTP API — password-gated.
 import { now } from "../utils.js";
 import { sendMessageReturn } from "../telegram.js";
 import { tg } from "../telegram.js";
