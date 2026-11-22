@@ -10,7 +10,7 @@ import { now, buildUserContent, checkRateLimit } from "../utils.js";
 import { sendMessageReturn, sendMessage, sendMessageSafeResult, editMessage, deleteMessage, startTypingHeartbeat, pickImageFile, downloadTelegramFile, sendRichMessageSafe } from "../telegram.js";
 import { getUser, upsertUser, getChat, saveThreadMessage, getThreadContext, updateUsageStatsAsync } from "../db.js";
 import { logChatMessage, detectMediaType } from "../db/chat-logs.js";
-import { normalizeError, humanizeError, shouldNotifyAdmin, tryAgentWithFallback, notifyAdminOnError } from "../ai.js";
+import { normalizeError, humanizeError, shouldNotifyAdmin, streamCentralAI, notifyAdminOnError } from "../ai.js";
 import { buildContextMessages, getUserPersonality, consolidateMemory, consolidateChatSummary, incrementMessageCount } from "../memory.js";
 import { safeFormatChunks, plainText, plainTextChunks } from "../formatter.js";
 import { handleExplicitMemoryIntent } from "../tools.js";
@@ -187,15 +187,13 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
   let lastEditedText = "";
   let heartbeatStopped = false;
   let finalUsage: { in?: number; out?: number } | null = null;
-  let finalConn: { connection_id?: string; label?: string; provider?: string; model?: string; [key: string]: unknown } | null = null;
   let finalAttempts = 0;
-  let finalFallbackUsed = false;
   let streamError: { message?: string } | null = null;
   let streamErrorCategory: string | null = null;
   let streamCompleted = false;
 
   try {
-    for await (const rawEvent of tryAgentWithFallback(env, user, messages, streamOptions)) {
+    for await (const rawEvent of streamCentralAI(env, user, messages, streamOptions)) {
       const event: any = rawEvent;
       if (event.type === "text") {
         if (!heartbeatStopped) {
@@ -221,16 +219,12 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
         finalUsage = event.usage;
       } else if (event.type === "done") {
         finalUsage = event.usage;
-        finalConn = event.connection;
         finalAttempts = event.attempts || 1;
-        finalFallbackUsed = !!event.fallbackUsed;
         streamCompleted = true;
       } else if (event.type === "error") {
         streamError = event.error;
         streamErrorCategory = event.category || null;
-        finalConn = event.connection;
         finalAttempts = event.attempts || 0;
-        finalFallbackUsed = event.fallbackUsed || false;
       }
     }
   } catch (e) {
@@ -270,18 +264,12 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
       await sendMessage(env, chatId, applyGuestPrefix(finalText, guestMode, "HTML"), { parse_mode: "HTML" });
     }
     if (shouldNotifyAdmin(category)) {
-      const connForAlert = finalConn || { connection_id: "central", label: "Central AI", provider: "openai-compatible", model: env.AI_MODEL || "not configured" };
       ctx.waitUntil?.(notifyAdminOnError(env, {
-        connection_id: connForAlert ? connForAlert.connection_id : null,
-        connection_label: connForAlert ? connForAlert.label : null,
-        provider: connForAlert ? connForAlert.provider : null,
-        model: connForAlert ? connForAlert.model : null,
         category: category,
         attempts: finalAttempts,
         raw_error: streamError ? (streamError.message || String(streamError)) : "no error detail",
         user_id: userId,
         chat_id: chatId,
-        fallback_used: finalFallbackUsed
       }));
     }
     return;
