@@ -47,6 +47,13 @@ function createLegacyDb() {
     CREATE TABLE routes (route_id TEXT PRIMARY KEY, telegram_id INTEGER NOT NULL, label TEXT NOT NULL, provider TEXT NOT NULL, base_url TEXT, is_default INTEGER DEFAULT 0, display_order INTEGER DEFAULT 100, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
     CREATE TABLE route_models (model_id TEXT PRIMARY KEY, route_id TEXT NOT NULL, model TEXT NOT NULL, label TEXT, is_default INTEGER DEFAULT 0, display_order INTEGER DEFAULT 100, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
     CREATE TABLE route_tokens (token_id TEXT PRIMARY KEY, route_id TEXT NOT NULL, label TEXT, encrypted_key TEXT NOT NULL, key_iv TEXT NOT NULL, encryption_version INTEGER DEFAULT 2, enabled INTEGER DEFAULT 1, is_primary INTEGER DEFAULT 0, display_order INTEGER DEFAULT 100, consecutive_failures INTEGER DEFAULT 0, last_success_at INTEGER, last_used_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+    CREATE TABLE personalities (personality_id TEXT PRIMARY KEY, name TEXT NOT NULL, prompt TEXT NOT NULL, enabled INTEGER DEFAULT 1, is_builtin INTEGER DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+    CREATE TABLE custom_personalities (personality_id TEXT PRIMARY KEY, telegram_id INTEGER NOT NULL, name TEXT NOT NULL, description TEXT, prompt TEXT NOT NULL, enabled INTEGER DEFAULT 1, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+    CREATE TABLE blocked_users (telegram_id INTEGER PRIMARY KEY, reason TEXT, blocked_at INTEGER NOT NULL, blocked_by INTEGER NOT NULL);
+    CREATE TABLE broadcasts (broadcast_id TEXT PRIMARY KEY, created_by INTEGER NOT NULL, message TEXT NOT NULL, target_type TEXT NOT NULL, target_filter TEXT, status TEXT DEFAULT 'draft', total_count INTEGER DEFAULT 0, sent_count INTEGER DEFAULT 0, failed_count INTEGER DEFAULT 0, created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER);
+    CREATE TABLE broadcast_recipients (id INTEGER PRIMARY KEY AUTOINCREMENT, broadcast_id TEXT NOT NULL, recipient_id INTEGER NOT NULL, status TEXT DEFAULT 'pending', error_message TEXT, created_at INTEGER NOT NULL, sent_at INTEGER, claimed_at INTEGER, UNIQUE(broadcast_id, recipient_id));
+    CREATE TABLE chat_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER NOT NULL, chat_type TEXT NOT NULL, message_id INTEGER, user_id INTEGER, role TEXT NOT NULL, content TEXT NOT NULL, media_type TEXT, created_at INTEGER NOT NULL);
+    CREATE TABLE failed_updates (id INTEGER PRIMARY KEY AUTOINCREMENT, update_id INTEGER NOT NULL, user_id INTEGER, chat_id INTEGER, message_text TEXT, error_info TEXT, created_at INTEGER NOT NULL, replayed_at INTEGER);
   `);
   // Columns added by the core "alters" pass (which happens before migrations).
   for (const sql of [
@@ -81,6 +88,18 @@ function seedLegacyData(db) {
     .run(101, 1, 101, 101, "user", "hello", NOW - 1000);
   db.prepare("INSERT INTO route_models (model_id, route_id, model, created_at, updated_at) VALUES (?,?,?,?,?)")
     .run("m-legacy", "r-legacy", "model-smart", NOW - 1000, NOW - 1000);
+  db.prepare("INSERT INTO custom_personalities (personality_id, telegram_id, name, description, prompt, created_at, updated_at) VALUES (?,?,?,?,?,?,?)")
+    .run("custom-ali", 101, "Ali's style", "Personal writing style", "Be concise and practical.", NOW - 1000, NOW - 1000);
+  db.prepare("INSERT INTO blocked_users (telegram_id, reason, blocked_at, blocked_by) VALUES (?,?,?,?)")
+    .run(103, "test block", NOW - 500, 101);
+  db.prepare("INSERT INTO broadcasts (broadcast_id, created_by, message, target_type, status, total_count, sent_count, created_at) VALUES (?,?,?,?,?,?,?,?)")
+    .run("b-legacy", 101, "Maintenance notice", "all_users", "completed", 3, 3, NOW - 900);
+  db.prepare("INSERT INTO broadcast_recipients (broadcast_id, recipient_id, status, created_at, sent_at) VALUES (?,?,?,?,?)")
+    .run("b-legacy", 102, "sent", NOW - 800, NOW - 700);
+  db.prepare("INSERT INTO chat_logs (chat_id, chat_type, message_id, user_id, role, content, created_at) VALUES (?,?,?,?,?,?,?)")
+    .run(101, "private", 42, 101, "assistant", "Welcome back, Ali.", NOW - 600);
+  db.prepare("INSERT INTO failed_updates (update_id, user_id, chat_id, message_text, error_info, created_at) VALUES (?,?,?,?,?,?)")
+    .run(9001, 101, 101, "Retry me", JSON.stringify({ message: "temporary failure" }), NOW - 500);
 }
 
 function applyMigrations(db, migrations) {
@@ -193,6 +212,12 @@ test("upgrading a legacy database preserves data and applies the new defaults", 
   assert.equal(preservedUser.custom_instructions, "Prefer concise answers.");
   assert.deepEqual(JSON.parse(preservedUser.memory_data), { preferred_name: "Ali", explicit_facts: ["Uses Linux"] });
   assert.deepEqual(JSON.parse(preservedUser.usage_stats), { requests: 7 });
+  assert.equal(db.prepare("SELECT prompt FROM custom_personalities WHERE personality_id = ?").get("custom-ali").prompt, "Be concise and practical.");
+  assert.equal(db.prepare("SELECT reason FROM blocked_users WHERE telegram_id = ?").get(103).reason, "test block");
+  assert.equal(db.prepare("SELECT message FROM broadcasts WHERE broadcast_id = ?").get("b-legacy").message, "Maintenance notice");
+  assert.equal(db.prepare("SELECT status FROM broadcast_recipients WHERE broadcast_id = ? AND recipient_id = ?").get("b-legacy", 102).status, "sent");
+  assert.equal(db.prepare("SELECT content FROM chat_logs WHERE message_id = ?").get(42).content, "Welcome back, Ali.");
+  assert.equal(db.prepare("SELECT update_id FROM failed_updates WHERE update_id = ?").get(9001).update_id, 9001);
 
   // Core user, group, and conversation records are retained.
   assert.equal(db.prepare("SELECT COUNT(*) AS c FROM users").get().c, 3);
