@@ -16,7 +16,6 @@ export const RATE_LIMIT_CHAT_PER_HOUR = 200;
 export const RATE_LIMIT_ADMIN_PER_MIN = 10;
 export const RATE_LIMIT_CALLBACK_PER_MIN = 30;
 export const RATE_LIMIT_SETUP_PER_MIN = 5;
-export const RATE_LIMIT_CONN_TEST_PER_MIN = 10;
 // Single attempt per model with a long wall-clock budget (no multi-retry loops).
 export const AI_PRIMARY_ATTEMPT_TIMEOUT_MS = 120000;
 export const AI_MAX_PRIMARY_ATTEMPTS = 1;
@@ -25,9 +24,6 @@ export const AI_MAX_RETRYABLE_ATTEMPTS = 1;
 export const AI_RETRY_DELAYS_MS: number[] = [];
 export const AI_STREAM_STALL_TIMEOUT_MS = 120000;
 export const AI_STREAM_TOTAL_BUDGET_MS = 180000;
-export const AI_TEST_TIMEOUT_MS = 8000;
-export const AI_TEST_HARD_TIMEOUT_MS = 10000;
-export const AI_TEST_MAX_TOKENS = 16;
 export const TELEGRAM_TIMEOUT_MS = 10000;
 export const USER_LAST_SEEN_INTERVAL = 3600;
 export const TELEGRAM_RETRY_MAX = 1;
@@ -39,8 +35,8 @@ export const CALLBACK_ID_MAX = 40;
 export const BOT_IDENTITY_TTL = 3600000;
 export const BOT_IDENTITY_NEGATIVE_TTL = 60000;
 // --- One-click deployment / self-healing ---------------------------------
-// Re-verify the Telegram webhook and the Mini App menu button at most this
-// often (GET /status and the */5 cron share the same KV gates).
+// Re-verify the Telegram webhook and restore the default bot menu at most this
+// often (GET /status and scheduled maintenance share the same KV gate).
 export const WEBHOOK_RECHECK_MS = 6 * 60 * 60 * 1000;
 // Hard cap on Telegram webhook-verification calls: one attempt per window,
 // regardless of how often /status is hit.
@@ -57,132 +53,22 @@ export const MAX_PERSONALITY_DESC = 200;
 export const MAX_CUSTOM_INSTRUCTIONS = 1000;
 export const MAX_LABEL_LENGTH = 50;
 export const MAX_DESCRIPTION_LENGTH = 100;
-export const MAX_MODEL_LENGTH = 100;
 export const MAX_URL_LENGTH = 500;
-export const MAX_API_KEY_LENGTH = 500;
 export const MAX_MEMORY_ENTRY_LENGTH = 300;
-export const UNHEALTHY_FAILURE_THRESHOLD = 5;
-export const UNHEALTHY_WARN_TTL = 3600;
-export const MODELS_PER_PAGE = 6;
-export const CONNECTIONS_PER_PAGE = 6;
 export const ADMIN_NOTIFY_THROTTLE_TTL = 300;
 export const TYPING_HEARTBEAT_MS = 4500;
 export const OPENAI_DEFAULT_URL = "https://api.openai.com/v1";
-export const ANTHROPIC_DEFAULT_URL = "https://api.anthropic.com/v1";
-export const ANTHROPIC_VERSION = "2023-06-01";
 export const APP_TITLE = "Nyra";
 export const MEMORY_RATE_BUCKET_MAX_AGE_MS = 86400000;
-export const CONNECTION_CACHE_TTL_MS = 15000;
 export const NYRA_VARIANTS = ["نیرا", "نيرا"];
 export const STREAM_EDIT_THROTTLE_MS = 1200;
 export const STREAM_PLACEHOLDER = "⏳";
 // Fast-mode models (admin opt-in) bypass the queue and stream straight from the
 // webhook request. ctx.waitUntil caps post-response work at 30s, so the total
 // streaming budget must stay safely below that.
-export const FAST_STREAM_BUDGET_MS = 25000;
-export const FAST_STALL_TIMEOUT_MS = 15000;
-
-// --- Routes (multi-model + multi-token fallback groups) --------------------
-// A route groups one provider/base_url with several models and several API
-// tokens. The AI layer walks tokens first (cheapest failover), then models.
-export const MAX_ROUTE_MODELS = 20;
-export const MAX_ROUTE_TOKENS = 10;
-export const ROUTES_PER_PAGE = 6;
-export const MAX_ROUTE_LABEL_LENGTH = 50;
-export const MAX_TOKEN_LABEL_LENGTH = 40;
-export const ROUTE_TOKEN_UNHEALTHY_THRESHOLD = 3;
-export const ROUTE_TOKEN_COOLDOWN_TTL = 300;
-// Personal (non-global) routes/connections are opt-in per deployment: an admin
-// flips `allow_personal_models` in the Mini App admin panel.
-export const SETTING_ALLOW_PERSONAL_MODELS = "allow_personal_models";
-export const SETTING_PERSONAL_MODEL_LIMIT = "personal_model_limit";
-export const DEFAULT_PERSONAL_MODEL_LIMIT = 5;
-
-// --- Shared service (admin-provided global connections) --------------------
-// A global connection is paid for by the operator, so it is a "shared service"
-// with its own kill switch and per-user daily quotas. Enforcement is server
-// side, in the AI request path, not in the Mini App UI.
-export const SETTING_SHARED_SERVICE_ENABLED = "shared_service_enabled";
-export const SETTING_SHARED_REQUEST_LIMIT = "shared_daily_request_limit";
-export const SETTING_SHARED_TOKEN_LIMIT = "shared_daily_token_limit";
-// 0 means "no limit". Quotas are counted per user per UTC day.
-export const DEFAULT_SHARED_REQUEST_LIMIT = 100;
-export const DEFAULT_SHARED_TOKEN_LIMIT = 250000;
-
-// --- Tasks & Reminders -----------------------------------------------------
-// Scheduling reuses the existing `*/5 * * * *` cron trigger, so a reminder can
-// be delivered up to one cron interval late. That is the documented precision
-// floor: no sub-5-minute guarantee is made anywhere.
-export const CRON_INTERVAL_MINUTES = 5;
-export const MAX_REMINDER_TITLE = 200;
-export const MAX_REMINDER_DESCRIPTION = 1000;
-export const MAX_REMINDERS_PER_USER = 100;
-export const REMINDER_LIST_PAGE = 8;
-// Delivery batch bounds. One cron tick processes at most this many reminders,
-// and each delivery attempt is a single indexed row update plus one Telegram
-// call — never a long transaction, never an LLM request.
-export const REMINDER_BATCH_SIZE = 15;
-export const REMINDER_MAX_ATTEMPTS = 3;
-// A claim older than this is assumed to belong to a crashed invocation and is
-// returned to the pending pool. Must exceed the worst-case send timeout.
-export const REMINDER_CLAIM_LEASE_S = 300;
-// Delivery retry backoff in seconds, indexed by attempt number (0-based).
-export const REMINDER_RETRY_BACKOFF_S: number[] = [60, 300, 900];
-// How long a pending "which time did you mean?" clarification stays armed.
-export const REMINDER_CLARIFY_TTL = 1800;
-export const REMINDER_TIME_BUCKETS: string[] = ["minute", "hour", "day", "week", "month", "year"];
-export const REMINDER_STATUSES: string[] = ["pending", "processing", "sent", "completed", "cancelled", "failed"];
-// Offered as one-tap timezone buttons. Never applied automatically: a user with
-// no stored timezone is always asked before their first reminder is scheduled.
-export const REMINDER_TZ_SUGGESTIONS: string[] = [
-  "Asia/Tehran", "Asia/Kabul", "Asia/Baghdad", "Asia/Dubai",
-  "Europe/Istanbul", "Europe/London", "Europe/Berlin", "America/New_York", "UTC"
-];
-export const REMINDER_TZ_HINT_FOR_LANGUAGE: Record<string, string> = { fa: "Asia/Tehran", ps: "Asia/Kabul", ar: "Asia/Riyadh", tr: "Europe/Istanbul" };
-
-// --- Workers AI error brain ------------------------------------------------
-// The brain reads a provider error and picks the recovery action (retry the
-// same endpoint, fail over to the next token/model, or give up). Its verdicts
-// are cached by error signature so the free AI tier is barely touched.
-export const AI_BRAIN_TIMEOUT_MS = 2500;
-export const AI_BRAIN_CACHE_TTL = 3600;
-export const AI_BRAIN_MODEL = "@cf/meta/llama-3.1-8b-instruct";
-
-export const LANGUAGE_RULE_PROMPT = "Language rule: Always respond in Persian (Farsi) by default, regardless of what language the user writes in — even if they write in English, mix languages, or ask about a technical topic. The only exception: when the user explicitly requests a different language in their message (for example \"answer in English\", \"به انگلیسی جواب بده\", \"en français\"), respond in that language for that single reply, then return to Persian for the next replies. Do not switch language just because the user wrote in another language, used an English term, or the topic is technical.";
-
-export const PERSIAN_STYLE_RULES_PROMPT = "Persian writing rules for every response:\n\nAvoid the machine-like patterns common in AI writing. Do not:\n- Open with clichés (در دنیای امروز، لازم به ذکر است، در این مقاله قصد داریم)\n- Use filler adverbs (در واقع، بدون شک، به طور کلی) unless they carry real meaning\n- Force artificial contrasts (فقط X نیست؛ Y است) — state the point directly\n- Fake suspense (چیزی که کمتر کسی می‌داند، نکته‌ای که اغلب نادیده گرفته می‌شود)\n- Use dramatic colons in prose — colons are for lists, labels, quotes\n- Ask rhetorical questions then answer them immediately\n- Comment on importance (که نشان‌دهنده تعهد است، که گواهی بر کیفیت است)\n- Attribute vaguely (کارشناسان معتقدند، تحقیقات نشان می‌دهد) — cite or drop\n- Use weak nominal verbs (نقش ایفا می‌کند) — use direct verbs (X را انجام می‌دهد)\n- Rotate technical terms for variety — pick one and stick to it\n- Chain staccato sentences (ساده است. سریع است. دقیق است.) unless deliberate\n- End with philosophical lines (آینده در راه نیست؛ همین حالا اینجاست)\n- Add repetitive summaries (در پایان می‌توان گفت، در مجموع)\n- Sprinkle decorative emojis or bold words\n- Build bullet lists for two short sentences\n- Chain three equal adjectives (سریع، دقیق و هوشمند) without real content\n- Chain «می‌تواند» sentences — be direct about what something does\n- Add generic CTAs (همین امروز قدم اول را بردارید)\n\nVocabulary: Prefer Persian words when the field uses them (رایانه، پایگاه داده، پرونده، بارگیری، پوشه، پیوند، گذرواژه، کارساز، سامانه، فناوری، سازوکار، فرایند، روش، واکاوی، گروه، فهرست، دیدگاه، نمایه، قالب). Keep the loanword when it IS the term of the field (الگوریتم، پروتکل، کامپایلر، API، توکن، کرنل، URL، نام محصولات و برندها). Never invent a Persian term. Readability always wins over purity. Be consistent within a single reply.\n\nThe active personality below may add its own flavor — humor, warmth, formality — but the anti-cliché rules above always apply. A funny reply can be funny without using «در دنیای امروز» or «بیایید صادق باشیم».";
-
-// --- Speech to text (Telegram voice messages only) -------------------------
-// Groq's documented OpenAI-compatible transcription endpoint. `whisper-large-v3-turbo`
-// is preferred: same accuracy band as large-v3 at a fraction of the cost/latency.
-// Transcription is at-most-once per voice message and its result is dropped once
-// the originating message leaves the context window (MAX_CONTEXT_MESSAGES).
-export const GROQ_STT_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
-export const GROQ_STT_MODEL = "whisper-large-v3-turbo";
-export const STT_TIMEOUT_MS = 20000;
-export const STT_MAX_BYTES = 8 * 1024 * 1024;
-export const STT_MAX_TRANSCRIPT = 2000;
-
-// --- Text to speech (Microsoft Edge read-aloud service) --------------------
-// Off by default: the service is undocumented, so it ships behind a flag and a
-// failed synthesis must never block or degrade the text reply.
-//
-// Known blocker (verified, not assumed): the read-aloud endpoint completes the
-// WebSocket handshake only when the request carries Edge's own `Origin` and
-// `User-Agent` headers. A bare connection to EDGE_TTS_URL closes with code 1006.
-// The runtime `WebSocket` constructor accepts a URL and protocols only — it
-// cannot set request headers — so synthesis from inside a Worker cannot succeed
-// until either that API grows header support or a proxy supplies them. The
-// adapter therefore reports `socket_unavailable` and callers fall back to text.
-export const EDGE_TTS_ENABLED_DEFAULT = false;
-export const EDGE_TTS_URL = "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1";
-export const EDGE_TTS_TIMEOUT_MS = 15000;
-export const EDGE_TTS_MAX_CHARS = 800;
 
 // --- Localization & onboarding --------------------------------------------
-// The only shipped locales. Locale is persisted per user (users.locale) and is
-// shared by the Telegram bot and the Mini App. DEFAULT_LOCALE applies to users
-// whose Telegram language_code is neither fa nor en.
+// The only shipped locales. Locale is persisted per user (users.locale).
 export const SUPPORTED_LOCALES = ["en-US", "fa-IR"];
 export const DEFAULT_LOCALE = "en-US";
 // Bump when the onboarding sequence changes in a way that must be shown again.
