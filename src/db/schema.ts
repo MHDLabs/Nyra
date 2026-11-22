@@ -19,6 +19,16 @@ let migrationsSettled = false;
 const RETIRED_PERSONALITY_SQL = RETIRED_PERSONALITY_IDS.map(function (id) { return "'" + id + "'"; }).join(",");
 
 
+async function isMigrationApplied(env: NyraEnv, id: number) {
+  try {
+    const row = await env.DB.prepare("SELECT id FROM schema_migrations WHERE id = ?").bind(id).first();
+    return !!row;
+  } catch {
+    // A missing schema_migrations table means this is a fresh database.
+    return false;
+  }
+}
+
 export async function ensureSchema(env: NyraEnv) {
   if (schemaReady) {
     // Base tables already exist in this isolate, but the database itself may
@@ -30,7 +40,8 @@ export async function ensureSchema(env: NyraEnv) {
     catch (err) { console.error("Migration probe failed:", (err instanceof Error ? err.message : String(err))); return; }
     schemaReady = false;
   }
-  const statements = [
+  const retiredStateAlreadyCleaned = await isMigrationApplied(env, 23);
+  let statements = [
     "CREATE TABLE IF NOT EXISTS users (telegram_id INTEGER PRIMARY KEY, first_name TEXT, last_name TEXT, username TEXT, language_code TEXT, preferred_name TEXT, personality_id TEXT DEFAULT 'default', custom_instructions TEXT, memory_mode TEXT DEFAULT 'normal', memory_data TEXT DEFAULT '{}', usage_stats TEXT DEFAULT '{}', fallback_enabled INTEGER DEFAULT 1, msg_counter INTEGER DEFAULT 0, active_connection_id TEXT, active_route_id TEXT, locale TEXT, onboarding_state TEXT, onboarding_completed INTEGER DEFAULT 0, onboarding_version INTEGER DEFAULT 0, onboarding_started_at INTEGER, active_profile_id TEXT, created_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
     "CREATE INDEX IF NOT EXISTS idx_users_last_seen ON users(last_seen_at)",
     "CREATE TABLE IF NOT EXISTS chats (chat_id INTEGER PRIMARY KEY, chat_type TEXT NOT NULL, title TEXT, enabled INTEGER DEFAULT 1, mode TEXT DEFAULT 'enabled', disabled_by_admin INTEGER DEFAULT 0, summary TEXT DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
@@ -67,6 +78,26 @@ export async function ensureSchema(env: NyraEnv) {
     "CREATE INDEX IF NOT EXISTS idx_voice_transcripts_created ON voice_transcripts(created_at)",
     "CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)"
   ];
+  const retiredSchemaPrefixes = [
+    "CREATE TABLE IF NOT EXISTS ai_connections",
+    "CREATE INDEX IF NOT EXISTS idx_conn_",
+    "CREATE TABLE IF NOT EXISTS routes",
+    "CREATE INDEX IF NOT EXISTS idx_routes_",
+    "CREATE TABLE IF NOT EXISTS route_models",
+    "CREATE INDEX IF NOT EXISTS idx_route_models_",
+    "CREATE TABLE IF NOT EXISTS route_tokens",
+    "CREATE INDEX IF NOT EXISTS idx_route_tokens_",
+    "CREATE TABLE IF NOT EXISTS shared_service_usage",
+    "CREATE INDEX IF NOT EXISTS idx_shared_usage_",
+    "CREATE TABLE IF NOT EXISTS voice_transcripts",
+    "CREATE INDEX IF NOT EXISTS idx_voice_transcripts_"
+  ];
+  const retiredBootstrap = statements.filter(function (sql) {
+    return retiredSchemaPrefixes.some(function (prefix) { return sql.indexOf(prefix) === 0; });
+  });
+  statements = statements.filter(function (sql) { return retiredBootstrap.indexOf(sql) === -1; });
+  if (!retiredStateAlreadyCleaned) statements.push.apply(statements, retiredBootstrap);
+
   const schemaErrors: string[] = [];
   for (let i = 0; i < statements.length; i++) {
     try { await env.DB.prepare(statements[i]).run(); }
@@ -118,10 +149,13 @@ export async function ensureSchema(env: NyraEnv) {
     // never enabled (the old default). Migration 10 enables the latter only.
     ["chats", "disabled_by_admin", "INTEGER DEFAULT 0"]
   ];
-  for (let i = 0; i < alters.length; i++) {
-    const table = alters[i][0];
-    const column = alters[i][1];
-    const def = alters[i][2];
+  const activeAlters = retiredStateAlreadyCleaned
+    ? alters.filter(function (item) { return item[0] !== "ai_connections"; })
+    : alters;
+  for (let i = 0; i < activeAlters.length; i++) {
+    const table = activeAlters[i][0];
+    const column = activeAlters[i][1];
+    const def = activeAlters[i][2];
     try {
       const cols = await env.DB.prepare("PRAGMA table_info(" + table + ")").all();
       const hasCol = (cols.results || []).some(function (c) { return c.name === column; });
@@ -326,7 +360,35 @@ const CORE_MIGRATIONS = [
   }
 ];
 
-const MIGRATIONS = CORE_MIGRATIONS.concat(ROUTING_MIGRATIONS);
+const SIMPLIFICATION_MIGRATIONS = [
+  {
+    id: 23,
+    label: "remove retired provider credentials and feature-only persistence",
+    statements: [
+      // These tables contain only state belonging to explicitly removed features.
+      // Core conversations, profiles, usage statistics, broadcasts, groups, and
+      // admin records are deliberately not touched.
+      "DROP TABLE IF EXISTS routing_profile_entries",
+      "DROP TABLE IF EXISTS routing_profiles",
+      "DROP TABLE IF EXISTS connection_models",
+      "DROP TABLE IF EXISTS connection_usage",
+      "DROP TABLE IF EXISTS route_models",
+      "DROP TABLE IF EXISTS route_tokens",
+      "DROP TABLE IF EXISTS routes",
+      "DROP TABLE IF EXISTS ai_connections",
+      "DROP TABLE IF EXISTS shared_service_usage",
+      "DROP TABLE IF EXISTS voice_transcripts",
+      "DROP TABLE IF EXISTS reminder_delivery_attempts",
+      "DROP TABLE IF EXISTS reminders",
+      "DROP TABLE IF EXISTS proactive_delivery_attempts",
+      "DROP TABLE IF EXISTS schedule_delivery_attempts",
+      "DROP TABLE IF EXISTS schedules",
+      "DELETE FROM app_settings WHERE key IN ('workers_ai_policy', 'workers_ai_model', 'allow_personal_models', 'personal_model_limit', 'shared_service_enabled', 'shared_daily_request_limit', 'shared_daily_token_limit', 'allow_cross_source_fallback')"
+    ]
+  }
+];
+
+const MIGRATIONS = CORE_MIGRATIONS.concat(ROUTING_MIGRATIONS, SIMPLIFICATION_MIGRATIONS);
 
 // Exposed for offline migration tests (test/migrations*.test.js), which apply
 // these statements to an in-memory SQLite database. Not used at runtime.
