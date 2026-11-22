@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { generateAgentWithConnection, tryAgentWithFallback } from "../src/providers/fallback.js";
+import { generateCentralAgent, streamCentralAI } from "../src/providers/fallback.js";
 
 function centralEnv() {
   return {
@@ -39,10 +39,9 @@ test("central OpenAI-compatible tool call receives its result and final answer",
       };
     }
   };
-  const result = await generateAgentWithConnection(
+  const result = await generateCentralAgent(
     env,
     { telegram_id: 12, is_group: false },
-    null,
     [{ role: "user", content: "remember that I prefer brief replies" }],
     { max_tokens: 200 }
   );
@@ -67,11 +66,10 @@ test("central execution performs one model attempt and never switches providers"
     );
   };
   const events = [];
-  for await (const event of tryAgentWithFallback(env, { telegram_id: 12 }, [{ role: "user", content: "hello" }], { totalBudgetMs: 5000 })) {
+  for await (const event of streamCentralAI(env, { telegram_id: 12 }, [{ role: "user", content: "hello" }], { totalBudgetMs: 5000 })) {
     events.push(event);
   }
   assert.equal(requests, 1);
   assert.equal(events.filter(event => event.type === "done").length, 1);
   assert.equal(events.find(event => event.type === "done").attempts, 1);
-  assert.equal(events.find(event => event.type === "done").fallbackUsed, false);
 });
