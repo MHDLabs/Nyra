@@ -28,7 +28,10 @@ describe("Commands surface", () => {
     for (const feature of ["remind", "reminders", "timezone", "active_connection_id", "adm:conns", "mypersonal"]) {
       assert.ok(!src.includes(feature), "unexpected legacy feature " + feature);
     }
-  });;
-  const telegram = readFileSync(new URL("../src/telegram.ts", import.meta.url), "utf8");
-  assert.doesNotMatch(telegram, /command:\s*"reminders"/);
+  });
+
+  it("does not advertise the removed reminders command in Telegram", () => {
+    const telegram = readFileSync(new URL("../src/telegram.ts", import.meta.url), "utf8");
+    assert.doesNotMatch(telegram, /command:\s*"reminders"/);
+  });
 });
