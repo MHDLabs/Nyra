@@ -19,7 +19,6 @@ test("handleStatus returns plain text body with secrets section", async () => {
   const env = {
     TELEGRAM_BOT_TOKEN: "",
     TELEGRAM_SECRET: "",
-    ENCRYPTION_KEY: "bad",
     ADMIN_IDS: "",
     DB: {
       prepare() {
@@ -69,7 +68,6 @@ test("handleStatus reports configured admins", async () => {
   const env = {
     TELEGRAM_BOT_TOKEN: "",
     TELEGRAM_SECRET: "",
-    ENCRYPTION_KEY: "bad",
     DB: {
       prepare() {
         return {
