@@ -22,16 +22,14 @@ workers_dev = true
 [placement]
 mode = "smart"
 
-# Static assets — the Mini App lives in ./public and is served by Cloudflare's
-# native asset layer (no inlined copy in the Worker bundle). Requests under
-# run_worker_first still go to the Worker first so the secret gate, the Telegram
-# webhook, /setup, the /status bootstrap page and the /api/* endpoints all stay
-# Worker-owned; everything else is served directly from ./public.
+# Static assets are retained for the standalone web admin panel under
+# ./public/admin-panel. The application root is intentionally not a Mini App;
+# only admin paths are routed through the Worker before asset serving.
 [assets]
 directory = "public"
 binding = "ASSETS"
 not_found_handling = "none"
-run_worker_first = ["/", "/index.html", "/app.js", "/styles.css", "/webhook", "/setup", "/status", "/api/*", "/admin-panel", "/admin-panel/*", "/admin-api/*"]
+run_worker_first = ["/", "/webhook", "/setup", "/status", "/admin-panel", "/admin-panel/*", "/admin-api/*"]
 
 [triggers]
 # Self-healing (part of the zero-manual-setup flow): the scheduled handler
