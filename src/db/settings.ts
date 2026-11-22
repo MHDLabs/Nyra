@@ -58,7 +58,7 @@ export async function setWorkersAIModel(env: NyraEnv, model, updatedBy) {
 
 export async function canUseWorkersAI(env: NyraEnv, userId) {
   const policy = await getWorkersAIPolicy(env);
-  if (policy === "disabled" || !env || !env.AI || typeof env.AI.run !== "function") return false;
+  if (policy === "disabled") return false;
   if (policy === "all") return true;
   const { isAdmin } = await import("../utils.js");
   return isAdmin(env, userId);
