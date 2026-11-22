@@ -24,12 +24,9 @@
 // skipped for that chat.
 import { checkRateLimit, containsNyraWord } from "./utils.js";
 import { tg } from "./telegram.js";
-import { canUseWorkersAI } from "./db.js";
-const REACTION_TIMEOUT_MS = 4000; // 4s deadline per AI call
 const REACTION_RATE_LIMIT_PER_MIN = 20;
 const REJECT_CACHE_TTL_S = 3600; // remember a chat's rejected emoji for an hour
 const LAST_REACTION_TTL_S = 300; // anti-repeat window per chat
-const CLASSIFY_MODEL = "@cf/meta/llama-3.1-8b-instruct";
 
 /**
  * Every emoji Telegram accepts as a message reaction, in one place so the gate
@@ -81,20 +78,6 @@ const LABEL_ALTERNATES = {
   "negative": ["💔"],
   "very_negative": ["😭"]
 };
-
-const CLASSIFY_SYSTEM_PROMPT = [
-  "You label one chat message so a bot can pick a single emoji reaction.",
-  "The message may be in any language, including Persian/Farsi, English, or a mix.",
-  "Judge the intent of the message, not the language it is written in.",
-  "Answer with EXACTLY ONE word from this list and nothing else:",
-  "very_positive, positive, funny, surprised, question, neutral, angry, negative, very_negative.",
-  "very_positive = love or warm praise; positive = approval or thanks;",
-  "funny = joke or light teasing; surprised = astonishment;",
-  "question = the message asks something; neutral = plain statement;",
-  "angry = hostility or insult; negative = displeasure or complaint;",
-  "very_negative = grief or strong hurt.",
-  "If the message does not clearly fit one label, answer neutral."
-].join(" ");
 
 /** True when Telegram accepts this emoji as a reaction. */
 export function isTelegramReaction(emoji) {
@@ -336,38 +319,13 @@ async function avoidRepeatedReaction(env, chatId, label, emoji, allowed) {
  * usable, only the narrow heuristic is tried, and failing that: no reaction.
  */
 export async function classifyReaction(env, text, allowed, userId) {
-  if (!env.AI || !(await canUseWorkersAI(env, userId))) {
-    console.warn("Workers AI binding not available");
-    return null;
-  }
-  if (!text || text.length < 3) return null;
-  const sample = text.substring(0, 500); // Limit input length
-
-  // An explicit array is authoritative; an empty one means "nothing allowed".
+  if (!text || String(text).trim().length < 3) return null;
+  const sample = String(text).substring(0, 500);
   const whitelist = Array.isArray(allowed) ? allowed : await getAllowedReactions(env, null);
   const map = restrictMapToAllowed(whitelist);
-  // Every label's emoji is unavailable in this chat: nothing may be applied.
   if (Object.keys(map).length === 0) return null;
-
-  let label = null;
-  try {
-    const result = await withTimeout(env.AI.run(CLASSIFY_MODEL, {
-      messages: [
-        { role: "system", content: CLASSIFY_SYSTEM_PROMPT },
-        { role: "user", content: "Message:\n\"\"\"" + sample + "\"\"\"\nLabel:" }
-      ],
-      max_tokens: 8,
-      temperature: 0
-    }), REACTION_TIMEOUT_MS);
-    label = pickLabel(result);
-  } catch (err) {
-    if (err.message !== "timeout") console.error("Workers AI reaction labels failed:", err.message);
-  }
-
-  if (!label) label = heuristicReaction(sample);
-  if (!label) return null;
-  // A label whose emoji this chat forbids is a legitimate "no reaction".
-  return map[label] || null;
+  const label = heuristicReaction(sample);
+  return label ? (map[label] || null) : null;
 }
 
 /**
