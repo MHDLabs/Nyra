@@ -172,10 +172,10 @@ export async function ensureWebhook(env: NyraEnv, origin) {
   }
 }
 
-// Remove a previously registered Mini App menu button once after upgrade.
+// Restore the default Telegram menu button once after removing the legacy WebApp.
 // Telegram keeps custom menu buttons remotely, so deleting local Mini App code
 // alone would leave users with a dead WebApp entry in their chat UI.
-export async function removeMiniAppMenuButton(env: NyraEnv) {
+export async function restoreDefaultMenuButton(env: NyraEnv) {
   try {
     if (!env.TELEGRAM_BOT_TOKEN) return { ok: false, status: "no_token" };
     let state: any = null;
@@ -184,7 +184,7 @@ export async function removeMiniAppMenuButton(env: NyraEnv) {
       state = raw ? JSON.parse(raw) : null;
     } catch (err) { state = null; }
     const nowMs = Date.now();
-    if (state && state.mode === "commands" && state.setAt && nowMs - state.setAt < WEBHOOK_RECHECK_MS) {
+    if (state && state.mode === "commands") {
       return { ok: true, status: "already_default" };
     }
     const result = await tg(env, "setChatMenuButton", { menu_button: { type: "commands" } });
@@ -195,7 +195,7 @@ export async function removeMiniAppMenuButton(env: NyraEnv) {
     }
     return { ok: false, status: "error", detail: (result && result.description) || "setChatMenuButton failed" };
   } catch (err) {
-    console.error("removeMiniAppMenuButton failed:", err.message);
+    console.error("restoreDefaultMenuButton failed:", err.message);
     return { ok: false, status: "error", detail: err.message };
   }
 }
