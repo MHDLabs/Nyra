@@ -14,7 +14,7 @@ Tracking file for the Nyra product simplification. See [SIMPLIFICATION-ROADMAP.m
 - [x] Remove Mini App routes, APIs, auth, UI, assets, settings, types, and tests.
 - [x] Remove Mini App menu-button setup while retaining Telegram bot commands.
 - [x] Preserve `/admin-panel`, `/admin-api/*`, `src/admin-panel/`, `public/admin-panel/**`, and Assets binding.
-- [x] Verify admin panel routing and authorization (admin-panel auth tests and Wrangler dry-run pass in CI run [#45035340497](https://github.com/MHDLabs/Nyra/actions/runs/45035340497)).
+- [x] Verify admin panel routing and authorization (auth regression tests and Wrangler dry-run pass in the latest CI run [#45051910112](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)).
 
 ## Phase 2 — Central AI architecture
 
@@ -31,7 +31,7 @@ Tracking file for the Nyra product simplification. See [SIMPLIFICATION-ROADMAP.m
 ## Phase 3 — Data and configuration
 
 - [x] Add migration 23 to physically remove retired-feature-only tables, columns, and settings; historical migrations remain untouched and deployment is gated by backup/data-retention review.
-- [ ] Preserve conversations, messages, memories, profiles, groups, admin data, broadcasts, and useful usage history.
+- [x] Verify preservation of users, custom instructions, memory, usage stats, groups, messages, custom personalities, blocked users, broadcasts/recipients, chat logs, failed-update/DLQ records, and admin chat listing after migration 23.
 - [x] Remove obsolete runtime database repositories, types, settings, and provider credential encryption; physical cleanup is handled by forward-only migration 23.
 - [x] Preserve historical migration files.
 - [x] Remove the obsolete ENCRYPTION_KEY requirement after removing retained runtime use; AI_API_KEY remains a server-side Worker secret.
@@ -52,17 +52,17 @@ Tracking file for the Nyra product simplification. See [SIMPLIFICATION-ROADMAP.m
 - [x] Update English and Persian READMEs.
 - [x] Update PRODUCT-SCOPE.md and configuration docs; AGENTS.md and the constitution already reflected the approved target. Workflow did not require a product-specific change.
 - [x] Keep Web Admin Panel routes/assets/auth and remove the obsolete model-management screen.
-- [ ] Complete a repository-wide stale-reference audit; historical migration references are intentionally retained.
+- [x] Search runtime source, types, tests, commands, package manifests, Worker configuration, and docs for retired-feature references. Remaining matches are intentional historical migrations, migration fixtures/assertions, generic secret redaction, and one-time Telegram menu cleanup comments.
 
 ## Phase 6 — Final verification
 
-- [x] `npm ci` (PR CI)
-- [x] `npm run typecheck` (PR CI)
-- [x] `npm run test:all` (PR CI)
-- [x] `./node_modules/.bin/wrangler deploy --dry-run` (PR CI)
+- [x] `npm ci` — latest PR CI [#45051910112](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)
+- [x] `npm run typecheck` — latest PR CI [#45051910112](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)
+- [x] `npm run test:all` — latest PR CI [#45051910112](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)
+- [x] `./node_modules/.bin/wrangler deploy --dry-run` — latest PR CI [#45051910112](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)
 - [x] Focused regression tests pass, including migration safety, central AI configuration/security, and post-migration admin chat listing.
-- [ ] Full diff and removed-feature searches reviewed.
-- [x] CI remains two CodeQL checks plus one combined verification/deploy workflow; no duplicate pre-deploy test workflow was reintroduced.
+- [ ] Complete manual, line-by-line review of every changed file in the 144-file PR (automated stale-reference and targeted risk review are complete).
+- [x] Verify CI remains two CodeQL analyses plus one combined verification/deploy workflow; latest CodeQL run [#45051906761](https://github.com/MHDLabs/Nyra/actions/runs/45051906761) and CI run [#45051910112](https://github.com/MHDLabs/Nyra/actions/runs/45051910112) both pass. No duplicate pre-deploy test workflow was reintroduced.
 - [x] Draft PR #132 opened with CI evidence; no production deploy or production data mutation.
 
 > A task remains unchecked until the actual implementation and its verification evidence are available. Documentation updates alone do not complete runtime tasks.
