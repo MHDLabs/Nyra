@@ -1,6 +1,6 @@
 # Nyra Simplification Roadmap
 
-**Status:** In progress  
+**Status:** Implementation complete; final CI-backed review in progress  
 **Working branch:** `refactor/full-product-simplification`  
 **Base:** `main` at `2b12ab4cd7308b2c7209eb1e43e63899c2a47408`  
 **Principle:** Keep it simple :)
@@ -36,18 +36,18 @@ This roadmap tracks the approved runtime simplification. A checkbox is completed
 - [x] Remove multi-model, multi-provider, route, token-rotation, and cross-model fallback logic.
 - [x] Remove the Shared Service mode and its separate quotas/settings surface.
 - [x] Preserve ordinary per-user/per-chat rate limits and usage accounting.
-- [ ] Add explicit regression coverage for API-key redaction and browser/API non-exposure.
+- [x] Add regression coverage for API-key redaction in admin error notifications, user-detail API responses, and admin browser assets.
 
 **Exit:** All users use exactly one centrally configured OpenAI-compatible endpoint and model; no provider/model management surface remains.
 
 ## Phase 3 — Safe database and configuration cleanup
 
-- [x] Remove runtime references and preserve historical migration files; physical schema cleanup remains gated on a complete inventory.
-- [ ] Add and test a forward-only, idempotent migration to remove retired-only credentials and feature state.
+- [x] Remove runtime references and preserve historical migration files.
+- [x] Add migration 23 to remove retired-only credentials, routing, reminder, voice, schedule, proactive, and obsolete settings state; regression tests cover the legacy schema and safe preservation.
 - [x] Remove obsolete runtime database repositories, types, and settings.
 - [x] Preserve conversations, messages, memories, profiles, groups, admin records, broadcasts, and usage data.
 - [x] Preserve historical migrations; no production data has been touched.
-- [x] Remove `ENCRYPTION_KEY` from runtime requirements; encrypted legacy BYOK rows remain pending explicit cleanup.
+- [x] Remove `ENCRYPTION_KEY` from runtime requirements; migration 23 removes legacy encrypted BYOK rows and associated connection tables.
 - [x] Remove obsolete Workers AI binding and encryption-key requirement; keep central `AI_API_KEY` server-side.
 
 **Exit:** Runtime no longer depends on retired tables/columns; preserved data is protected by migration regression tests.
@@ -75,14 +75,14 @@ This roadmap tracks the approved runtime simplification. A checkbox is completed
 
 ## Phase 6 — Validation and review
 
-- [ ] Run `npm ci`.
-- [ ] Run `npm run typecheck` (worker and web).
-- [ ] Run `npm run test:all`.
-- [ ] Run `./node_modules/.bin/wrangler deploy --dry-run`.
-- [ ] Add/verify focused regression tests for central AI configuration, retained Telegram behavior, admin panel, and migration safety.
+- [x] Run `npm ci` (latest PR CI).
+- [x] Run `npm run typecheck` (latest PR CI).
+- [x] Run `npm run test:all` (latest PR CI).
+- [x] Run `./node_modules/.bin/wrangler deploy --dry-run` (latest PR CI).
+- [x] Verify focused regression tests for central AI configuration/security, retained admin panel behavior, and migration safety.
 - [ ] Review the complete diff and search for retired feature references.
 - [ ] Verify GitHub Actions remains one combined CI/deploy workflow plus the two CodeQL checks.
-- [ ] Open a reviewable PR; do not merge or deploy to production without explicit authorization.
+- [x] Open Draft PR #132 with CI evidence; do not merge or deploy to production without explicit authorization.
 
 **Exit:** All available checks pass, the PR documents evidence and known limitations, and no production deployment/data mutation occurred.
 
