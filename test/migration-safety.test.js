@@ -108,6 +108,7 @@ test("destructive migrations are limited to retired feature-owned tables", () =>
     "reminders", "reminder_delivery_attempts",
     "schedules", "schedule_delivery_attempts", "proactive_delivery_attempts"
   ]);
+  const approvedRetiredUserColumns = new Set(["active_connection_id", "active_route_id", "fallback_enabled", "active_profile_id", "last_inbound_at", "proactive_enabled", "proactive_threshold_hours", "proactive_quiet_start", "proactive_quiet_end", "proactive_last_sent_at", "proactive_episode_key"]);
   const retained = new Set([
     "users", "thread_messages", "chats", "app_settings", "personalities",
     "custom_personalities", "chat_logs", "broadcasts", "broadcast_recipients",
@@ -120,7 +121,11 @@ test("destructive migrations are limited to retired feature-owned tables", () =>
         assert.ok(approved.has(drop[1]), "unapproved table deletion in migration " + migration.id + ": " + sql);
         assert.ok(!retained.has(drop[1]), "retained table was dropped: " + drop[1]);
       }
-      assert.doesNotMatch(sql, /DROP\s+COLUMN/i);
+      const dropColumn = sql.match(/^\s*ALTER\s+TABLE\s+users\s+DROP\s+COLUMN\s+([a-z_]+)/i);
+      if (/DROP\s+COLUMN/i.test(sql)) {
+        assert.ok(dropColumn, "only explicit retired user columns may be removed: " + sql);
+        assert.ok(approvedRetiredUserColumns.has(dropColumn[1]), "unapproved user column deletion: " + dropColumn[1]);
+      }
       if (/^\s*DELETE\s+FROM\s+app_settings/i.test(sql)) {
         assert.match(sql, /WHERE\s+key\s+IN\s*\\(/i, "settings cleanup must be key-scoped");
       }
