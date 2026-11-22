@@ -8,7 +8,6 @@
 //   messages-core.js      shared generic strings (errors, common actions)
 //   messages-telegram.js  bot messages: onboarding, commands, groups, maintenance
 //   messages-routing.js   provider/model/routing errors and labels
-//   messages-miniapp.js   Mini App navigation, settings and admin UI labels
 //
 // `t(locale, key, params)` is the only way user-facing text should be produced.
 // A missing key falls back to en-US, then to the key itself, so a missing
@@ -16,7 +15,6 @@
 import { CORE_MESSAGES } from "./messages-core.js";
 import { TELEGRAM_MESSAGES } from "./messages-telegram.js";
 import { ROUTING_MESSAGES } from "./messages-routing.js";
-import { MINIAPP_MESSAGES } from "./messages-miniapp.js";
 
 export const SUPPORTED_LOCALES = ["en-US", "fa-IR"] as const;
 export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
@@ -28,8 +26,7 @@ type LocaleTable = Record<SupportedLocale, MessageDict>;
 const DOMAINS: Array<Partial<Record<string, MessageDict>>> = [
   CORE_MESSAGES as Partial<Record<string, MessageDict>>,
   TELEGRAM_MESSAGES as Partial<Record<string, MessageDict>>,
-  ROUTING_MESSAGES as Partial<Record<string, MessageDict>>,
-  MINIAPP_MESSAGES as Partial<Record<string, MessageDict>>
+  ROUTING_MESSAGES as Partial<Record<string, MessageDict>>
 ];
 
 const DICTS: LocaleTable = { "en-US": {}, "fa-IR": {} };
@@ -101,25 +98,6 @@ export function t(
   if (template === undefined) template = DICTS[DEFAULT_LOCALE][key];
   if (template === undefined) return key;
   return interpolate(template, params);
-}
-
-/** Every translated string for a locale: what the Mini App fetches at boot. */
-export function messagesForLocale(locale: unknown): {
-  locale: SupportedLocale;
-  dir: "rtl" | "ltr";
-  strings: MessageDict;
-} {
-  const normalized = normalizeLocale(locale);
-  const strings: MessageDict = {};
-  const source = DICTS[normalized] || {};
-  const keys = Object.keys(source);
-  for (let i = 0; i < keys.length; i++) strings[keys[i]] = source[keys[i]];
-  const fallback = DICTS[DEFAULT_LOCALE];
-  const fallbackKeys = Object.keys(fallback);
-  for (let i = 0; i < fallbackKeys.length; i++) {
-    if (strings[fallbackKeys[i]] === undefined) strings[fallbackKeys[i]] = fallback[fallbackKeys[i]];
-  }
-  return { locale: normalized, dir: directionFor(normalized), strings };
 }
 
 export { DICTS as MESSAGE_DICTS };
