@@ -28,48 +28,48 @@ This roadmap tracks the approved runtime simplification. A checkbox is completed
 
 ## Phase 2 — One central OpenAI-compatible AI client
 
-- [ ] Configure one server-side `AI_BASE_URL`, `AI_MODEL`, and `AI_API_KEY`.
-- [ ] Route every AI request through one OpenAI-compatible client.
-- [ ] Preserve streaming, tool calling, web search, and model-supported vision.
-- [ ] Remove Anthropic and Cloudflare Workers AI provider/model fallbacks.
-- [ ] Remove per-user/per-group model selection and connection setup flows.
-- [ ] Remove multi-model, multi-provider, route, token-rotation, and cross-model fallback logic.
-- [ ] Remove the Shared Service mode and its separate quotas/settings surface.
-- [ ] Preserve ordinary per-user/per-chat rate limits and useful usage accounting.
-- [ ] Ensure API credentials are never exposed to users, browser code, logs, or responses.
+- [x] Configure one server-side `AI_BASE_URL`, `AI_MODEL`, and `AI_API_KEY`.
+- [x] Route chat and memory requests through one OpenAI-compatible client.
+- [x] Preserve streaming and tool calling; web search/fetch remains on the same tool path, and vision is explicitly opt-in for compatible models.
+- [x] Remove Anthropic and Workers AI model use, provider selection, and provider/model fallback.
+- [x] Remove per-user/per-group model selection and connection setup flows.
+- [x] Remove multi-model, multi-provider, route, token-rotation, and cross-model fallback logic.
+- [x] Remove the Shared Service mode and its separate quotas/settings surface.
+- [x] Preserve ordinary per-user/per-chat rate limits and usage accounting.
+- [ ] Add explicit regression coverage for API-key redaction and browser/API non-exposure.
 
 **Exit:** All users use exactly one centrally configured OpenAI-compatible endpoint and model; no provider/model management surface remains.
 
 ## Phase 3 — Safe database and configuration cleanup
 
-- [ ] Inventory all schema, migration, foreign-key, and runtime references before changing persistence.
-- [ ] Add forward-only, versioned, idempotent migrations for retired feature state.
-- [ ] Remove obsolete runtime database repositories, types, and settings.
-- [ ] Preserve conversations, messages, memories, profiles, groups, admin records, broadcasts, and meaningful usage data.
-- [ ] Preserve historical migrations and never reset or mutate production data.
-- [ ] Remove `ENCRYPTION_KEY` only after proving retained runtime data no longer requires it.
-- [ ] Remove obsolete secrets and bindings only after all references are gone.
+- [x] Remove runtime references and preserve historical migration files; physical schema cleanup remains gated on a complete inventory.
+- [ ] Add and test a forward-only, idempotent migration to remove retired-only credentials and feature state.
+- [x] Remove obsolete runtime database repositories, types, and settings.
+- [x] Preserve conversations, messages, memories, profiles, groups, admin records, broadcasts, and usage data.
+- [x] Preserve historical migrations; no production data has been touched.
+- [x] Remove `ENCRYPTION_KEY` from runtime requirements; encrypted legacy BYOK rows remain pending explicit cleanup.
+- [x] Remove obsolete Workers AI binding and encryption-key requirement; keep central `AI_API_KEY` server-side.
 
 **Exit:** Runtime no longer depends on retired tables/columns; preserved data is protected by migration regression tests.
 
 ## Phase 4 — Remove reminders, voice, schedules, and proactive automations
 
-- [ ] Remove reminder parsing, commands, delivery, persistence, and cron work.
-- [ ] Remove STT, TTS, voice adapters, transcript storage, and voice-only dependencies/configuration.
-- [ ] Reply clearly that voice notes are unsupported instead of silently treating them as text.
-- [ ] Remove schedules, proactive check-ins, their APIs/settings/state, and scheduled delivery.
-- [ ] Preserve webhook self-healing, schema maintenance, bot commands, queue retries, DLQ, and failed-update cleanup.
-- [ ] Remove obsolete cron configuration without removing required maintenance behavior.
+- [x] Remove reminder parsing, commands, delivery modules, and reminder cron work from runtime.
+- [x] Remove STT, TTS, voice adapters, transcript handling, and voice-only configuration.
+- [x] Reply clearly in Persian and English that voice notes are unsupported.
+- [x] Remove schedules, proactive check-ins, their runtime settings/modules, and scheduled delivery.
+- [x] Preserve webhook self-healing, schema maintenance, bot commands, queue retries, DLQ, and failed-update cleanup.
+- [x] Retain required maintenance cron and remove feature-specific reminder/proactive/schedule deliveries.
 
 **Exit:** No retired automation or voice feature is active or reachable; operational maintenance still works.
 
 ## Phase 5 — Dependency, command, UI, and documentation cleanup
 
-- [ ] Remove dead commands, callbacks, menus, imports, modules, tests, fixtures, and dependencies.
-- [ ] Remove obsolete environment variables and update example configuration.
-- [ ] Update English and Persian READMEs and all relevant technical documentation.
-- [ ] Align `AGENTS.md`, product scope, constitution, and Spec Kit workflow with the implemented system.
-- [ ] Keep docs short and avoid reintroducing archived audit collections.
+- [x] Remove dead commands, callbacks, menus, imports, modules, and feature-specific tests.
+- [x] Remove obsolete environment variables and add `docs/CONFIGURATION.md` plus Worker variables.
+- [x] Update English and Persian READMEs, Product Scope, and configuration documentation.
+- [x] Product Scope now reflects implementation status; AGENTS.md and constitution already describe the approved target. Spec Kit workflow remains generic.
+- [x] Keep docs focused; no historical audit collection was reintroduced.
 
 **Exit:** No stale product claims, dead runtime modules, or unused feature dependencies remain.
 
