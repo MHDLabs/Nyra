@@ -1,20 +1,17 @@
 // Centralized localization for every Nyra surface.
 //
 // Locale is persisted per user in `users.locale` and defaults to `en-US`.
-// The Telegram bot and the Mini App read the same stored value, so changing the
-// language in either place changes it everywhere. Messages are grouped into
-// domain modules so independent features never edit the same dictionary:
+// The Telegram bot reads a locale stored per user. Messages are grouped into
+// small domain modules so the bot and admin-facing flows share one dictionary:
 //
 //   messages-core.js      shared generic strings (errors, common actions)
 //   messages-telegram.js  bot messages: onboarding, commands, groups, maintenance
-//   messages-routing.js   provider/model/routing errors and labels
 //
 // `t(locale, key, params)` is the only way user-facing text should be produced.
 // A missing key falls back to en-US, then to the key itself, so a missing
 // translation degrades visibly instead of throwing.
 import { CORE_MESSAGES } from "./messages-core.js";
 import { TELEGRAM_MESSAGES } from "./messages-telegram.js";
-import { ROUTING_MESSAGES } from "./messages-routing.js";
 
 export const SUPPORTED_LOCALES = ["en-US", "fa-IR"] as const;
 export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
@@ -25,8 +22,7 @@ type LocaleTable = Record<SupportedLocale, MessageDict>;
 
 const DOMAINS: Array<Partial<Record<string, MessageDict>>> = [
   CORE_MESSAGES as Partial<Record<string, MessageDict>>,
-  TELEGRAM_MESSAGES as Partial<Record<string, MessageDict>>,
-  ROUTING_MESSAGES as Partial<Record<string, MessageDict>>
+  TELEGRAM_MESSAGES as Partial<Record<string, MessageDict>>
 ];
 
 const DICTS: LocaleTable = { "en-US": {}, "fa-IR": {} };
