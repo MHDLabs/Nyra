@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { generateCentralAgent, streamCentralAI } from "../src/providers/fallback.js";
+import { generateCentralAgent, streamCentralAI } from "../src/providers/agent.js";
 
 function centralEnv() {
   return {
