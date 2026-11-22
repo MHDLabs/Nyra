@@ -55,28 +55,30 @@ async function handleHelpCommand(env, chatId, userId, isGroup) {
   const locale = user?.locale || "en-US";
   const fa = locale.startsWith("fa");
   if (isGroup) {
-    const lines = fa ? [
-    "<b>📋 دستورات</b>", "",
-    "/start — سلام و منوی سریع", "/help — همین راهنما",
-    "/settings — ⚙️ تنظیمات", "/personality — 🎭 انتخاب شخصیت",
-    "/memory — 🧠 مشاهده حافظه", "/forget [موضوع] — پاک کردن حافظه یا یک موضوع",
-    "/remember <متن> — ذخیره در حافظه", "/setname <نام> — نام نمایشی",
-    "/usage — آمار مصرف", "/newpersonality — شخصیت سفارشی"
-  ] : [
-    "<b>📋 Commands</b>", "",
-    "/start — greeting and quick menu", "/help — this guide",
-    "/settings — ⚙️ Settings", "/personality — 🎭 Personality",
-    "/memory — 🧠 Memory", "/forget [topic] — clear memory or one topic",
-    "/remember <text> — save to memory", "/setname <name> — display name",
-    "/usage — usage stats", "/newpersonality — custom personality"
-  ];
+    const lines = fa
+      ? ["<b>📋 دستورات گروه</b>", "", "/start — معرفی کوتاه", "/help — همین راهنما",
+         "", "🔒 تنظیمات، شخصیت و حافظه فقط در گفتگوی <b>خصوصی</b> با نیرا."]
+      : ["<b>📋 Group commands</b>", "", "/start — short intro", "/help — this guide",
+         "", "🔒 Settings, personality and memory only in a <b>private</b> chat with Nyra."];
+    await sendMessage(env, chatId, lines.join("\n"), { parse_mode: "HTML" });
+    return;
+  }
+  const lines = fa
+    ? ["<b>📋 دستورات</b>", "", "/start — سلام و منوی سریع", "/help — همین راهنما",
+       "/settings — ⚙️ تنظیمات", "/personality — 🎭 انتخاب شخصیت",
+       "/memory — 🧠 مشاهده حافظه", "/forget [موضوع] — پاک کردن حافظه یا یک موضوع",
+       "/remember <متن> — ذخیره در حافظه", "/setname <نام> — نام نمایشی",
+       "/usage — آمار مصرف", "/newpersonality — شخصیت سفارشی"]
+    : ["<b>📋 Commands</b>", "", "/start — greeting and quick menu", "/help — this guide",
+       "/settings — ⚙️ Settings", "/personality — 🎭 Personality",
+       "/memory — 🧠 Memory", "/forget [topic] — clear memory or one topic",
+       "/remember <text> — save to memory", "/setname <name> — display name",
+       "/usage — usage stats", "/newpersonality — custom personality"];
   await sendMessage(env, chatId, lines.join("\n"), {
     parse_mode: "HTML",
     reply_markup: buildMainReplyKeyboard(locale)
   });
 }
-
-
 
 async function handleAdminCommand(env, chatId, userId, isGroup) {
   const user = await getUser(env, userId);
