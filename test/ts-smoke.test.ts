@@ -14,10 +14,9 @@ describe("TypeScript tooling smoke", () => {
       KV: {} as KVNamespace,
       NYRA_QUEUE: {} as Queue,
       NYRA_DLQ: {} as Queue,
-      AI: {} as Ai,
       ASSETS: {} as Fetcher
     } satisfies SmokeEnv;
     const names = describeBindings(env);
-    assert.deepEqual(names, ["DB", "KV", "NYRA_QUEUE", "NYRA_DLQ", "AI", "ASSETS"]);
+    assert.deepEqual(names, ["DB", "KV", "NYRA_QUEUE", "NYRA_DLQ", "ASSETS"]);
   });
 });
