@@ -5,7 +5,7 @@ import { checkMemoryRate } from "../utils.js";
 import { ensureWebhook, restoreDefaultMenuButton, tg } from "../telegram.js";
 import { maybeInitSchema } from "../db.js";
 import { getBuildInfo, checkUpstreamUpdate, UPSTREAM_REPO, UPSTREAM_BRANCH } from "../version.js";
-import { getMasterKey, getWebhookSecret } from "../crypto.js";
+import { getWebhookSecret } from "../crypto.js";
 
 function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message || String(err);
@@ -121,13 +121,13 @@ export async function handleStatus(
   const missing: string[] = [];
   if (!env.TELEGRAM_BOT_TOKEN) missing.push("TELEGRAM_BOT_TOKEN");
   if (!(await getWebhookSecret(env))) missing.push("TELEGRAM_SECRET");
-  if (!getMasterKey(env)) missing.push("ENCRYPTION_KEY(invalid_or_missing)");
   if (missing.length) secretsLine = "MISSING/INVALID: " + missing.join(", ");
 
   const body = [
     "Nyra is running.",
     "",
     "Secrets:     " + secretsLine,
+    "Central AI:  " + (env.AI_MODEL && env.AI_API_KEY ? String(env.AI_MODEL) : "NOT CONFIGURED"),
     "Webhook:     " + hookLine,
     "TG webhook:  " + tgHookLine,
     "Bot:         " + botLine,
