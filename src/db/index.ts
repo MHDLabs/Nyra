@@ -6,7 +6,7 @@ export {
 export { getBotIdentity } from "./identity.js";
 
 export {
-  getUser, getUserStrict, upsertUser, touchLastInbound, getChat, recordGroupChatAndCheckAccess, isUserBlocked,
+  getUser, getUserStrict, upsertUser, getChat, recordGroupChatAndCheckAccess, isUserBlocked,
   saveThreadMessage, getThreadContext, isGroupTrigger, determineThreadId,
   getFlowState, setFlowState, clearFlowState, blockUser, unblockUser
 } from "./users.js";
