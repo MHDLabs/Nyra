@@ -127,7 +127,7 @@ test("destructive migrations are limited to retired feature-owned tables", () =>
         assert.ok(approvedRetiredUserColumns.has(dropColumn[1]), "unapproved user column deletion: " + dropColumn[1]);
       }
       if (/^\s*DELETE\s+FROM\s+app_settings/i.test(sql)) {
-        assert.match(sql, /WHERE\s+key\s+IN\s*\\(/i, "settings cleanup must be key-scoped");
+        assert.match(sql, /WHERE\s+key\s+IN\s*\(/i, "settings cleanup must be key-scoped");
       }
       assert.doesNotMatch(sql, /^\s*DELETE\s+FROM\s+(users|thread_messages|chats|app_settings|personalities|custom_personalities|chat_logs|broadcasts|broadcast_recipients|blocked_users|failed_updates|processed_updates)\b/i);
     }
