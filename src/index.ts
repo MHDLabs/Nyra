@@ -6,15 +6,11 @@ import type { NyraEnv } from "../types/env.js";
 // `export default` the Workers runtime looks for, the startup contract
 // (secrets + schema) and the HTTP route table that dispatches into the handlers.
 import { parseAdminIds } from "./utils.js";
-import { getMasterKey, validateSecrets } from "./crypto.js";
+import { validateSecrets } from "./crypto.js";
 import { ensureSchema, maybeInitSchema } from "./db.js";
 import { ensureWebhook, restoreDefaultMenuButton, ensureBotCommands } from "./telegram.js";
 import { routeAdminPanel } from "./admin-panel/router.js";
 import { logFailedUpdate, cleanupOldFailedUpdates } from "./dlq.js";
-import { pruneOldTranscripts } from "./voice/stt.js";
-import { deliverDueReminders } from "./reminders/deliver.js";
-import { deliverProactiveCheckins } from "./proactive.js";
-import { deliverDueSchedules } from "./schedules/deliver.js";
 import { handleWebhook, handleSetup, handleStatus, processMessage, handleCallbackQuery } from "./handlers/index.js";
 
 // A queue message's ordering group. Two updates only need to stay serialized
@@ -85,10 +81,6 @@ export default {
       console.error("Server misconfigured — missing required secret(s): " + missing.join(", "));
       return new Response("Server misconfigured: missing " + missing.join(", "), { status: 500 });
     }
-    if (!getMasterKey(env)) {
-      console.error("ENCRYPTION_KEY is not a valid 32-byte base64 key.");
-      return new Response("Server misconfigured: invalid ENCRYPTION_KEY", { status: 500 });
-    }
     // ADMIN_IDS is a required one-click-deploy input; enforce at runtime so a
     // missing/typo'd value is loud (status page + logs) instead of silent.
     const adminIds = parseAdminIds(env.ADMIN_IDS);
@@ -129,15 +121,6 @@ export default {
       console.error("Webhook re-check failed [" + res.status + "]:" + (res.detail ? " " + res.detail : ""));
     }
     await restoreDefaultMenuButton(env);
-    // Voice transcripts are pruned by their originating turn (see
-    // `pruneStaleTranscripts`); this is the safety net for rows whose thread was
-    // never visited again.
-    ctx.waitUntil(pruneOldTranscripts(env, 7 * 24 * 3600));
-    // Deliver due reminders (5-minute Cron precision — not second-level)
-    ctx.waitUntil(deliverDueReminders(env, Math.floor(Date.now() / 1000)));
-    // Proactive inactivity check-ins (opt-in; one per inactivity episode)
-    ctx.waitUntil(deliverProactiveCheckins(env, Math.floor(Date.now() / 1000)));
-    ctx.waitUntil(deliverDueSchedules(env, Math.floor(Date.now() / 1000)));
     ctx.waitUntil(ensureBotCommands(env));
     // Clean up old failed updates (30 day retention)
     ctx.waitUntil(cleanupOldFailedUpdates(env, 30));
