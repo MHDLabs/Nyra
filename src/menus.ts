@@ -1,3 +1,4 @@
+// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
 // Nyra — Telegram menus for settings, memory, personalities, usage, and privacy.
 import { truncate, escapeHtml, isAdmin } from "./utils.js";
 import { sendMessage, editMessage, buildInlineKeyboard } from "./telegram.js";
@@ -108,7 +109,7 @@ export async function showMemorySubmenu(env, chatId, messageId, userId) {
   const mode = (user && user.memory_mode) || "normal";
   const lines = ["<b>Memory</b>", "", "Current mode: <b>" + escapeHtml(mode) + "</b>", ""];
   if (mode === "none") lines.push("<i>Memory is disabled.</i>");
-  else lines.push("<blockquote expandable>" + formatMemoryForUser(user ? user.memory_data : null, mode) + "</blockquote>");
+  else lines.push("<blockquote expandable>" + formatMemoryForUser(user ? user.memory_data : null, mode, user?.locale || "en-US") + "</blockquote>");
   const rows = [
     [{ text: "Normal" + (mode === "normal" ? " ✓" : ""), callback_data: "mem:mode:normal" }],
     [{ text: "Minimal" + (mode === "minimal" ? " ✓" : ""), callback_data: "mem:mode:minimal" }],
