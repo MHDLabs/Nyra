@@ -31,8 +31,10 @@ export function getCentralAIConfig(env: NyraEnv): CentralAIConfig {
   let parsed: URL;
   try { parsed = new URL(baseUrl); }
   catch { throw configurationError("AI_BASE_URL must be an absolute URL"); }
-  if (parsed.protocol !== "https:" && parsed.hostname !== "localhost" && parsed.hostname !== "127.0.0.1") {
-    throw configurationError("AI_BASE_URL must use HTTPS");
+  const localHttp = parsed.protocol === "http:"
+    && (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1");
+  if (parsed.protocol !== "https:" && !localHttp) {
+    throw configurationError("AI_BASE_URL must use HTTPS except for localhost development");
   }
   if (parsed.username || parsed.password || parsed.search || parsed.hash) {
     throw configurationError("AI_BASE_URL must not contain credentials, query parameters, or a fragment");
