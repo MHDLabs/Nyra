@@ -47,6 +47,10 @@ ADMIN_IDS = "123456789"
 
 Use the base URL supplied by your OpenAI-compatible provider. Keep the trailing `/v1` when the provider requires it; Nyra appends `/chat/completions`.
 
+## Migration and data-retention warning
+
+The simplification includes forward-only D1 migration 23. When deployed, it permanently removes legacy provider connections and encrypted BYOK credentials, model/route metadata, reminder and delivery records, voice transcripts, schedules, proactive-check-in records, retired user columns, and selected obsolete settings. Back up or export any of those historical records before deployment if they may still be needed. The migration is designed to preserve core user profiles, conversation history, memories, custom instructions, groups, chat logs, broadcasts, admin data, and usage records. The migration was tested against a legacy-shaped in-memory SQLite database; no production D1 database has been inspected or modified by this PR.
+
 ## Important behavior
 
 - Every permitted user shares the same model and provider account. Provider costs belong to the operator.
