@@ -4,7 +4,7 @@ import { MEMORY_UPDATE_INTERVAL, MEMORY_MAX_CHARS, AI_PRIMARY_ATTEMPT_TIMEOUT_MS
 import { localeForUser, normalizeLocale, t } from "./i18n/index.js";
 import { now, truncate, escapeHtml, sanitizeMemoryString, sanitizeMemoryFact, dedupeArray, filterSubstrings } from "./utils.js";
 import { getUser } from "./db/users.js";
-import { generateWithConnection } from "./ai.js";
+import { generateCentralAI } from "./ai.js";
 
 
 // Default reply language follows the user's saved locale instead of a global
@@ -382,7 +382,7 @@ export async function consolidateMemory(env, user, recentContext, exchange) {
     : "";
   const prompt = "You maintain a compact structured memory about a single user. Return ONLY valid JSON with these fields:\n- preferred_name (string, if known)\n- communication_style (string, short)\n- interests (array of strings)\n- tools (array of strings)\n- projects (array of strings)\n- explicit_facts (array of strings)\n\nRules:\n" + modeInstructions + "\nKeep the total JSON under 2500 characters. Do not duplicate existing entries. Never include newlines inside string values. If nothing new, return the current memory unchanged." + groupRule + "\n\nCurrent memory (belongs to CURRENT_USER only):\n" + JSON.stringify(currentMemory) + "\n\nRecent conversation:\n" + convo + "\n\nLatest exchange:\nCURRENT_USER: " + userPart + "\nNyra: " + assistantPart + "\n\nReturn only the JSON object, nothing else.";
   try {
-    const result = await generateWithConnection(env, null, [
+    const result = await generateCentralAI(env, [
       { role: "system", content: "You output only valid JSON. No markdown, no explanation." },
       { role: "user", content: prompt }
     ], { max_tokens: 1000, temperature: 0.3 }, AI_PRIMARY_ATTEMPT_TIMEOUT_MS);
@@ -421,7 +421,7 @@ export async function consolidateChatSummary(env, chat, userId, recentContext, e
   const assistantPart = truncate(exchange.assistant, CONSOLIDATE_ASSISTANT_TRUNCATE);
   const prompt = "Summarize the chat context in 2-3 short sentences. Focus on the current topic, general tone, and any important ongoing discussion. This is shared group context, not any single person's profile. Output only the summary.\n\nCurrent summary: " + (currentSummary || "(none)") + "\n\nRecent conversation:\n" + convo + "\n\nLatest exchange:\nUser: " + userPart + "\nNyra: " + assistantPart;
   try {
-    const result = await generateWithConnection(env, null, [
+    const result = await generateCentralAI(env, [
       { role: "system", content: "You output very short chat summaries. Be extremely concise." },
       { role: "user", content: prompt }
     ], { max_tokens: 200, temperature: 0.3 }, AI_PRIMARY_ATTEMPT_TIMEOUT_MS);
