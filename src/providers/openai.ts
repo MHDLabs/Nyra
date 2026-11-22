@@ -134,6 +134,7 @@ export async function* streamOpenAICompatible(connection, apiKey, messages, opti
   let buffer = "";
   const usage: any = { in: 0, out: 0, source: "unavailable" };
   let hasContent = false;
+  const streamedToolCalls = new Map<number, any>();
   try {
     while (true) {
       const chunk = await reader.read();
@@ -153,6 +154,20 @@ export async function* streamOpenAICompatible(connection, apiKey, messages, opti
           hasContent = true;
           yield { type: "text", text: choice.delta.content };
         }
+        const deltaCalls = choice && choice.delta && Array.isArray(choice.delta.tool_calls) ? choice.delta.tool_calls : [];
+        for (const deltaCall of deltaCalls) {
+          const index = Number.isInteger(deltaCall.index) ? deltaCall.index : streamedToolCalls.size;
+          const current = streamedToolCalls.get(index) || {
+            id: "",
+            type: "function",
+            function: { name: "", arguments: "" }
+          };
+          if (typeof deltaCall.id === "string") current.id = deltaCall.id;
+          if (deltaCall.type) current.type = deltaCall.type;
+          if (deltaCall.function && typeof deltaCall.function.name === "string") current.function.name += deltaCall.function.name;
+          if (deltaCall.function && typeof deltaCall.function.arguments === "string") current.function.arguments += deltaCall.function.arguments;
+          streamedToolCalls.set(index, current);
+        }
         if (parsed.usage) {
           usage.in = parsed.usage.prompt_tokens || usage.in || 0;
           usage.out = parsed.usage.completion_tokens || usage.out || 0;
@@ -165,7 +180,20 @@ export async function* streamOpenAICompatible(connection, apiKey, messages, opti
   } finally {
     try { reader.releaseLock(); } catch (e) {}
   }
-  if (!hasContent) {
+  const toolCalls = Array.from(streamedToolCalls.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(entry => entry[1]);
+  if (toolCalls.length) {
+    for (const call of toolCalls) {
+      if (!call.id || !call.function.name) {
+        const err: any = new Error("Malformed streamed tool call");
+        err.category = "unexpected_format";
+        throw err;
+      }
+    }
+    yield { type: "tool_calls", toolCalls: toolCalls };
+  }
+  if (!hasContent && toolCalls.length === 0) {
     const err: any = new Error("Empty response from provider");
     err.category = "empty_response";
     throw err;
