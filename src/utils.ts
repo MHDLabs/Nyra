@@ -19,7 +19,7 @@ export {
   base64ToBytes
 } from "./utils/encoding.js";
 
-export { isOpenRouterUrl, normalizeBaseUrl } from "./utils/provider-url.js";
+export { isOpenRouterUrl } from "./utils/provider-url.js";
 
 export { safeCallbackId, buildUserContent, splitForTelegram } from "./utils/telegram.js";
 export type { UserContentMessage } from "./utils/telegram.js";
