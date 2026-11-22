@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { executeAgentTool, toolDefinitions } from "../src/tools.js";
+import { configuredToolDefinitions, executeAgentTool } from "../src/tools.js";
 
 function memoryEnv(memory, changes = 1) {
   const calls = [];
@@ -11,10 +11,14 @@ function memoryEnv(memory, changes = 1) {
   };
 }
 
-test("tool definitions preserve OpenAI and Anthropic native formats", () => {
-  assert.equal(toolDefinitions("openai-compatible")[0].type, "function");
-  assert.equal(toolDefinitions("anthropic")[0].input_schema.type, "object");
-  assert.equal(toolDefinitions("anthropic").length, 5);
+test("tool definitions use the OpenAI-compatible format and respect chat context", () => {
+  const privateTools = configuredToolDefinitions("openai-compatible", {}, { allowReact: false });
+  const groupTools = configuredToolDefinitions("openai-compatible", {}, { allowReact: true });
+  assert.ok(privateTools.length > 0);
+  assert.ok(privateTools.every(tool => tool.type === "function" && tool.function));
+  assert.equal(privateTools.some(tool => tool.function.name === "react_to_message"), false);
+  assert.equal(groupTools.some(tool => tool.function.name === "react_to_message"), true);
+  assert.equal(groupTools.length, privateTools.length + 1);
 });
 
 test("registered tools reject unknown names and malformed/unexpected args", async () => {
