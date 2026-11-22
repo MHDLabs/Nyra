@@ -40,3 +40,17 @@ test("central endpoint rejects insecure remote URLs and embedded credentials", (
     AI_API_KEY: "secret"
   }), /must not contain credentials/);
 });
+
+test("central endpoint allows HTTP only for localhost development", () => {
+  const config = getCentralAIConfig({
+    AI_BASE_URL: "http://localhost:8787/v1",
+    AI_MODEL: "local-model",
+    AI_API_KEY: "local-test-key"
+  });
+  assert.equal(config.base_url, "http://localhost:8787/v1");
+  assert.throws(() => getCentralAIConfig({
+    AI_BASE_URL: "ftp://localhost/v1",
+    AI_MODEL: "local-model",
+    AI_API_KEY: "local-test-key"
+  }), /must use HTTPS/);
+});
