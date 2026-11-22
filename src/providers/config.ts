@@ -1,14 +1,9 @@
 import type { NyraEnv } from "../../types/env.js";
 
 export type CentralAIConfig = {
-  connection_id: "central";
-  label: string;
-  provider: "openai-compatible";
   base_url: string;
   model: string;
   api_key: string;
-  telegram_id: 0;
-  supports_tools: 1;
   supports_vision: 0 | 1;
 };
 
@@ -44,14 +39,9 @@ export function getCentralAIConfig(env: NyraEnv): CentralAIConfig {
     || String(env.AI_SUPPORTS_VISION || "") === "1";
 
   return {
-    connection_id: "central",
-    label: "Central AI",
-    provider: "openai-compatible",
     base_url: baseUrl,
     model,
     api_key: apiKey,
-    telegram_id: 0,
-    supports_tools: 1,
     supports_vision: supportsVision ? 1 : 0
   };
 }
