@@ -17,7 +17,7 @@ export async function generateWithConnection(env: NyraEnv, _legacyConnection, me
 export async function generateAgentWithConnection(env: NyraEnv, user, _legacyConnection, messages, options) {
   const config = getCentralAIConfig(env);
   const reasoningModel = /(^|[-/])(o[1-9]|gpt-5)/i.test(config.model);
-  const definitions = reasoningModel ? [] : configuredToolDefinitions("openai-compatible", env, { allowReact: !!(user && user.is_group) });
+  const definitions = reasoningModel ? [] : configuredToolDefinitions("openai-compatible", env);
   const conversation = messages.map(message => ({ ...message }));
   if (reasoningModel && conversation[0]) {
     conversation[0] = {
