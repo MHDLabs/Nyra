@@ -15,7 +15,6 @@ export type NyraEnv = {
   ADMIN_IDS?: string;
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_SECRET?: string;
-  ENCRYPTION_KEY?: string;
   ADMIN_PANEL_PASSWORD?: string;
   TELEGRAM_BOT_ID?: string;
   TELEGRAM_BOT_USERNAME?: string;
