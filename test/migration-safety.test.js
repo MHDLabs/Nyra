@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { SCHEMA_MIGRATIONS } from "../src/db/schema.js";
-import { SUPPORTED_LOCALES } from "../src/config.js";
+import { SUPPORTED_LOCALES, RETIRED_PERSONALITY_IDS } from "../src/config.js";
 
 const NOW = Math.floor(Date.now() / 1000);
 
@@ -130,7 +130,20 @@ test("destructive migrations are limited to retired feature-owned tables", () =>
       if (/^\s*DELETE\s+FROM\s+app_settings/i.test(sql)) {
         assert.match(sql, /WHERE\s+key\s+IN\s*\(/i, "settings cleanup must be key-scoped");
       }
-      assert.doesNotMatch(sql, /^\s*DELETE\s+FROM\s+(users|thread_messages|chats|app_settings|personalities|custom_personalities|chat_logs|broadcasts|broadcast_recipients|blocked_users|failed_updates|processed_updates)\b/i);
+      const personalityDelete = sql.match(/^\s*DELETE\s+FROM\s+personalities\s+WHERE\s+(.+)$/i);
+      if (personalityDelete) {
+        // Legacy migrations 7/8 intentionally retire only known built-in IDs.
+        // A blanket ban on DELETE FROM personalities would reject this safe,
+        // tightly scoped cleanup while custom/user-created personalities remain.
+        const where = personalityDelete[1].trim();
+        const scoped = where.match(/^(?:personality_id\s+IN\s*\(([^)]+)\)\s+AND\s+is_builtin\s*=\s*1|is_builtin\s*=\s*1\s+AND\s+personality_id\s+IN\s*\(([^)]+)\))$/i);
+        assert.ok(scoped, "personality cleanup must be restricted to retired built-ins: " + sql);
+        const ids = (scoped[1] || scoped[2]).split(",").map(id => id.trim().replace(/^['"]|['"]$/g, ""));
+        assert.ok(ids.length > 0, "personality cleanup must name retired IDs");
+        assert.equal(new Set(ids).size, ids.length, "personality cleanup must not repeat IDs");
+        for (const id of ids) assert.ok(RETIRED_PERSONALITY_IDS.includes(id), "unapproved personality deletion: " + id);
+      }
+      assert.doesNotMatch(sql, /^\s*DELETE\s+FROM\s+(users|thread_messages|chats|app_settings|custom_personalities|chat_logs|broadcasts|broadcast_recipients|blocked_users|failed_updates|processed_updates)\b/i);
     }
   }
 });
