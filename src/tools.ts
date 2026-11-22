@@ -315,20 +315,22 @@ export async function handleExplicitMemoryIntent(env, userId, text) {
 }
 
 
-export function toolDefinitions(provider) {
-  return AGENT_TOOLS.map(t => provider === "anthropic"
-    ? ({ name: t.name, description: t.description, input_schema: t.parameters })
-    : ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters, strict: true } }));
-}
-
 /** Web search is always available (built-in, no API key). */
 export function isWebSearchConfigured(_env) {
   return isWebSearchAvailable();
 }
 
-export function configuredToolDefinitions(provider, _env) {
-  // Always expose web_search — zero-key built-in engines.
-  return AGENT_TOOLS.map(tool => provider === "anthropic"
-    ? ({ name: tool.name, description: tool.description, input_schema: tool.parameters })
-    : ({ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.parameters, strict: true } }));
+/** Build the OpenAI-compatible tool list for the current Telegram context. */
+export function configuredToolDefinitions(_provider, _env, options = {}) {
+  return AGENT_TOOLS
+    .filter(tool => tool.name !== "react_to_message" || options.allowReact === true)
+    .map(tool => ({
+      type: "function",
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+        strict: true
+      }
+    }));
 }
