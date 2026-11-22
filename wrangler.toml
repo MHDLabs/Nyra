@@ -47,6 +47,9 @@ crons = ["*/5 * * * *"]
 # user IDs with admin access (e.g. ADMIN_IDS = "123456789"). Non-numeric
 # entries are ignored; GET /status warns until at least one valid ID is set.
 ADMIN_IDS = "7141112393"
+AI_MODEL = ""
+AI_BASE_URL = "https://api.openai.com/v1"
+AI_SUPPORTS_VISION = "false"
 
 # D1 database — no database_id on purpose: Wrangler's automatic provisioning
 # creates the database on `wrangler deploy` and writes its ID back into this
