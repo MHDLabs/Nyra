@@ -18,41 +18,41 @@ Tracking file for the Nyra product simplification. See [SIMPLIFICATION-ROADMAP.m
 
 ## Phase 2 — Central AI architecture
 
-- [ ] Implement one central OpenAI-compatible client.
-- [ ] Use server-side `AI_BASE_URL`, `AI_MODEL`, and `AI_API_KEY`.
-- [ ] Preserve streaming, tools, web search/fetch, and compatible vision behavior.
-- [ ] Remove Anthropic, Workers AI, provider selection, and provider fallbacks.
-- [ ] Remove BYOK, connection management, per-user/per-group model selection, and model discovery.
-- [ ] Remove routes, multi-model/token rotation, and cross-model fallback.
-- [ ] Remove Shared Service mode and separate quotas/settings.
-- [ ] Preserve normal user/chat rate limits and meaningful usage accounting.
+- [x] Implement one central OpenAI-compatible client.
+- [x] Use server-side `AI_BASE_URL`, `AI_MODEL`, and `AI_API_KEY`.
+- [x] Preserve streaming, tool calling, and model-gated vision; existing web search/fetch tools remain wired through the same central client.
+- [x] Remove Anthropic, Workers AI model use, provider selection, and provider/model fallbacks.
+- [x] Remove BYOK, connection management, per-user/per-group model selection, and model discovery.
+- [x] Remove routes, multi-model/token rotation, and cross-model fallback.
+- [x] Remove Shared Service mode and separate quotas/settings.
+- [x] Preserve normal user/chat rate limits and usage accounting paths.
 - [ ] Verify central credentials never reach client code, logs, or responses.
 
 ## Phase 3 — Data and configuration
 
-- [ ] Add safe forward-only migrations for retired state.
+- [ ] Add and test a forward-only migration to physically remove retired-only database state; runtime repositories are already removed, but historical migrations remain untouched.
 - [ ] Preserve conversations, messages, memories, profiles, groups, admin data, broadcasts, and useful usage history.
-- [ ] Remove obsolete database repositories, columns, types, and settings only after dependency review.
-- [ ] Preserve historical migration files.
-- [ ] Remove encryption/provider secrets only after auditing all retained use.
+- [x] Remove obsolete runtime database repositories, types, settings, and provider credential encryption; physical column/table cleanup is deferred to a reviewed migration.
+- [x] Preserve historical migration files.
+- [x] Remove the obsolete ENCRYPTION_KEY requirement after removing retained runtime use; AI_API_KEY remains a server-side Worker secret.
 - [ ] Add migration safety regression tests.
 
 ## Phase 4 — Reminders, voice, and automations
 
-- [ ] Remove reminder commands, parser, delivery, tables, and cron work.
-- [ ] Remove STT/TTS, transcript storage, voice modules, and related config/dependencies.
-- [ ] Return a clear unsupported-feature reply for incoming voice notes.
-- [ ] Remove schedules and proactive check-ins completely.
-- [ ] Preserve webhook maintenance, queues, retries, DLQ, and failed-update cleanup.
+- [x] Remove reminder commands, parser, delivery modules, and reminder cron work; historical schema migrations remain.
+- [x] Remove STT/TTS, transcript storage, voice modules, and voice-only config.
+- [x] Return a clear Persian/English unsupported-feature reply for incoming voice notes.
+- [x] Remove schedules and proactive check-ins from runtime modules and scheduled delivery.
+- [x] Preserve webhook maintenance, queues, retries, DLQ, and failed-update cleanup.
 
 ## Phase 5 — Cleanup and documentation
 
-- [ ] Remove dead routes, callbacks, menus, imports, modules, tests, fixtures, and dependencies.
-- [ ] Update Wrangler configuration and environment examples.
-- [ ] Update README.md and README.fa.md.
-- [ ] Update PRODUCT-SCOPE.md, constitution, AGENTS.md, workflow, and relevant docs.
-- [ ] Keep Web Admin Panel documentation and behavior accurate.
-- [ ] Ensure no stale feature claims remain.
+- [x] Remove retired routes, callbacks, menus, imports, modules, and feature-only tests.
+- [x] Update Wrangler variables and add `docs/CONFIGURATION.md`.
+- [x] Update English and Persian READMEs.
+- [x] Update PRODUCT-SCOPE.md and configuration docs; AGENTS.md and the constitution already reflected the approved target. Workflow did not require a product-specific change.
+- [x] Keep Web Admin Panel routes/assets/auth and remove the obsolete model-management screen.
+- [ ] Complete a repository-wide stale-reference audit; historical migration references are intentionally retained.
 
 ## Phase 6 — Final verification
 
