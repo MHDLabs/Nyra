@@ -21,10 +21,12 @@ test("central OpenAI-compatible tool call receives its result and final answer",
     const message = call === 1
       ? { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "remember_fact", arguments: '{"fact":"Prefers brief replies"}' } }] }
       : { role: "assistant", content: "Saved: Prefers brief replies" };
-    return new Response(JSON.stringify({
-      choices: [{ message }],
-      usage: { prompt_tokens: 3, completion_tokens: 2 }
-    }), { headers: { "content-type": "application/json" } });
+    const frame = call === 1
+      ? { choices: [{ delta: { tool_calls: [{ index: 0, id: "c1", type: "function", function: { name: "remember_fact", arguments: '{"fact":"Prefers brief replies"}' } }] } }] }
+      : { choices: [{ delta: { content: "Saved: Prefers brief replies" } }] };
+    return new Response("data: " + JSON.stringify(frame) + "\\n\\ndata: [DONE]\\n\\n", {
+      headers: { "content-type": "text/event-stream" }
+    });
   };
   const writes = [];
   env.DB = {
@@ -59,9 +61,10 @@ test("central execution performs one model attempt and never switches providers"
   let requests = 0;
   globalThis.fetch = async () => {
     requests++;
-    return new Response(JSON.stringify({
-      choices: [{ message: { role: "assistant", content: "Central answer" } }]
-    }), { headers: { "content-type": "application/json" } });
+    return new Response(
+      "data: " + JSON.stringify({ choices: [{ delta: { content: "Central answer" } }] }) + "\\n\\ndata: [DONE]\\n\\n",
+      { headers: { "content-type": "text/event-stream" } }
+    );
   };
   const events = [];
   for await (const event of tryAgentWithFallback(env, { telegram_id: 12 }, [{ role: "user", content: "hello" }], { totalBudgetMs: 5000 })) {
