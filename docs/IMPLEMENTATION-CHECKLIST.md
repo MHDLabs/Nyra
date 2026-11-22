@@ -26,16 +26,16 @@ Tracking file for the Nyra product simplification. See [SIMPLIFICATION-ROADMAP.m
 - [x] Remove routes, multi-model/token rotation, and cross-model fallback.
 - [x] Remove Shared Service mode and separate quotas/settings.
 - [x] Preserve normal user/chat rate limits and usage accounting paths.
-- [ ] Verify central credentials never reach client code, logs, or responses.
+- [x] Verify central credentials are not returned by the user-details API or admin frontend and are redacted from Telegram admin error alerts (focused security tests).
 
 ## Phase 3 — Data and configuration
 
-- [ ] Add and test a forward-only migration to physically remove retired-only database state; runtime repositories are already removed, but historical migrations remain untouched.
+- [x] Add migration 23 to physically remove retired-feature-only tables, columns, and settings; historical migrations remain untouched and deployment is gated by backup/data-retention review.
 - [ ] Preserve conversations, messages, memories, profiles, groups, admin data, broadcasts, and useful usage history.
-- [x] Remove obsolete runtime database repositories, types, settings, and provider credential encryption; physical column/table cleanup is deferred to a reviewed migration.
+- [x] Remove obsolete runtime database repositories, types, settings, and provider credential encryption; physical cleanup is handled by forward-only migration 23.
 - [x] Preserve historical migration files.
 - [x] Remove the obsolete ENCRYPTION_KEY requirement after removing retained runtime use; AI_API_KEY remains a server-side Worker secret.
-- [ ] Add migration safety regression tests.
+- [x] Add migration safety regression tests for retired tables/columns, allowlisted deletes, core data preservation, and the admin chat listing on the post-migration schema.
 
 ## Phase 4 — Reminders, voice, and automations
 
@@ -56,13 +56,13 @@ Tracking file for the Nyra product simplification. See [SIMPLIFICATION-ROADMAP.m
 
 ## Phase 6 — Final verification
 
-- [ ] `npm ci`
-- [ ] `npm run typecheck`
-- [ ] `npm run test:all`
-- [ ] `./node_modules/.bin/wrangler deploy --dry-run`
-- [ ] Focused regression tests pass.
+- [x] `npm ci` (PR CI)
+- [x] `npm run typecheck` (PR CI)
+- [x] `npm run test:all` (PR CI)
+- [x] `./node_modules/.bin/wrangler deploy --dry-run` (PR CI)
+- [x] Focused regression tests pass, including migration safety, central AI configuration/security, and post-migration admin chat listing.
 - [ ] Full diff and removed-feature searches reviewed.
-- [ ] CI remains two CodeQL checks plus one combined verification/deploy workflow.
-- [ ] PR opened with test evidence; no production deploy or production data mutation.
+- [x] CI remains two CodeQL checks plus one combined verification/deploy workflow; no duplicate pre-deploy test workflow was reintroduced.
+- [x] Draft PR #132 opened with CI evidence; no production deploy or production data mutation.
 
 > A task remains unchecked until the actual implementation and its verification evidence are available. Documentation updates alone do not complete runtime tasks.
