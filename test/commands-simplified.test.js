@@ -1,4 +1,4 @@
-// Chat commands: full in-chat control (Mini App optional).
+// Chat commands: retained text-chat and administration surface.
 import { describe, it } from "node:test";
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
@@ -24,9 +24,9 @@ describe("Commands surface", () => {
     assert.ok(!src.includes("commands.legacy.moved") || src.indexOf("showSettingsMenu") < src.indexOf("commands.legacy.moved") || !src.includes("commands.legacy.moved"));
   });
 
-  it("keeps reminder commands", () => {
-    for (const cmd of ["remind", "reminders", "timezone"]) {
-      assert.ok(src.includes('"' + cmd + '"'), "missing reminder " + cmd);
+  it("does not expose removed reminder or model-management commands", () => {
+    for (const feature of ["remind", "reminders", "timezone", "active_connection_id", "adm:conns", "mypersonal"]) {
+      assert.ok(!src.includes(feature), "unexpected legacy feature " + feature);
     }
-  });
+  });;
 });
