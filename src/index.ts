@@ -74,8 +74,8 @@ function safeRetry(msg) { try { msg.retry(); } catch (e) { console.error("queue 
 export default {
   async fetch(request: Request, env: NyraEnv, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
-    // All three secrets are mandatory manual entries. A deployment without any
-    // one of them crashes loudly on every request — no derivation, no fallback.
+    // Telegram webhook credentials are mandatory. AI credentials are checked when
+    // a model request is attempted, so the Worker can still serve health/admin routes.
     const missing = validateSecrets(env);
     if (missing) {
       console.error("Server misconfigured — missing required secret(s): " + missing.join(", "));
@@ -96,7 +96,7 @@ export default {
     // the Telegram webhook; the web admin panel is routed separately below.
     if (request.method === "GET" && url.pathname === "/status") return await handleStatus(request, env, adminIds);
 
-    // Admin web panel (password-gated, separate from Mini App).
+    // Standalone password-gated web admin panel.
     if (url.pathname === "/admin-panel" || url.pathname.startsWith("/admin-panel/") || url.pathname.startsWith("/admin-api/")) {
       return (await routeAdminPanel(env, ctx, request, url.pathname)) as Response;
     }
