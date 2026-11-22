@@ -191,6 +191,17 @@ test("upgrading a legacy database preserves data and applies the new defaults", 
   assert.equal(db.prepare("SELECT COUNT(*) AS c FROM thread_messages").get().c, 1);
   assert.equal(db.prepare("SELECT COUNT(*) AS c FROM chats").get().c, 3);
 
+  // Migration 23 removes retired columns from the core users table.
+  const userColumns = new Set(db.prepare("PRAGMA table_info(users)").all().map(column => column.name));
+  for (const column of [
+    "active_connection_id", "active_route_id", "fallback_enabled", "active_profile_id",
+    "last_inbound_at", "proactive_enabled", "proactive_threshold_hours",
+    "proactive_quiet_start", "proactive_quiet_end", "proactive_last_sent_at",
+    "proactive_episode_key"
+  ]) {
+    assert.equal(userColumns.has(column), false, "retired user column should be absent: " + column);
+  }
+
   // The final migration removes provider credentials and retired feature state.
   for (const table of [
     "ai_connections", "connection_models", "connection_usage",
@@ -211,6 +222,8 @@ test("retired feature tables are not recreated after migration 23", () => {
   assert.match(source, /retiredBootstrap/);
   assert.match(source, /statements = statements\.filter/);
   assert.match(source, /activeAlters[\s\S]*?item\[0\] !== "ai_connections"/);
+  assert.match(source, /item\[0\] === "users" && retiredUserColumns\.has\(item\[1\]\)/);
+  assert.match(source, /"active_connection_id"[\s\S]*?"proactive_episode_key"/);
   assert.match(source, /id: 23,[\s\S]*?DROP TABLE IF EXISTS ai_connections/);
 });
 test("applying the same pending migrations twice is rejected by migration tracking, not silently repeated", () => {
