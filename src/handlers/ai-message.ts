@@ -269,7 +269,7 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
       await sendMessage(env, chatId, applyGuestPrefix(finalText, guestMode, "HTML"), { parse_mode: "HTML" });
     }
     if (shouldNotifyAdmin(category)) {
-      const connForAlert = finalConn || connection;
+      const connForAlert = finalConn || { connection_id: "central", label: "Central AI", provider: "openai-compatible", model: env.AI_MODEL || "not configured" };
       ctx.waitUntil?.(notifyAdminOnError(env, {
         connection_id: connForAlert ? connForAlert.connection_id : null,
         connection_label: connForAlert ? connForAlert.label : null,
