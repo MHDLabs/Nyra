@@ -8,7 +8,7 @@ import type { NyraEnv } from "../types/env.js";
 import { parseAdminIds } from "./utils.js";
 import { getMasterKey, validateSecrets } from "./crypto.js";
 import { ensureSchema, maybeInitSchema } from "./db.js";
-import { ensureWebhook, removeMiniAppMenuButton, ensureBotCommands } from "./telegram.js";
+import { ensureWebhook, restoreDefaultMenuButton, ensureBotCommands } from "./telegram.js";
 import { routeAdminPanel } from "./admin-panel/router.js";
 import { logFailedUpdate, cleanupOldFailedUpdates } from "./dlq.js";
 import { pruneOldTranscripts } from "./voice/stt.js";
@@ -109,9 +109,8 @@ export default {
       return (await routeAdminPanel(env, ctx, request, url.pathname)) as Response;
     }
 
-    // Every other Worker-handled request also teaches us the public origin, so
-    // the webhook bootstraps even when only the Mini App (/api/*) is used and
-    // /status is never opened. KV-gated inside ensureWebhook; never blocks.
+    // Any Worker-handled request can teach the public origin for webhook
+    // bootstrapping, even when /status has not been opened. This is KV-gated.
     ctx.waitUntil(ensureWebhook(env, url.origin).catch(function () {}));
 
     // No public Mini App or general-purpose asset shell is exposed by the Worker.
@@ -129,7 +128,7 @@ export default {
     if (!res.ok && res.status !== "awaiting_first_request") {
       console.error("Webhook re-check failed [" + res.status + "]:" + (res.detail ? " " + res.detail : ""));
     }
-    await removeMiniAppMenuButton(env);
+    await restoreDefaultMenuButton(env);
     // Voice transcripts are pruned by their originating turn (see
     // `pruneStaleTranscripts`); this is the safety net for rows whose thread was
     // never visited again.
