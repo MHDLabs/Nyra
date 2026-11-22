@@ -34,7 +34,9 @@ async function* streamCentralAgent(env: NyraEnv, user, messages, options) {
     model: config.model
   };
   const reasoningModel = /(^|[-/])(o[1-9]|gpt-5)/i.test(config.model);
-  const definitions = reasoningModel ? [] : configuredToolDefinitions("openai-compatible", env);
+  const definitions = reasoningModel ? [] : configuredToolDefinitions("openai-compatible", env, {
+    allowReact: !!(user && user.is_group)
+  });
   const conversation = messages.map(message => ({ ...message }));
   const memoryIntentAllowed = isExplicitMemoryIntent(messages);
   const deadline = Date.now() + Math.max(1000, Math.min((options && options.totalBudgetMs) || 70000, 120000));
