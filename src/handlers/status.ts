@@ -2,7 +2,7 @@
 import type { NyraEnv } from "../../types/env.js";
 import type { AdminIdResult } from "../utils/admin.js";
 import { checkMemoryRate } from "../utils.js";
-import { ensureWebhook, removeMiniAppMenuButton, tg } from "../telegram.js";
+import { ensureWebhook, restoreDefaultMenuButton, tg } from "../telegram.js";
 import { maybeInitSchema } from "../db.js";
 import { getBuildInfo, checkUpstreamUpdate, UPSTREAM_REPO, UPSTREAM_BRANCH } from "../version.js";
 import { getMasterKey, getWebhookSecret } from "../crypto.js";
@@ -24,7 +24,7 @@ export async function handleStatus(
   await maybeInitSchema(env);
   const origin = new URL(request.url).origin;
   const hook = await ensureWebhook(env, origin);
-  await removeMiniAppMenuButton(env);
+  await restoreDefaultMenuButton(env);
   const hookLine = hook.ok
     ? hook.status + " → " + hook.url
     : "problem: " + hook.status + (hook.detail ? " — " + hook.detail : "");
