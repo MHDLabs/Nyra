@@ -118,9 +118,8 @@
       '<div class="kv">' +
       "<div>شخصیت</div><div>" + escapeHtml(u.personality_id || "—") + "</div>" +
       "<div>حافظه</div><div>" + escapeHtml(u.memory_mode || "—") + "</div>" +
-      "<div>مدل فعال</div><div>" + escapeHtml(conn ? (conn.label + " (" + conn.model + ")") : "—") + "</div>" +
       "<div>locale</div><div>" + escapeHtml(u.locale || u.language_code || "—") + "</div>" +
-      "<div>آخرین پیام</div><div>" + fmtTime(u.last_inbound_at) + "</div>" +
+      "<div>آخرین پیام</div><div>" + fmtTime(u.last_seen_at) + "</div>" +
       "<div>مسدود</div><div>" + (data.blocked ? "بله" : "خیر") + "</div>" +
       "</div>" +
       "<h3>مموری</h3><div class='memory-box'>" + escapeHtml(JSON.stringify(memory, null, 2)) + "</div>" +
