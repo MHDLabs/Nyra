@@ -4,7 +4,6 @@ import { MEMORY_UPDATE_INTERVAL, MEMORY_MAX_CHARS, AI_PRIMARY_ATTEMPT_TIMEOUT_MS
 import { localeForUser, normalizeLocale, t } from "./i18n/index.js";
 import { now, truncate, escapeHtml, sanitizeMemoryString, sanitizeMemoryFact, dedupeArray, filterSubstrings } from "./utils.js";
 import { getUser } from "./db/users.js";
-import { getEnabledUserConnections } from "./db/connections.js";
 import { generateWithConnection } from "./ai.js";
 
 
@@ -361,16 +360,6 @@ export async function listAvailablePersonalities(env, userId) {
 
 export async function consolidateMemory(env, user, recentContext, exchange) {
   if (!user || user.memory_mode === "none") return;
-  const conns = await getEnabledUserConnections(env, user.telegram_id);
-  if (conns.length === 0) return;
-  let conn = null;
-  if (user.active_connection_id) {
-    for (let i = 0; i < conns.length; i++) if (conns[i].connection_id === user.active_connection_id) { conn = conns[i]; break; }
-  }
-  if (!conn) {
-    for (let i = 0; i < conns.length; i++) if (conns[i].is_global === 1 && conns[i].is_default === 1) { conn = conns[i]; break; }
-  }
-  if (!conn) conn = conns[0];
   const currentMemory = parseMemoryData(user.memory_data);
   const isGroup = !!user.is_group;
   const convo = recentContext.map(function (m) {
@@ -393,7 +382,7 @@ export async function consolidateMemory(env, user, recentContext, exchange) {
     : "";
   const prompt = "You maintain a compact structured memory about a single user. Return ONLY valid JSON with these fields:\n- preferred_name (string, if known)\n- communication_style (string, short)\n- interests (array of strings)\n- tools (array of strings)\n- projects (array of strings)\n- explicit_facts (array of strings)\n\nRules:\n" + modeInstructions + "\nKeep the total JSON under 2500 characters. Do not duplicate existing entries. Never include newlines inside string values. If nothing new, return the current memory unchanged." + groupRule + "\n\nCurrent memory (belongs to CURRENT_USER only):\n" + JSON.stringify(currentMemory) + "\n\nRecent conversation:\n" + convo + "\n\nLatest exchange:\nCURRENT_USER: " + userPart + "\nNyra: " + assistantPart + "\n\nReturn only the JSON object, nothing else.";
   try {
-    const result = await generateWithConnection(env, conn, [
+    const result = await generateWithConnection(env, null, [
       { role: "system", content: "You output only valid JSON. No markdown, no explanation." },
       { role: "user", content: prompt }
     ], { max_tokens: 1000, temperature: 0.3 }, AI_PRIMARY_ATTEMPT_TIMEOUT_MS);
@@ -423,17 +412,6 @@ export async function consolidateMemory(env, user, recentContext, exchange) {
 
 export async function consolidateChatSummary(env, chat, userId, recentContext, exchange) {
   if (!chat) return;
-  const conns = await getEnabledUserConnections(env, userId);
-  if (conns.length === 0) return;
-  const user = await getUser(env, userId);
-  let conn = null;
-  if (user && user.active_connection_id) {
-    for (let i = 0; i < conns.length; i++) if (conns[i].connection_id === user.active_connection_id) { conn = conns[i]; break; }
-  }
-  if (!conn) {
-    for (let i = 0; i < conns.length; i++) if (conns[i].is_global === 1 && conns[i].is_default === 1) { conn = conns[i]; break; }
-  }
-  if (!conn) conn = conns[0];
   const currentSummary = chat.summary || "";
   const convo = recentContext.map(function (m) {
     if (m.role === "assistant") return "Nyra: " + m.content;
