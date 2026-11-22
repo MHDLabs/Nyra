@@ -221,7 +221,7 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
       } else if (event.type === "done") {
         finalUsage = event.usage;
         finalConn = event.connection;
-        finalAttempts = event.attempts;
+        finalAttempts = event.attempts || 1;
         finalFallbackUsed = !!event.fallbackUsed;
         streamCompleted = true;
       } else if (event.type === "error") {
