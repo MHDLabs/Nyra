@@ -1,10 +1,10 @@
 import type { NyraEnv } from "../../types/env.js";
-// OpenAI-compatible provider: /chat/completions (buffered and streamed) and
-// the paginated /models listing. Covers OpenAI itself, OpenRouter, Groq,
+// OpenAI-compatible provider: buffered and streamed /chat/completions. Supports
+// OpenAI itself, OpenRouter, Groq,
 // Together, Fireworks, DeepSeek, Ollama and anything else speaking the same
 // dialect.
 import { OPENAI_DEFAULT_URL, APP_TITLE } from "../config.js";
-import { isOpenRouterUrl } from "../utils.js";
+import { isOpenRouterUrl, fetchWithTimeout } from "../utils.js";
 import { parseProviderError } from "./errors.js";
 import { toOpenAIContent } from "./content.js";
 
