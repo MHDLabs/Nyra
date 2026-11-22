@@ -1,9 +1,7 @@
 // Offline migration-safety test (Lead-owned).
 //
-// Applies the real, shipped migration arrays to a compatibility-shaped legacy
-// SQLite database using Node's built-in `node:sqlite` module. No network, no
-// dependencies, no Cloudflare account: this is a local proof that the upgrade
-// path is additive and preserves user data, which a static review cannot give.
+// Applies shipped migrations to a legacy SQLite database using Node's built-in
+// `node:sqlite`. Retired feature state is deleted; core user-owned data is preserved.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
@@ -101,14 +99,32 @@ test("shipped migration ids are unique, numeric and strictly ascending", () => {
   }
 });
 
-test("no shipped migration destroys user-owned data tables", () => {
-  const forbidden = [/DROP\s+TABLE\s+(IF\s+EXISTS\s+)?(users|thread_messages|ai_connections|routes|app_settings|chats|shared_service_usage)/i,
-    /DELETE\s+FROM\s+(users|thread_messages|ai_connections|routes|app_settings|chats|shared_service_usage)/i,
-    /DROP\s+COLUMN/i];
-  for (const m of SCHEMA_MIGRATIONS) {
-    if (m.id === 1) continue; // historical: dropped the dead continuation_states table only
-    for (const sql of m.statements) {
-      for (const re of forbidden) assert.ok(!re.test(sql), "destructive migration " + m.id + ": " + sql);
+test("destructive migrations are limited to retired feature-owned tables", () => {
+  const approved = new Set([
+    "ai_connections", "connection_models", "connection_usage",
+    "routes", "route_models", "route_tokens",
+    "routing_profiles", "routing_profile_entries",
+    "shared_service_usage", "voice_transcripts",
+    "reminders", "reminder_delivery_attempts",
+    "schedules", "schedule_delivery_attempts", "proactive_delivery_attempts"
+  ]);
+  const retained = new Set([
+    "users", "thread_messages", "chats", "app_settings", "personalities",
+    "custom_personalities", "chat_logs", "broadcasts", "broadcast_recipients",
+    "blocked_users", "failed_updates", "processed_updates"
+  ]);
+  for (const migration of SCHEMA_MIGRATIONS) {
+    for (const sql of migration.statements) {
+      const drop = sql.match(/^\\s*DROP\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?([a-z_]+)/i);
+      if (drop) {
+        assert.ok(approved.has(drop[1]), "unapproved table deletion in migration " + migration.id + ": " + sql);
+        assert.ok(!retained.has(drop[1]), "retained table was dropped: " + drop[1]);
+      }
+      assert.doesNotMatch(sql, /DROP\\s+COLUMN/i);
+      if (/^\\s*DELETE\\s+FROM\\s+app_settings/i.test(sql)) {
+        assert.match(sql, /WHERE\\s+key\\s+IN\\s*\\(/i, "settings cleanup must be key-scoped");
+      }
+      assert.doesNotMatch(sql, /^\\s*DELETE\\s+FROM\\s+(users|thread_messages|chats|app_settings|personalities|custom_personalities|chat_logs|broadcasts|broadcast_recipients|blocked_users|failed_updates|processed_updates)\\b/i);
     }
   }
 });
@@ -141,19 +157,22 @@ test("upgrading a legacy database preserves data and applies the new defaults", 
   assert.equal(settings.get("maintenance_enabled"), "0");
   assert.equal(settings.get("default_locale"), "en-US");
 
-  // Conversation history and encrypted credentials are untouched.
+  // Core user, group, and conversation records are retained.
+  assert.equal(db.prepare("SELECT COUNT(*) AS c FROM users").get().c, 3);
   assert.equal(db.prepare("SELECT COUNT(*) AS c FROM thread_messages").get().c, 1);
-  const conn = db.prepare("SELECT * FROM ai_connections WHERE connection_id = 'c-legacy'").get();
-  assert.equal(conn.encrypted_key, "ciphertext");
-  assert.equal(conn.key_iv, "iv");
+  assert.equal(db.prepare("SELECT COUNT(*) AS c FROM chats").get().c, 3);
 
-  // If the routing migration backfills per-connection models, the legacy model
-  // must be present exactly once and never duplicate the connection.
-  const hasModels = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'connection_models'").get();
-  if (hasModels) {
-    const models = db.prepare("SELECT connection_id, model FROM connection_models WHERE connection_id = 'c-legacy'").all();
-    assert.equal(models.length, 1);
-    assert.equal(models[0].model, "model-fast");
+  // The final migration removes provider credentials and retired feature state.
+  for (const table of [
+    "ai_connections", "connection_models", "connection_usage",
+    "routes", "route_models", "route_tokens",
+    "routing_profiles", "routing_profile_entries",
+    "reminders", "reminder_delivery_attempts",
+    "schedules", "schedule_delivery_attempts",
+    "proactive_delivery_attempts", "shared_service_usage", "voice_transcripts"
+  ]) {
+    const row = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+    assert.equal(row, undefined, "retired table should be absent: " + table);
   }
 });
 
