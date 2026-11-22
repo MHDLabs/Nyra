@@ -112,9 +112,8 @@ export async function routeAdminPanel(env, ctx, request, pathname) {
     const id = Number(userMatch[1]);
     const row = await env.DB.prepare(
       "SELECT telegram_id, first_name, last_name, username, preferred_name, language_code, locale, personality_id, " +
-      "memory_mode, memory_data, custom_instructions, usage_stats, fallback_enabled, msg_counter, active_connection_id, " +
-      "active_route_id, timezone, onboarding_completed, created_at, last_seen_at, last_inbound_at, updated_at, " +
-      "proactive_enabled, proactive_threshold_hours FROM users WHERE telegram_id = ?"
+      "memory_mode, memory_data, custom_instructions, usage_stats, msg_counter, onboarding_completed, " +
+      "created_at, last_seen_at, updated_at FROM users WHERE telegram_id = ?"
     ).bind(id).first();
     if (!row) return json(404, { error: "not_found" });
     let blocked = false;
@@ -122,19 +121,10 @@ export async function routeAdminPanel(env, ctx, request, pathname) {
       const b = await env.DB.prepare("SELECT 1 AS x FROM blocked_users WHERE telegram_id = ?").bind(id).first();
       blocked = !!(b && b.x);
     } catch (e) {}
-    let connection = null;
-    if (row.active_connection_id) {
-      try {
-        connection = await env.DB.prepare(
-          "SELECT connection_id, label, provider, model, base_url, enabled, is_global, is_default FROM ai_connections WHERE connection_id = ?"
-        ).bind(row.active_connection_id).first();
-      } catch (e) {}
-    }
     // Never expose encrypted API keys
     return json(200, {
       user: row,
       blocked: blocked,
-      connection: connection,
       memory: safeParse(row.memory_data),
       usage: safeParse(row.usage_stats)
     });
@@ -152,10 +142,6 @@ export async function routeAdminPanel(env, ctx, request, pathname) {
     if (body.locale !== undefined) setCol("locale", String(body.locale || "").slice(0, 16));
     if (body.personality_id !== undefined) setCol("personality_id", String(body.personality_id || "default").slice(0, 64));
     if (body.memory_mode !== undefined) setCol("memory_mode", String(body.memory_mode || "normal").slice(0, 16));
-    if (body.active_connection_id !== undefined) setCol("active_connection_id", body.active_connection_id ? String(body.active_connection_id).slice(0, 64) : null);
-    if (body.timezone !== undefined) setCol("timezone", body.timezone ? String(body.timezone).slice(0, 64) : null);
-    if (body.proactive_enabled !== undefined) setCol("proactive_enabled", body.proactive_enabled ? 1 : 0);
-    if (body.proactive_threshold_hours !== undefined) setCol("proactive_threshold_hours", Math.min(Math.max(Number(body.proactive_threshold_hours) || 24, 1), 168));
     if (body.custom_instructions !== undefined) setCol("custom_instructions", body.custom_instructions ? String(body.custom_instructions).slice(0, 2000) : null);
     try {
       if (sets.length) {
@@ -239,19 +225,6 @@ export async function routeAdminPanel(env, ctx, request, pathname) {
     return json(200, { chat_id: chatId, messages: messages });
   }
 
-  // GET /admin-api/models
-  if (path === "/admin-api/models" && request.method === "GET") {
-    try {
-      const res = await env.DB.prepare(
-        "SELECT connection_id, label, provider, model, base_url, enabled, is_global, is_default, " +
-        "last_test_status, last_test_at, consecutive_failures FROM ai_connections ORDER BY is_default DESC, label ASC"
-      ).all();
-      return json(200, { models: res.results || [] });
-    } catch (e) {
-      return json(500, { error: e.message });
-    }
-  }
-
   // POST /admin-api/send
   if (path === "/admin-api/send" && request.method === "POST") {
     let body;
@@ -307,11 +280,11 @@ export async function routeAdminPanel(env, ctx, request, pathname) {
     try {
       const users = await env.DB.prepare("SELECT COUNT(*) AS c FROM users").first();
       const logs = await env.DB.prepare("SELECT COUNT(*) AS c FROM chat_logs").first();
-      const models = await env.DB.prepare("SELECT COUNT(*) AS c FROM ai_connections WHERE enabled = 1").first();
       return json(200, {
         users: users && users.c || 0,
         chat_logs: logs && logs.c || 0,
-        models: models && models.c || 0
+        ai_model: env.AI_MODEL || null,
+        ai_configured: !!(env.AI_MODEL && env.AI_API_KEY)
       });
     } catch (e) {
       return json(500, { error: e.message });
