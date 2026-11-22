@@ -65,10 +65,10 @@ function createLegacyDb() {
 }
 
 function seedLegacyData(db) {
-  const user = db.prepare("INSERT INTO users (telegram_id, first_name, language_code, personality_id, memory_data, usage_stats, created_at, last_seen_at, updated_at) VALUES (?, ?, ?, 'default', '{}', '{}', ?, ?, ?)");
-  user.run(101, "Ali", "fa", NOW - 5000, NOW - 4000, NOW - 4000);
-  user.run(102, "John", "en-US", NOW - 5000, NOW - 4000, NOW - 4000);
-  user.run(103, "Unknown", null, NOW - 5000, NOW - 4000, NOW - 4000);
+  const user = db.prepare("INSERT INTO users (telegram_id, first_name, language_code, preferred_name, custom_instructions, personality_id, memory_data, usage_stats, created_at, last_seen_at, updated_at) VALUES (?, ?, ?, ?, ?, 'default', ?, ?, ?, ?, ?)");
+  user.run(101, "Ali", "fa", "Ali", "Prefer concise answers.", JSON.stringify({ preferred_name: "Ali", explicit_facts: ["Uses Linux"] }), JSON.stringify({ requests: 7 }), NOW - 5000, NOW - 4000, NOW - 4000);
+  user.run(102, "John", "en-US", null, null, "{}", "{}", NOW - 5000, NOW - 4000, NOW - 4000);
+  user.run(103, "Unknown", null, null, null, "{}", "{}", NOW - 5000, NOW - 4000, NOW - 4000);
   db.prepare("INSERT INTO chats (chat_id, chat_type, title, enabled, mode, created_at, updated_at) VALUES (?,?,?,?,?,?,?)")
     .run(-1001, "group", "Legacy auto-disabled", 0, "disabled", NOW - 5000, NOW - 5000);
   db.prepare("INSERT INTO chats (chat_id, chat_type, title, enabled, mode, disabled_by_admin, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)")
@@ -186,6 +186,13 @@ test("upgrading a legacy database preserves data and applies the new defaults", 
   const settings = new Map(db.prepare("SELECT key, value FROM app_settings").all().map(r => [r.key, r.value]));
   assert.equal(settings.get("maintenance_enabled"), "0");
   assert.equal(settings.get("default_locale"), "en-US");
+
+  // User personalization and usage records survive the destructive retirement.
+  const preservedUser = db.prepare("SELECT preferred_name, custom_instructions, memory_data, usage_stats FROM users WHERE telegram_id = 101").get();
+  assert.equal(preservedUser.preferred_name, "Ali");
+  assert.equal(preservedUser.custom_instructions, "Prefer concise answers.");
+  assert.deepEqual(JSON.parse(preservedUser.memory_data), { preferred_name: "Ali", explicit_facts: ["Uses Linux"] });
+  assert.deepEqual(JSON.parse(preservedUser.usage_stats), { requests: 7 });
 
   // Core user, group, and conversation records are retained.
   assert.equal(db.prepare("SELECT COUNT(*) AS c FROM users").get().c, 3);
