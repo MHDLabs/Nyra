@@ -1,4 +1,3 @@
-import type { NyraEnv } from "../../types/env.js";
 // Nyra — central AI runtime barrel.
 //
 // The application uses one operator-configured OpenAI-compatible model.
