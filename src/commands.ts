@@ -1,7 +1,7 @@
 // @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
 // Nyra — commands: full in-chat control (settings, memory, admin) + reminders.
 // Mini App remains available, but nothing requires it.
-import { RATE_LIMIT_ADMIN_PER_MIN, MAX_PERSONALITIES, MAX_PERSONALITY_PROMPT, MAX_PERSONALITY_DESC, ONBOARDING_MAX_NAME_LENGTH, MINIAPP_DISABLED } from "./config.js";
+import { RATE_LIMIT_ADMIN_PER_MIN, MAX_PERSONALITIES, MAX_PERSONALITY_PROMPT, MAX_PERSONALITY_DESC, ONBOARDING_MAX_NAME_LENGTH } from "./config.js";
 import { now, escapeHtml, generateShortId, isAdmin, checkRateLimit } from "./utils.js";
 import { getMasterKey } from "./crypto.js";
 import { sendMessage, editMessage, buildInlineKeyboard, buildMainReplyKeyboard } from "./telegram.js";
@@ -24,19 +24,6 @@ import {
   handleTimezoneCommand
 } from "./reminders/commands.js";
 import { detectLang } from "./reminders/parse.js";
-
-function publicOrigin(env) {
-  if (env.PUBLIC_ORIGIN) return String(env.PUBLIC_ORIGIN).replace(/\/+$/, "");
-  if (env.MINIAPP_URL) return String(env.MINIAPP_URL).replace(/\/+$/, "");
-  return null;
-}
-
-function miniAppKeyboard(env, locale) {
-  if (MINIAPP_DISABLED) return undefined;
-  const origin = publicOrigin(env);
-  if (!origin) return undefined;
-  return buildInlineKeyboard([[{ text: t(locale, "commands.miniapp.open") || "Open Mini App", web_app: { url: origin + "/" } }]]);
-}
 
 async function handleStartCommand(env, chatId, userId, from, isGroup, startPayload) {
   if (isGroup) {
