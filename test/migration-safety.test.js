@@ -176,6 +176,14 @@ test("upgrading a legacy database preserves data and applies the new defaults", 
   }
 });
 
+test("retired feature tables are not recreated after migration 23", () => {
+  const source = readFileSync(new URL("../src/db/schema.ts", import.meta.url), "utf8");
+  assert.match(source, /const retiredStateAlreadyCleaned = await isMigrationApplied\(env, 23\)/);
+  assert.match(source, /retiredBootstrap/);
+  assert.match(source, /statements = statements\.filter/);
+  assert.match(source, /activeAlters[\s\S]*?item\[0\] !== "ai_connections"/);
+  assert.match(source, /id: 23,[\s\S]*?DROP TABLE IF EXISTS ai_connections/);
+});
 test("applying the same pending migrations twice is rejected by migration tracking, not silently repeated", () => {
   const db = createLegacyDb();
   const pending = SCHEMA_MIGRATIONS.filter(m => m.id >= 10).sort((a, b) => a.id - b.id);
