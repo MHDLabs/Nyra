@@ -24,7 +24,7 @@ export async function upsertUser(env: NyraEnv, from) {
   const existing = await getUser(env, from.id);
   if (!existing) {
     try {
-      await env.DB.prepare("INSERT INTO users (telegram_id, first_name, last_name, username, language_code, personality_id, memory_mode, memory_data, usage_stats, fallback_enabled, msg_counter, active_connection_id, created_at, last_seen_at, updated_at) VALUES (?, ?, ?, ?, ?, 'romantic', 'normal', '{}', '{}', 1, 0, NULL, ?, ?, ?) ON CONFLICT(telegram_id) DO NOTHING")
+      await env.DB.prepare("INSERT INTO users (telegram_id, first_name, last_name, username, language_code, personality_id, memory_mode, memory_data, usage_stats, msg_counter, created_at, last_seen_at, updated_at) VALUES (?, ?, ?, ?, ?, 'romantic', 'normal', '{}', '{}', 0, ?, ?, ?) ON CONFLICT(telegram_id) DO NOTHING")
         .bind(from.id, from.first_name || "", from.last_name || "", from.username || "", from.language_code || "", ts, ts, ts).run();
     } catch (err) { console.error("upsertUser insert failed:", (err instanceof Error ? err.message : String(err))); }
     return await getUser(env, from.id);
@@ -41,34 +41,6 @@ export async function upsertUser(env: NyraEnv, from) {
     }
   } catch (err) {}
   return await getUser(env, from.id);
-}
-
-/**
- * Record a genuine private inbound user interaction for proactive inactivity
- * tracking. Unlike last_seen_at this is not throttled — every eligible message
- * advances the inactivity clock. Outgoing bot messages must never call this.
- */
-export async function touchLastInbound(env: NyraEnv, userId) {
-  if (!userId) return;
-  const ts = now();
-  try {
-    // Ensure a users row exists (brand-new chats may not have been upserted yet).
-    // Clear the episode key so a new inactivity period can begin after the user talks again.
-    await env.DB.prepare(
-      "INSERT INTO users (telegram_id, first_name, last_name, username, language_code, personality_id, memory_mode, memory_data, usage_stats, fallback_enabled, msg_counter, active_connection_id, created_at, last_seen_at, updated_at, last_inbound_at) " +
-      "VALUES (?, '', '', '', '', 'romantic', 'normal', '{}', '{}', 1, 0, NULL, ?, ?, ?, ?) " +
-      "ON CONFLICT(telegram_id) DO UPDATE SET last_inbound_at = excluded.last_inbound_at, proactive_episode_key = NULL, updated_at = excluded.updated_at"
-    ).bind(userId, ts, ts, ts, ts).run();
-  } catch (err) {
-    // Fallback for schemas missing last_inbound_at during rolling migrate.
-    try {
-      await env.DB.prepare(
-        "UPDATE users SET last_inbound_at = ?, proactive_episode_key = NULL, updated_at = ? WHERE telegram_id = ?"
-      ).bind(ts, ts, userId).run();
-    } catch (err2) {
-      console.error("touchLastInbound failed:", (err2 instanceof Error ? err2.message : String(err2)));
-    }
-  }
 }
 
 export async function getChat(env: NyraEnv, chatId) {
