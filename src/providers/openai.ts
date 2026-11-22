@@ -3,22 +3,19 @@ import type { NyraEnv } from "../../types/env.js";
 // the paginated /models listing. Covers OpenAI itself, OpenRouter, Groq,
 // Together, Fireworks, DeepSeek, Ollama and anything else speaking the same
 // dialect.
-import { AI_TEST_TIMEOUT_MS, OPENAI_DEFAULT_URL, ANTHROPIC_VERSION, APP_TITLE } from "../config.js";
-import { isOpenRouterUrl, fetchWithTimeout } from "../utils.js";
-import { parseProviderError, normalizeError } from "./errors.js";
+import { OPENAI_DEFAULT_URL, APP_TITLE } from "../config.js";
+import { isOpenRouterUrl } from "../utils.js";
+import { parseProviderError } from "./errors.js";
 import { toOpenAIContent } from "./content.js";
 
 export function buildProviderHeaders(provider, apiKey, baseUrl) {
-  const headers: any = { "Content-Type": "application/json" };
-  if (provider === "anthropic") {
-    headers["x-api-key"] = apiKey;
-    headers["anthropic-version"] = ANTHROPIC_VERSION;
-  } else {
-    headers["Authorization"] = "Bearer " + apiKey;
-    if (isOpenRouterUrl(baseUrl)) {
-      headers["HTTP-Referer"] = "https://t.me";
-      headers["X-Title"] = APP_TITLE;
-    }
+  const headers: any = {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer " + apiKey
+  };
+  if (isOpenRouterUrl(baseUrl)) {
+    headers["HTTP-Referer"] = "https://t.me";
+    headers["X-Title"] = APP_TITLE;
   }
   return headers;
 }
@@ -201,45 +198,3 @@ export async function* streamOpenAICompatible(connection, apiKey, messages, opti
   yield { type: "usage", usage: usage };
 }
 
-export async function fetchOpenAICompatibleModels(base, headers) {
-  const all: any[] = [];
-  let afterId = null;
-  let pageCount = 0;
-  const maxPages = 5;
-  try {
-    while (pageCount < maxPages) {
-      let url = base + "/models";
-      if (afterId) url += "?after=" + encodeURIComponent(afterId);
-      const resp = await fetchWithTimeout(url, { method: "GET", headers: headers, cache: "no-store" }, AI_TEST_TIMEOUT_MS);
-      if (!resp.ok) {
-        if (pageCount === 0) {
-          const err = await parseProviderError(resp);
-          return { models: [], error: normalizeError(err, err.status), diagnostic: err.message };
-        }
-        break;
-      }
-      let data;
-      try { data = await resp.json(); }
-      catch (e) { break; }
-      let raw: any[] = [];
-      if (Array.isArray(data)) raw = data;
-      else if (data && Array.isArray(data.data)) raw = data.data;
-      else if (data && Array.isArray(data.models)) raw = data.models;
-      for (let i = 0; i < raw.length; i++) {
-        const item = raw[i];
-        if (typeof item === "string") all.push({ id: item });
-        else if (item && typeof item.id === "string") all.push({ id: item.id, name: item.name || item.id });
-      }
-      if (data && data.has_more === true && data.last_id) {
-        afterId = data.last_id;
-        pageCount++;
-      } else {
-        break;
-      }
-    }
-    all.sort(function (a, b) { return a.id.localeCompare(b.id); });
-    return { models: all, error: null };
-  } catch (err) {
-    return { models: [], error: normalizeError(err, err.status), diagnostic: err.message };
-  }
-}
