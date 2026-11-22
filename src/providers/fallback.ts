@@ -1,24 +1,46 @@
 import type { NyraEnv } from "../../types/env.js";
-import { ADMIN_NOTIFY_THROTTLE_TTL, AI_PRIMARY_ATTEMPT_TIMEOUT_MS } from "../config.js";
+import { ADMIN_NOTIFY_THROTTLE_TTL, AI_PRIMARY_ATTEMPT_TIMEOUT_MS, AI_STREAM_STALL_TIMEOUT_MS } from "../config.js";
 import { truncate, escapeHtml, getAdminIds } from "../utils.js";
 import { sendMessage } from "../telegram.js";
 import { normalizeError, humanizeError } from "./errors.js";
-import { generateOpenAICompatible } from "./openai.js";
+import { generateOpenAICompatible, streamOpenAICompatible } from "./openai.js";
 import { getCentralAIConfig } from "./config.js";
 import { executeAgentTool, configuredToolDefinitions, isWebSearchConfigured } from "../tools.js";
 
 /** All requests use the same operator-owned OpenAI-compatible endpoint and key. */
 export async function generateWithConnection(env: NyraEnv, _legacyConnection, messages, options, timeoutMs) {
   const config = getCentralAIConfig(env);
-  return await generateOpenAICompatible(config, config.api_key, messages, options, timeoutMs || AI_PRIMARY_ATTEMPT_TIMEOUT_MS);
+  return await generateOpenAICompatible(
+    config,
+    config.api_key,
+    messages,
+    options,
+    timeoutMs || AI_PRIMARY_ATTEMPT_TIMEOUT_MS
+  );
 }
 
-/** Execute tool calls against the same configured model and endpoint. */
-export async function generateAgentWithConnection(env: NyraEnv, user, _legacyConnection, messages, options) {
+function isExplicitMemoryIntent(messages) {
+  const latest = [...messages].reverse().find(message => message.role === "user");
+  return !!(latest && typeof latest.content === "string" &&
+    /\b(?:remember|forget|save\s+(?:this|that)\s+to\s+memory|delete\s+from\s+memory)\b|یادت|به\s+خاطر\s+بسپار|فراموش|از\s+حافظه\s+پاک/iu.test(latest.content));
+}
+
+async function* streamCentralAgent(env: NyraEnv, user, messages, options) {
   const config = getCentralAIConfig(env);
+  const safeConnection = {
+    connection_id: "central",
+    label: "Central AI",
+    provider: "openai-compatible",
+    model: config.model
+  };
   const reasoningModel = /(^|[-/])(o[1-9]|gpt-5)/i.test(config.model);
   const definitions = reasoningModel ? [] : configuredToolDefinitions("openai-compatible", env);
   const conversation = messages.map(message => ({ ...message }));
+  const memoryIntentAllowed = isExplicitMemoryIntent(messages);
+  const deadline = Date.now() + Math.max(1000, Math.min((options && options.totalBudgetMs) || 70000, 120000));
+  let usage = { in: 0, out: 0, source: "unavailable" };
+  let toolsDisabled = definitions.length === 0;
+
   if (reasoningModel && conversation[0]) {
     conversation[0] = {
       ...conversation[0],
@@ -32,46 +54,80 @@ export async function generateAgentWithConnection(env: NyraEnv, user, _legacyCon
     };
   }
 
-  const latestUserMessage = [...messages].reverse().find(message => message.role === "user");
-  const memoryIntentAllowed = !!(latestUserMessage && typeof latestUserMessage.content === "string" &&
-    /\b(?:remember|forget|save\s+(?:this|that)\s+to\s+memory|delete\s+from\s+memory)\b|یادت|به\s+خاطر\s+بسپار|فراموش|از\s+حافظه\s+پاک/iu.test(latestUserMessage.content));
-  const deadline = Date.now() + Math.max(1000, Math.min((options && options.totalBudgetMs) || 70000, 120000));
-  let usage = { in: 0, out: 0, source: "unavailable" };
-
   for (let iteration = 0; iteration <= 4; iteration++) {
     const remaining = deadline - Date.now();
     if (remaining < 1000) throw new Error("AI request timed out");
-    let result;
+
+    const controller = new AbortController();
+    const stallTimeout = Math.max(1000, Math.min(
+      (options && options.stallTimeoutMs) || AI_STREAM_STALL_TIMEOUT_MS,
+      remaining
+    ));
+    let stallTimer: any = null;
+    const armStallTimer = () => {
+      if (stallTimer) clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => controller.abort(), stallTimeout);
+    };
+    armStallTimer();
+
+    let roundText = "";
+    let calls: any[] = [];
+    let streamFailed = null;
     try {
-      result = await generateOpenAICompatible(
+      const streamOptions = {
+        ...options,
+        tools: toolsDisabled ? [] : definitions
+      };
+      const stream = streamOpenAICompatible(
         config,
         config.api_key,
         conversation,
-        { ...options, tools: definitions },
-        Math.min(remaining, 30000)
+        streamOptions,
+        controller.signal
       );
-    } catch (error) {
-      // Some OpenAI-compatible endpoints do not implement function calling.
-      // Retry once against the SAME endpoint/model, without tools.
-      if (iteration === 0 && definitions.length > 0 && error && error.status === 400) {
-        const plain = conversation.map(message => ({ ...message }));
-        if (plain[0]) {
-          plain[0] = { ...plain[0], content: String(plain[0].content) + "\n\nTools are unsupported by this endpoint for this request. Do not claim to browse or modify memory." };
+      for await (const event of stream) {
+        armStallTimer();
+        if (event.type === "text" && typeof event.text === "string") {
+          roundText += event.text;
+          yield { type: "text", text: event.text };
+        } else if (event.type === "tool_calls" && Array.isArray(event.toolCalls)) {
+          calls = event.toolCalls;
+        } else if (event.type === "usage" && event.usage) {
+          usage = event.usage;
+          yield { type: "usage", usage };
         }
-        const fallback = await generateOpenAICompatible(config, config.api_key, plain, options, Math.min(remaining, 30000));
-        return { text: fallback.text || "", usage: fallback.usage || usage };
       }
-      throw error;
+    } catch (error) {
+      streamFailed = error;
+    } finally {
+      if (stallTimer) clearTimeout(stallTimer);
     }
 
-    usage = result.usage || usage;
-    const calls = Array.isArray(result.toolCalls) ? result.toolCalls : [];
-    if (calls.length === 0) return { text: result.text || "", usage };
+    if (streamFailed) {
+      // Some OpenAI-compatible servers reject tools. Retry once against the
+      // exact same endpoint and model, with tools disabled for this request.
+      if (iteration === 0 && !toolsDisabled && streamFailed.status === 400) {
+        toolsDisabled = true;
+        if (conversation[0]) {
+          conversation[0] = {
+            ...conversation[0],
+            content: String(conversation[0].content) + "\n\nThis endpoint does not support tools for this request. Do not claim to browse, fetch pages, or modify memory."
+          };
+        }
+        continue;
+      }
+      throw streamFailed;
+    }
 
-    const callIds = new Set();
+    if (!calls.length) {
+      yield { type: "done", connection: safeConnection, usage, attempts: 1, fallbackUsed: false };
+      return;
+    }
+
+    const callIds = new Set<string>();
     for (const call of calls) {
       if (!call || typeof call.id !== "string" || !call.id || call.id.length > 100 ||
-          !call.function || typeof call.function.name !== "string") {
+          !call.function || typeof call.function.name !== "string" || !call.function.name) {
         throw new Error("Malformed provider tool call");
       }
       if (callIds.has(call.id)) throw new Error("Duplicate provider tool-call ID");
@@ -79,11 +135,10 @@ export async function generateAgentWithConnection(env: NyraEnv, user, _legacyCon
     }
     if (iteration === 4) throw new Error("Tool-call iteration limit reached");
 
-    conversation.push({ role: "assistant", content: result.text || null, tool_calls: calls });
+    conversation.push({ role: "assistant", content: roundText || null, tool_calls: calls });
     for (let index = 0; index < calls.length; index++) {
       const call = calls[index];
       const name = call.function.name;
-      const args = call.function.arguments;
       let toolResult;
       try {
         if (index >= 4) throw new Error("Tool-call batch limit is four");
@@ -95,22 +150,33 @@ export async function generateAgentWithConnection(env: NyraEnv, user, _legacyCon
           env,
           user && user.telegram_id,
           name,
-          args,
+          call.function.arguments,
           { chatId: user && user._toolChatId, messageId: user && user._toolMessageId }
         );
       } catch (error) {
-        toolResult = JSON.stringify({ error: String(error && (error.message || error) || "Tool failed").slice(0, 240) });
+        toolResult = JSON.stringify({
+          error: String(error && (error.message || error) || "Tool failed").slice(0, 240)
+        });
       }
       conversation.push({ role: "tool", tool_call_id: call.id, content: toolResult });
     }
   }
+
   throw new Error("Agent execution ended without a final answer");
 }
 
-/**
- * One configured endpoint, one model, one API key. There is deliberately no
- * connection discovery, route traversal, provider switching, or model fallback.
- */
+/** Buffered compatibility helper for non-Telegram callers and unit tests. */
+export async function generateAgentWithConnection(env: NyraEnv, user, _legacyConnection, messages, options) {
+  let text = "";
+  let usage = { in: 0, out: 0, source: "unavailable" };
+  for await (const event of streamCentralAgent(env, user, messages, options)) {
+    if (event.type === "text") text += event.text;
+    else if (event.type === "usage") usage = event.usage;
+  }
+  return { text, usage };
+}
+
+/** Stream the single centrally configured model. No provider/model failover exists. */
 export async function* tryAgentWithFallback(env: NyraEnv, user, messages, options) {
   let safeConnection: any = {
     connection_id: "central",
@@ -120,15 +186,11 @@ export async function* tryAgentWithFallback(env: NyraEnv, user, messages, option
   };
   try {
     const config = getCentralAIConfig(env);
-    safeConnection = {
-      connection_id: config.connection_id,
-      label: config.label,
-      provider: config.provider,
-      model: config.model
-    };
-    const result = await generateAgentWithConnection(env, user, config, messages, options);
-    if (result.text) yield { type: "text", text: result.text };
-    yield { type: "done", connection: safeConnection, usage: result.usage, attempts: 1, fallbackUsed: false };
+    safeConnection.model = config.model;
+    for await (const event of streamCentralAgent(env, user, messages, options)) {
+      if (event.type === "done") safeConnection = event.connection || safeConnection;
+      yield event;
+    }
   } catch (error) {
     yield {
       type: "error",
@@ -170,7 +232,7 @@ export async function notifyAdminOnError(env: NyraEnv, opts) {
       "<b>Message:</b> " + escapeHtml(humanizeError(category)),
       "<b>Attempts:</b> " + (opts.attempts || 1)
     ];
-    if (opts.raw_error) lines.push("<b>Last error:</b> <code>" + escapeHtml(truncate(redactCentralSecret(env, opts.raw_error), 300)) + "</code>");
+    if (opts.raw_error) lines.push("<b>Last error:</b> <code>" + escapeHtml(redactCentralSecret(env, opts.raw_error), 300) + "</code>");
     if (opts.user_id) lines.push("<b>User:</b> <code>" + opts.user_id + "</code>");
     if (opts.chat_id) lines.push("<b>Chat:</b> <code>" + opts.chat_id + "</code>");
     lines.push("<b>Time:</b> " + new Date().toISOString());
