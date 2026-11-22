@@ -232,7 +232,7 @@ export async function notifyAdminOnError(env: NyraEnv, opts) {
       "<b>Message:</b> " + escapeHtml(humanizeError(category)),
       "<b>Attempts:</b> " + (opts.attempts || 1)
     ];
-    if (opts.raw_error) lines.push("<b>Last error:</b> <code>" + escapeHtml(redactCentralSecret(env, opts.raw_error), 300) + "</code>");
+    if (opts.raw_error) lines.push("<b>Last error:</b> <code>" + escapeHtml(truncate(redactCentralSecret(env, opts.raw_error), 300)) + "</code>");
     if (opts.user_id) lines.push("<b>User:</b> <code>" + opts.user_id + "</code>");
     if (opts.chat_id) lines.push("<b>Chat:</b> <code>" + opts.chat_id + "</code>");
     lines.push("<b>Time:</b> " + new Date().toISOString());
