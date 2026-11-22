@@ -1,6 +1,5 @@
 /**
- * High-level application event shapes (queue / AI stream).
- * Refined further in Tasks 5–6 when runtime modules migrate.
+ * High-level application event shapes used by queue and chat domain logic.
  */
 import type { ProviderErrorCategory, TelegramId } from "./domain.js";
 
@@ -16,8 +15,6 @@ export type StreamEvent =
   | {
       type: "done";
       attempts: number;
-      fallbackUsed: boolean;
-      connectionId?: string;
     }
   | {
       type: "error";
@@ -29,7 +26,6 @@ export type StreamEvent =
 export type CallbackAction =
   | { namespace: "set"; parts: string[] }
   | { namespace: "adm"; parts: string[] }
-  | { namespace: "model"; parts: string[] }
   | { namespace: "pers"; parts: string[] }
   | { namespace: "unknown"; raw: string };
 
