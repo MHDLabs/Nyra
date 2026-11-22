@@ -1,14 +1,12 @@
 import type { NyraEnv } from "../../types/env.js";
-// OpenAI-compatible provider: buffered and streamed /chat/completions. Supports
-// OpenAI itself, OpenRouter, Groq,
-// Together, Fireworks, DeepSeek, Ollama and anything else speaking the same
-// dialect.
+// Single OpenAI-compatible endpoint: buffered and streamed /chat/completions.
+// The configured endpoint must implement the OpenAI chat-completions format.
 import { OPENAI_DEFAULT_URL, APP_TITLE } from "../config.js";
 import { isOpenRouterUrl, fetchWithTimeout } from "../utils.js";
 import { parseProviderError } from "./errors.js";
 import { toOpenAIContent } from "./content.js";
 
-export function buildProviderHeaders(provider, apiKey, baseUrl) {
+export function buildProviderHeaders(apiKey, baseUrl) {
   const headers: any = {
     "Content-Type": "application/json",
     "Authorization": "Bearer " + apiKey
@@ -20,11 +18,11 @@ export function buildProviderHeaders(provider, apiKey, baseUrl) {
   return headers;
 }
 
-export async function generateOpenAICompatible(connection, apiKey, messages, options, timeoutMs) {
-  const baseUrl = (connection.base_url || OPENAI_DEFAULT_URL).replace(/\/+$/, "");
-  const model = connection.model;
+export async function generateOpenAICompatible(config, apiKey, messages, options, timeoutMs) {
+  const baseUrl = (config.base_url || OPENAI_DEFAULT_URL).replace(/\/+$/, "");
+  const model = config.model;
   const isReasoning = /(^|[-/])(o[1-9]|gpt-5)/i.test(model);
-  const allowImages = connection.supports_vision === 1;
+  const allowImages = config.supports_vision === 1;
   const finalMessages = messages.map(function (m: any) {
     const role = isReasoning && m.role === "system" ? "developer" : m.role;
     const mapped: any = { role: role, content: toOpenAIContent(m.content, allowImages) };
@@ -44,7 +42,7 @@ export async function generateOpenAICompatible(connection, apiKey, messages, opt
   }
   const resp = await fetchWithTimeout(baseUrl + "/chat/completions", {
     method: "POST",
-    headers: buildProviderHeaders("openai-compatible", apiKey, baseUrl),
+    headers: buildProviderHeaders(apiKey, baseUrl),
     body: JSON.stringify(body),
     cache: "no-store"
   }, timeoutMs);
@@ -91,11 +89,11 @@ export async function generateOpenAICompatible(connection, apiKey, messages, opt
   return { text: text, usage: usage };
 }
 
-export async function* streamOpenAICompatible(connection, apiKey, messages, options, signal) {
-  const baseUrl = (connection.base_url || OPENAI_DEFAULT_URL).replace(/\/+$/, "");
-  const model = connection.model;
+export async function* streamOpenAICompatible(config, apiKey, messages, options, signal) {
+  const baseUrl = (config.base_url || OPENAI_DEFAULT_URL).replace(/\/+$/, "");
+  const model = config.model;
   const isReasoning = /(^|[-/])(o[1-9]|gpt-5)/i.test(model);
-  const allowImages = connection.supports_vision === 1;
+  const allowImages = config.supports_vision === 1;
   const finalMessages = messages.map(function (m: any) {
     const role = isReasoning && m.role === "system" ? "developer" : m.role;
     const mapped: any = { role: role, content: toOpenAIContent(m.content, allowImages) };
@@ -115,7 +113,7 @@ export async function* streamOpenAICompatible(connection, apiKey, messages, opti
   }
   const resp = await fetch(baseUrl + "/chat/completions", {
     method: "POST",
-    headers: buildProviderHeaders("openai-compatible", apiKey, baseUrl),
+    headers: buildProviderHeaders(apiKey, baseUrl),
     body: JSON.stringify(body),
     signal: signal,
     cache: "no-store"
