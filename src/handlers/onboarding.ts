@@ -252,15 +252,15 @@ async function promptDisclosure(env: NyraEnv, chatId, userId, state) {
   const model = typeof env.AI_MODEL === "string" ? env.AI_MODEL.trim() : "";
   const configured = !!(model && env.AI_API_KEY);
   const text = locale.startsWith("fa")
-    ? "پیش از شروع، این موارد را بدانید:\\n\\n"
-      + "• مدل و کلید سرویس هوش مصنوعی توسط مدیر سامانه تنظیم می‌شود.\\n"
-      + "• کلید API برای کاربران یا مرورگر ارسال نمی‌شود.\\n"
-      + "• گفتگوها و حافظه در پایگاه دادهٔ Nyra ذخیره می‌شوند.\\n"
+    ? "پیش از شروع، این موارد را بدانید:\n\n"
+      + "• مدل و کلید سرویس هوش مصنوعی توسط مدیر سامانه تنظیم می‌شود.\n"
+      + "• کلید API برای کاربران یا مرورگر ارسال نمی‌شود.\n"
+      + "• گفتگوها و حافظه در پایگاه دادهٔ Nyra ذخیره می‌شوند.\n"
       + "• سرویس هوش مصنوعی " + (configured ? "با مدل " + model + " پیکربندی شده است." : "هنوز توسط مدیر پیکربندی نشده است.")
-    : "Before you continue:\\n\\n"
-      + "• The AI model and API credential are configured by the operator.\\n"
-      + "• The API key is never sent to users or browser clients.\\n"
-      + "• Conversations and memory are stored in Nyra's database.\\n"
+    : "Before you continue:\n\n"
+      + "• The AI model and API credential are configured by the operator.\n"
+      + "• The API key is never sent to users or browser clients.\n"
+      + "• Conversations and memory are stored in Nyra's database.\n"
       + "• The AI service " + (configured ? "is configured with " + model + "." : "has not been configured by the operator yet.");
 
   const keyboard = buildInlineKeyboard([[
