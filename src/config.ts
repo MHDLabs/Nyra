@@ -16,10 +16,10 @@ export const RATE_LIMIT_CHAT_PER_HOUR = 200;
 export const RATE_LIMIT_ADMIN_PER_MIN = 10;
 export const RATE_LIMIT_CALLBACK_PER_MIN = 30;
 export const RATE_LIMIT_SETUP_PER_MIN = 5;
-// Single attempt per model with a long wall-clock budget (no multi-retry loops).
+// Single attempt against the centrally configured model.
 export const AI_PRIMARY_ATTEMPT_TIMEOUT_MS = 120000;
 export const AI_MAX_PRIMARY_ATTEMPTS = 1;
-// No per-connection retries for transient faults — one shot, high timeout.
+// No provider or model failover.
 export const AI_MAX_RETRYABLE_ATTEMPTS = 1;
 export const AI_RETRY_DELAYS_MS: number[] = [];
 export const AI_STREAM_STALL_TIMEOUT_MS = 120000;
@@ -63,10 +63,9 @@ export const MEMORY_RATE_BUCKET_MAX_AGE_MS = 86400000;
 export const NYRA_VARIANTS = ["نیرا", "نيرا"];
 export const STREAM_EDIT_THROTTLE_MS = 1200;
 export const STREAM_PLACEHOLDER = "⏳";
-// Fast-mode models (admin opt-in) bypass the queue and stream straight from the
-// webhook request. ctx.waitUntil caps post-response work at 30s, so the total
-// streaming budget must stay safely below that.
+export const LANGUAGE_RULE_PROMPT = "Language rule: Always respond in Persian (Farsi) by default, regardless of what language the user writes in — even if they write in English, mix languages, or ask about a technical topic. The only exception: when the user explicitly requests a different language in their message (for example \"answer in English\", \"به انگلیسی جواب بده\", \"en français\"), respond in that language for that single reply, then return to Persian for the next replies. Do not switch language just because the user wrote in another language, used an English term, or the topic is technical.";
 
+export const PERSIAN_STYLE_RULES_PROMPT = "Persian writing rules for every response:\n\nAvoid the machine-like patterns common in AI writing. Do not:\n- Open with clichés (در دنیای امروز، لازم به ذکر است، در این مقاله قصد داریم)\n- Use filler adverbs (در واقع، بدون شک، به طور کلی) unless they carry real meaning\n- Force artificial contrasts (فقط X نیست؛ Y است) — state the point directly\n- Fake suspense (چیزی که کمتر کسی می‌داند، نکته‌ای که اغلب نادیده گرفته می‌شود)\n- Use dramatic colons in prose — colons are for lists, labels, quotes\n- Ask rhetorical questions then answer them immediately\n- Comment on importance (که نشان‌دهنده تعهد است، که گواهی بر کیفیت است)\n- Attribute vaguely (کارشناسان معتقدند، تحقیقات نشان می‌دهد) — cite or drop\n- Use weak nominal verbs (نقش ایفا می‌کند) — use direct verbs (X را انجام می‌دهد)\n- Rotate technical terms for variety — pick one and stick to it\n- Chain staccato sentences (ساده است. سریع است. دقیق است.) unless deliberate\n- End with philosophical lines (آینده در راه نیست؛ همین حالا اینجاست)\n- Add repetitive summaries (در پایان می‌توان گفت، در مجموع)\n- Sprinkle decorative emojis or bold words\n- Build bullet lists for two short sentences\n- Chain three equal adjectives (سریع، دقیق و هوشمند) without real content\n- Chain «می‌تواند» sentences — be direct about what something does\n- Add generic CTAs (همین امروز قدم اول را بردارید)\n\nVocabulary: Prefer Persian words when the field uses them (رایانه، پایگاه داده، پرونده، بارگیری، پوشه، پیوند، گذرواژه، کارساز، سامانه، فناوری، سازوکار، فرایند، روش، واکاوی، گروه، فهرست، دیدگاه، نمایه، قالب). Keep the loanword when it IS the term of the field (الگوریتم، پروتکل، کامپایلر، API، توکن، کرنل، URL، نام محصولات و برندها). Never invent a Persian term. Readability always wins over purity. Be consistent within a single reply.\n\nThe active personality below may add its own flavor — humor, warmth, formality — but the anti-cliché rules above always apply. A funny reply can be funny without using «در دنیای امروز» or «بیایید صادق باشیم».";
 // --- Localization & onboarding --------------------------------------------
 // The only shipped locales. Locale is persisted per user (users.locale).
 export const SUPPORTED_LOCALES = ["en-US", "fa-IR"];
