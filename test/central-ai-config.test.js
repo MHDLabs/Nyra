@@ -9,8 +9,6 @@ test("central AI config requires one operator-owned model and key", () => {
 
 test("central AI config applies the OpenAI-compatible default endpoint", () => {
   const config = getCentralAIConfig({ AI_API_KEY: "server-secret", AI_MODEL: "gpt-test" });
-  assert.equal(config.connection_id, "central");
-  assert.equal(config.provider, "openai-compatible");
   assert.equal(config.base_url, "https://api.openai.com/v1");
   assert.equal(config.model, "gpt-test");
   assert.equal(config.api_key, "server-secret");
@@ -53,4 +51,12 @@ test("central endpoint allows HTTP only for localhost development", () => {
     AI_MODEL: "local-model",
     AI_API_KEY: "local-test-key"
   }), /must use HTTPS/);
+});
+
+test("central configuration contains no routing or per-user connection metadata", () => {
+  const config = getCentralAIConfig({
+    AI_MODEL: "one-model",
+    AI_API_KEY: "server-secret"
+  });
+  assert.deepEqual(Object.keys(config).sort(), ["api_key", "base_url", "model", "supports_vision"]);
 });
