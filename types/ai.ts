@@ -4,14 +4,6 @@
  */
 import type { ProviderErrorCategory } from "./domain.js";
 
-export type CentralAIConnection = {
-  label: "Central AI";
-  provider: "openai-compatible";
-  base_url: string;
-  model: string;
-  supports_vision: 0 | 1;
-};
-
 export type ChatMessage = {
   role: "system" | "user" | "assistant" | "tool" | string;
   content: unknown;
@@ -29,19 +21,13 @@ export type ProviderUsage = {
 
 export type StreamEvent =
   | { type: "text"; text: string }
-  | {
-      type: "done";
-      connection?: CentralAIConnection | null;
-      attempts?: number;
-      usage?: ProviderUsage | null;
-    }
+  | { type: "done"; attempts?: number; usage?: ProviderUsage | null }
   | {
       type: "error";
       category: ProviderErrorCategory;
       partial?: boolean;
       error?: unknown;
       message?: string;
-      connection?: CentralAIConnection | null;
       attempts?: number;
     }
   | { type: "tool_calls"; tool_calls: unknown[] }
