@@ -18,11 +18,11 @@ This roadmap tracks the approved runtime simplification. A checkbox is completed
 
 ## Phase 1 — Remove Telegram Mini App, preserve Web Admin
 
-- [ ] Remove Mini App routing, APIs, authentication, UI, assets, menu-button setup, and Mini App-only settings/types/tests.
-- [ ] Remove Mini App-only environment variables and build/deployment remnants.
-- [ ] Keep `/admin-panel`, `/admin-api/*`, `src/admin-panel/`, `public/admin-panel/**`, and the Cloudflare Assets binding.
-- [ ] Make the non-admin root path behavior explicit (no orphaned Mini App shell).
-- [ ] Verify admin panel serving, authentication, and authorization paths remain wired.
+- [x] Remove Mini App routing, APIs, authentication, UI, assets, menu-button setup, and Mini App-only settings/types/tests.
+- [x] Remove Mini App-only environment variables and build/deployment remnants.
+- [x] Keep `/admin-panel`, `/admin-api/*`, `src/admin-panel/`, `public/admin-panel/**`, and the Cloudflare Assets binding.
+- [x] Make the non-admin root path behavior explicit (no orphaned Mini App shell).
+- [x] Verify admin panel serving, authentication, and authorization paths remain wired (auth regression test + Wrangler dry-run, CI run [#45035340497](https://github.com/MHDLabs/Nyra/actions/runs/45035340497)).
 
 **Exit:** No Mini App runtime path remains; the standalone Web Admin Panel and its assets remain intact.
 
