@@ -200,7 +200,6 @@ export async function handleCallbackQuery(
       else if (section === "groups") { await showAdminGroups(env, chatId, messageId); }
       else if (section === "blocked") { await showAdminBlocked(env, chatId, messageId); }
       else if (section === "stats") { await showAdminStats(env, chatId, messageId); }
-      else if (section === "conns") { await showMyConnections(env, chatId, messageId, userId, "adm"); }
       else if (section === "status") { await showAdminStatus(env, chatId, messageId); }
       else if (section === "triggers") {
         const { showAdminTriggers } = await import("../commands.js");
