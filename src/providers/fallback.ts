@@ -72,7 +72,7 @@ async function* streamCentralAgent(env: NyraEnv, user, messages, options) {
 
     let roundText = "";
     let calls: any[] = [];
-    let streamFailed = null;
+    let streamFailed: any = null;
     try {
       const streamOptions = {
         ...options,
@@ -170,8 +170,8 @@ export async function generateAgentWithConnection(env: NyraEnv, user, _legacyCon
   let text = "";
   let usage = { in: 0, out: 0, source: "unavailable" };
   for await (const event of streamCentralAgent(env, user, messages, options)) {
-    if (event.type === "text") text += event.text;
-    else if (event.type === "usage") usage = event.usage;
+    if (event.type === "text" && typeof (event as any).text === "string") text += (event as any).text;
+    else if (event.type === "usage") usage = (event as any).usage || usage;
   }
   return { text, usage };
 }
