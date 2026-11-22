@@ -8,7 +8,6 @@ import { getWebhookSecret } from "../crypto.js";
 import { ensureSchema } from "../db.js";
 import { processMessage } from "./message.js";
 import { handleCallbackQuery } from "./callback.js";
-import { isFastMessage } from "./fast-path.js";
 
 type WorkerCtx = { waitUntil?(promise: Promise<unknown>): void };
 
@@ -136,58 +135,19 @@ export async function handleWebhook(request: Request, env: NyraEnv, ctx: WorkerC
     }
     if (!firstDelivery) return okResponse();
   }
-  // Fast path: a message whose resolved model is marked fast is processed inline
-  // (no queue wait). Command messages and button taps are cheap (no AI call) so
-  // they are always handled inline too — this is what makes commands and menus
-  // feel instant instead of waiting for the queue consumer's batch window.
+  // Commands and button taps run inline; every AI message is sent through
+  // the durable queue so processing order and retry semantics stay consistent.
   const msgUpdate = update.message;
   const cbUpdate = update.callback_query;
-  // Commands and button taps run inline (await) so Telegram delivery is reliable.
-  // waitUntil alone can drop work on isolate recycle; users then see "no response".
   if (cbUpdate && cbUpdate.from && !cbUpdate.from.is_bot) {
     await safeCallback(env, ctx, cbUpdate);
     return okResponse();
   }
   if (msgUpdate && msgUpdate.from && !msgUpdate.from.is_bot && msgUpdate.chat) {
-    const ctype = msgUpdate.chat.type;
-    if (ctype === "private" || ctype === "group" || ctype === "supergroup") {
-      const isCommand = typeof msgUpdate.text === "string" && msgUpdate.text.trim().startsWith("/");
-      if (isCommand) {
-        await safeProcessMessage(env, ctx, msgUpdate);
-        return okResponse();
-      }
-      try {
-        if (await isFastMessage(env, msgUpdate.from)) {
-          // Best-effort per-user lock so two concurrent webhook AI turns for the
-          // same chat are not both processed inline out of order.
-          const lockKey = "fastlock:" + msgUpdate.from.id;
-          let locked = false;
-          if (env.KV) {
-            const held = await env.KV.get(lockKey);
-            if (!held) {
-              await env.KV.put(lockKey, "1", { expirationTtl: 90 });
-              locked = true;
-            }
-          }
-          if (locked || !env.KV) {
-            try {
-              await safeProcessMessage(env, ctx, msgUpdate);
-              return okResponse();
-            } finally {
-              if (locked && env.KV) {
-                try {
-                  await env.KV.delete(lockKey);
-                } catch {
-                  /* ignore */
-                }
-              }
-            }
-          }
-          // Lock held: fall through to queue so order is preserved by processChain.
-        }
-      } catch (err) {
-        console.error("fast path failed, using queue:", errorMessage(err));
-      }
+    const isCommand = typeof msgUpdate.text === "string" && msgUpdate.text.trim().startsWith("/");
+    if (isCommand) {
+      await safeProcessMessage(env, ctx, msgUpdate);
+      return okResponse();
     }
   }
   try {
