@@ -383,6 +383,18 @@ const SIMPLIFICATION_MIGRATIONS = [
       "DROP TABLE IF EXISTS proactive_delivery_attempts",
       "DROP TABLE IF EXISTS schedule_delivery_attempts",
       "DROP TABLE IF EXISTS schedules",
+      "DROP INDEX IF EXISTS idx_users_proactive_due",
+      "ALTER TABLE users DROP COLUMN active_connection_id",
+      "ALTER TABLE users DROP COLUMN active_route_id",
+      "ALTER TABLE users DROP COLUMN fallback_enabled",
+      "ALTER TABLE users DROP COLUMN active_profile_id",
+      "ALTER TABLE users DROP COLUMN last_inbound_at",
+      "ALTER TABLE users DROP COLUMN proactive_enabled",
+      "ALTER TABLE users DROP COLUMN proactive_threshold_hours",
+      "ALTER TABLE users DROP COLUMN proactive_quiet_start",
+      "ALTER TABLE users DROP COLUMN proactive_quiet_end",
+      "ALTER TABLE users DROP COLUMN proactive_last_sent_at",
+      "ALTER TABLE users DROP COLUMN proactive_episode_key",
       "DELETE FROM app_settings WHERE key IN ('workers_ai_policy', 'workers_ai_model', 'allow_personal_models', 'personal_model_limit', 'shared_service_enabled', 'shared_daily_request_limit', 'shared_daily_token_limit', 'allow_cross_source_fallback')"
     ]
   }
