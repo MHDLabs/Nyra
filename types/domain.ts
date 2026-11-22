@@ -16,14 +16,6 @@ export type PersonalityId = string;
 /** Telegram user or chat id (bot API uses signed 64-bit integers). */
 export type TelegramId = number;
 
-export type ConnectionId = string;
-export type RouteId = string;
-export type ProviderKind =
-  | "openai-compatible"
-  | "anthropic"
-  | "workers-ai"
-  | "cloudflare";
-
 /** Provider error categories aligned with src/providers/errors.js */
 export type ProviderErrorCategory =
   | "invalid_key"
