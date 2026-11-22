@@ -1,7 +1,7 @@
 # Nyra Simplification — Product Scope
 
 **Owner:** MHDLabs  
-**Status:** Approved direction; implementation pending  
+**Status:** Approved direction; implementation in progress on `refactor/full-product-simplification` (Phase 1 verified, Phase 2 under CI-backed review)  
 **Principle:** Keep it simple.
 
 This document is the source of truth for the next Nyra implementation phase. The documentation-preparation change does not itself remove runtime code. The coding agent must inspect the current TypeScript implementation and deliver the target behavior below without deploying to production.
@@ -19,10 +19,11 @@ Use Worker configuration, not per-user D1 records:
 - AI_BASE_URL — OpenAI-compatible API base URL. Use the official OpenAI endpoint as the default when omitted.
 - AI_MODEL — the single model identifier.
 - AI_API_KEY — Cloudflare Worker secret; never expose it to Telegram users, web UI, logs, or API responses.
+- AI_SUPPORTS_VISION — optional explicit operator opt-in; leave disabled unless the selected model and endpoint accept image input.
 
 All users share the operator's provider account and its costs. Keep normal per-user and per-chat rate limits and existing usage accounting where practical. Do not build another quota product to compensate for deleting BYOK.
 
-Only the OpenAI-compatible chat API is supported. One configured model is used for all requests. A bounded retry to that same endpoint for transient transport errors is acceptable; do not switch to another model, connection, provider, or route.
+Only the OpenAI-compatible chat API is supported. One configured model is used for all requests. A bounded retry against that same endpoint/model may disable unsupported tool calling for the current request; it must never switch to another model, connection, provider, or route.
 
 ## 2. Remove completely
 
@@ -94,7 +95,7 @@ Preserve all unrelated user and operational data, especially:
 
 Only retire data belonging to removed features: per-user provider credentials and connection metadata, routes, reminders, voice transcripts, Mini App-only settings, schedules, and proactive-check-in state.
 
-Use forward-only, versioned D1 migrations. Inspect foreign keys and every read/write path before dropping tables or columns. Do not reset D1, wipe unrelated records, or mutate production data as part of implementation. Add migration tests that prove preserved records remain intact.
+Use forward-only, versioned D1 migrations. Inspect foreign keys and every read/write path before dropping tables or columns. Do not reset D1, wipe unrelated records, or mutate production data as part of implementation. Add migration tests that prove preserved records remain intact. Historical migrations for retired features remain immutable. Runtime repositories and APIs can be removed before physical table/column cleanup; defer physical deletion until a forward migration has been reviewed against production-shaped data and tested for preservation.
 
 Remove ENCRYPTION_KEY only after proving that no retained data or runtime feature still depends on it. Remove Groq voice secrets and obsolete provider settings after their references are gone. Never log or print secret values.
 
