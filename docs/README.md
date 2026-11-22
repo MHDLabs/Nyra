@@ -5,6 +5,7 @@ This folder contains the product contract and historical references.
 ## Start here
 
 - [Product Scope](./PRODUCT-SCOPE.md) — authoritative target behavior, removals, preserved features, migration boundaries, and acceptance criteria.
+- [Configuration](./CONFIGURATION.md) — central AI credentials, Worker variables, and deployment setup.
 - [TypeScript baseline](./archive/TYPESCRIPT-BASELINE.md) — historical JavaScript baseline and recovery tag; not a description of the current architecture.
 
 ## Repository guidance
