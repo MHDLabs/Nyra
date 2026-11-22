@@ -128,7 +128,17 @@ test("destructive migrations are limited to retired feature-owned tables", () =>
         assert.ok(approvedRetiredUserColumns.has(dropColumn[1]), "unapproved user column deletion: " + dropColumn[1]);
       }
       if (/^\s*DELETE\s+FROM\s+app_settings/i.test(sql)) {
-        assert.match(sql, /WHERE\s+key\s+IN\s*\(/i, "settings cleanup must be key-scoped");
+        const settingDelete = sql.match(/^\s*DELETE\s+FROM\s+app_settings\s+WHERE\s+key\s+IN\s*\(([^)]+)\)\s*$/i);
+        assert.ok(settingDelete, "settings cleanup must use an explicit key allowlist: " + sql);
+        const allowedRetiredSettings = new Set([
+          "workers_ai_policy", "workers_ai_model", "allow_personal_models", "personal_model_limit",
+          "shared_service_enabled", "shared_daily_request_limit", "shared_daily_token_limit",
+          "allow_cross_source_fallback"
+        ]);
+        const keys = settingDelete[1].split(",").map(key => key.trim().replace(/^['"]|['"]$/g, ""));
+        assert.ok(keys.length > 0, "settings cleanup must name retired keys");
+        assert.equal(new Set(keys).size, keys.length, "settings cleanup must not repeat keys");
+        for (const key of keys) assert.ok(allowedRetiredSettings.has(key), "unapproved setting deletion: " + key);
       }
       const personalityDelete = sql.match(/^\s*DELETE\s+FROM\s+personalities\s+WHERE\s+(.+)$/i);
       if (personalityDelete) {
@@ -143,7 +153,7 @@ test("destructive migrations are limited to retired feature-owned tables", () =>
         assert.equal(new Set(ids).size, ids.length, "personality cleanup must not repeat IDs");
         for (const id of ids) assert.ok(RETIRED_PERSONALITY_IDS.includes(id), "unapproved personality deletion: " + id);
       }
-      assert.doesNotMatch(sql, /^\s*DELETE\s+FROM\s+(users|thread_messages|chats|app_settings|custom_personalities|chat_logs|broadcasts|broadcast_recipients|blocked_users|failed_updates|processed_updates)\b/i);
+      assert.doesNotMatch(sql, /^\s*DELETE\s+FROM\s+(users|thread_messages|chats|custom_personalities|chat_logs|broadcasts|broadcast_recipients|blocked_users|failed_updates|processed_updates)\b/i);
     }
   }
 });
