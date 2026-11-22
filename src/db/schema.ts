@@ -149,8 +149,17 @@ export async function ensureSchema(env: NyraEnv) {
     // never enabled (the old default). Migration 10 enables the latter only.
     ["chats", "disabled_by_admin", "INTEGER DEFAULT 0"]
   ];
+  const retiredUserColumns = new Set([
+    "active_connection_id", "active_route_id", "fallback_enabled", "active_profile_id",
+    "last_inbound_at", "proactive_enabled", "proactive_threshold_hours",
+    "proactive_quiet_start", "proactive_quiet_end", "proactive_last_sent_at",
+    "proactive_episode_key"
+  ]);
   const activeAlters = retiredStateAlreadyCleaned
-    ? alters.filter(function (item) { return item[0] !== "ai_connections"; })
+    ? alters.filter(function (item) {
+      return item[0] !== "ai_connections"
+        && !(item[0] === "users" && retiredUserColumns.has(item[1]));
+    })
     : alters;
   for (let i = 0; i < activeAlters.length; i++) {
     const table = activeAlters[i][0];
