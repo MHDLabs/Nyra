@@ -20,6 +20,8 @@ Nyra brings AI chat to Telegram with a simple serverless setup. Built and mainta
 
 Deploy your Worker, configure the required secrets and open your Telegram bot. Send /start to get going.
 
+Configure the single shared model with `AI_MODEL` and the server-side `AI_API_KEY` secret. See the [configuration guide](docs/CONFIGURATION.md) for all required settings.
+
 ## ✨ Features
 
 - 💬 AI conversations with streaming replies
