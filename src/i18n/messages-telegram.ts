@@ -68,7 +68,7 @@ export const TELEGRAM_MESSAGES = {
     "onboarding.custom_intro.invalid": "متن ساده بفرست (حداکثر ۲۰۰۰ نویسه) یا رد کن.",
     "onboarding.disclosure.continue": "موافقم و ادامه می‌دهم",
     "onboarding.welcome": "خوش آمدی، {name}! 🎉\n\nبرای شروع یک پیام بفرست.\n\n• /help — راهنما\n• از دکمه‌های زیر کیبورد برای تنظیمات استفاده کن",
-    "onboarding.welcome.admin": "• /admin — open the admin panel",
+    "onboarding.welcome.admin": "• /admin — باز کردن پنل مدیریت",
     "onboarding.already_complete": "راه‌اندازی شما از قبل کامل شده است. برای گفتگو یک پیام برای نیرا بفرستید.",
     "onboarding.step.hint": "برای ادامه از دکمه‌های بالا استفاده کنید.",
     "onboarding.restart": "از نو شروع می‌کنیم.",
