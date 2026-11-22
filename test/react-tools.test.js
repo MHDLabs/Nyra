@@ -21,6 +21,6 @@ describe("reactions and tools", () => {
   it("supports_tools column is migrated", () => {
     const src = readFileSync(new URL("../src/db/schema.ts", import.meta.url), "utf8");
     assert.match(src, /supports_tools/);
-    assert.match(src, /seedWorkersAiCatalog/);
+    assert.doesNotMatch(src, /seedWorkersAiCatalog/);
   });
 });
