@@ -116,13 +116,13 @@ export function buildClockPrompt(user) {
   const hijri = formatInCalendar(nowDate, tz, "ar", "islamic") || formatInCalendar(nowDate, tz, "en", "islamic");
   const occasions = occasionHints(nowDate, tz);
   let block =
-    "Current date and time: (authoritative — use for today/tomorrow/schedules; never invent another clock)\n" +
+    "Current date and time: (authoritative — use for today/tomorrow/time-based planning; never invent another clock)\n" +
     "- Gregorian / wall clock: " + formatted + " (timezone: " + tz + ", UTC: " + iso + ")\n" +
     (jalali ? "- Solar Hijri (Jalali/Shamsi): " + jalali + "\n" : "") +
     (hijri ? "- Lunar Hijri (Qamari): " + hijri + "\n" : "");
   if (occasions.length) block += "- Occasion notes (approximate; confirm locally if critical): " + occasions.join("; ") + "\n";
   block +=
-    "Always use this clock for relative time (today, tomorrow, this week), deadlines, schedules, and any time-sensitive answer. " +
+    "Always use this clock for relative time (today, tomorrow, this week), deadlines, time-based plans, and any time-sensitive answer. " +
     "Do NOT print raw timestamps like [13 Nov, 21:31] or ISO strings in your reply unless the user explicitly asks for the time. " +
     "History lines may include internal time markers — never copy those markers into the answer.";
   return block;
@@ -421,7 +421,7 @@ export async function consolidateChatSummary(env, chat, userId, recentContext, e
   const assistantPart = truncate(exchange.assistant, CONSOLIDATE_ASSISTANT_TRUNCATE);
   const prompt = "Summarize the chat context in 2-3 short sentences. Focus on the current topic, general tone, and any important ongoing discussion. This is shared group context, not any single person's profile. Output only the summary.\n\nCurrent summary: " + (currentSummary || "(none)") + "\n\nRecent conversation:\n" + convo + "\n\nLatest exchange:\nUser: " + userPart + "\nNyra: " + assistantPart;
   try {
-    const result = await generateWithConnection(env, conn, [
+    const result = await generateWithConnection(env, null, [
       { role: "system", content: "You output very short chat summaries. Be extremely concise." },
       { role: "user", content: prompt }
     ], { max_tokens: 200, temperature: 0.3 }, AI_PRIMARY_ATTEMPT_TIMEOUT_MS);
