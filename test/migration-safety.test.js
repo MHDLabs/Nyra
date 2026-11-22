@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { SCHEMA_MIGRATIONS } from "../src/db/schema.js";
+import { listPrivateChatUsers } from "../src/db/chat-logs.js";
 import { SUPPORTED_LOCALES, RETIRED_PERSONALITY_IDS } from "../src/config.js";
 
 const NOW = Math.floor(Date.now() / 1000);
@@ -233,4 +234,27 @@ test("applying the same pending migrations twice is rejected by migration tracki
   // The runtime skips already-applied ids; INSERTing a duplicate id would fail,
   // proving the tracking table is the single source of truth.
   assert.throws(() => db.prepare("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)").run(pending[0].id, NOW));
+});
+
+test("admin private-chat listing works after retired columns are dropped", async () => {
+  const db = createLegacyDb();
+  seedLegacyData(db);
+  const pending = SCHEMA_MIGRATIONS.filter(m => m.id >= 10).sort((a, b) => a.id - b.id);
+  applyMigrations(db, pending);
+
+  const env = {
+    DB: {
+      prepare(sql) {
+        const statement = db.prepare(sql);
+        let values = [];
+        return {
+          bind(...args) { values = args; return this; },
+          async all() { return { results: statement.all(...values) }; }
+        };
+      }
+    }
+  };
+  const users = await listPrivateChatUsers(env, { limit: 20, offset: 0 });
+  assert.equal(users.length, 3);
+  assert.ok(users.every(user => typeof user.telegram_id === "number"));
 });
