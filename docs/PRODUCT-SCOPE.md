@@ -1,10 +1,10 @@
 # Nyra Simplification — Product Scope
 
 **Owner:** MHDLabs  
-**Status:** Approved direction; implementation in progress on `refactor/full-product-simplification` (Phase 1 verified, Phase 2 under CI-backed review)  
+**Status:** Implementation completed on `refactor/full-product-simplification`; PR #132 is under final CI-backed review and has not been merged or deployed.  
 **Principle:** Keep it simple.
 
-This document is the source of truth for the next Nyra implementation phase. The documentation-preparation change does not itself remove runtime code. The coding agent must inspect the current TypeScript implementation and deliver the target behavior below without deploying to production.
+This document records the agreed product scope and the implementation delivered in PR #132. The working branch contains the runtime removals, central AI configuration, migration 23, tests, and documentation changes. It remains isolated from `main`; production deployment and live D1 migration are intentionally not part of this PR.
 
 ## 1. Product shape
 
@@ -95,7 +95,7 @@ Preserve all unrelated user and operational data, especially:
 
 Only retire data belonging to removed features: per-user provider credentials and connection metadata, routes, reminders, voice transcripts, Mini App-only settings, schedules, and proactive-check-in state.
 
-Use forward-only, versioned D1 migrations. Inspect foreign keys and every read/write path before dropping tables or columns. Do not reset D1, wipe unrelated records, or mutate production data as part of implementation. Add migration tests that prove preserved records remain intact. Historical migrations for retired features remain immutable. Runtime repositories and APIs can be removed before physical table/column cleanup; defer physical deletion until a forward migration has been reviewed against production-shaped data and tested for preservation.
+Use forward-only, versioned D1 migrations. Migration 23 removes only state owned by retired features: provider connection/credential and routing tables, reminder/voice/schedule/proactive tables, related user columns, and explicitly listed obsolete app settings. It leaves core users, conversations, messages, groups, memories, custom instructions, broadcasts, chat logs, admin records, and usage data untouched. The migration is tested against a legacy-shaped in-memory SQLite database and regression tests verify core row counts and the post-migration admin chat query. Historical migrations remain immutable. Before applying migration 23 to a live D1 database, take a backup and confirm that retaining historical BYOK credentials or reminder/voice/automation records is not required; those retired-feature records are intentionally deleted. No live database has been inspected or changed by this PR.
 
 Remove ENCRYPTION_KEY only after proving that no retained data or runtime feature still depends on it. Remove Groq voice secrets and obsolete provider settings after their references are gone. Never log or print secret values.
 
