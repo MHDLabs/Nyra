@@ -1,17 +1,13 @@
 import type { NyraEnv } from "../../types/env.js";
-// Nyra — provider layer barrel.
+// Nyra — central AI runtime barrel.
 //
-// `src/ai.js` re-exports this file, so importing "./ai.js" still yields the
-// same public surface. Only `public` symbols cross this boundary:
-//   errors.js    error classification + user-facing text
-//   content.js   message content -> provider wire shapes
-//   config.js    one operator-owned OpenAI-compatible model configuration
-//   openai.js    OpenAI-compatible chat completions
-//   fallback.js  central model execution, tools, and admin error notifications
+// The application uses one operator-configured OpenAI-compatible model.
+// agent.js executes the model and its tools; errors.js handles classification
+// and safe user-facing error messages.
 export {
   normalizeError, humanizeError, shouldNotifyAdmin
 } from "./errors.js";
 
 export {
-  generateWithConnection, generateAgentWithConnection, tryAgentWithFallback, notifyAdminOnError
-} from "./fallback.js";
+  generateCentralAI, generateCentralAgent, streamCentralAI, notifyAdminOnError
+} from "./agent.js";
