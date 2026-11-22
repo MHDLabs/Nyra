@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseMemoryData, serializeMemoryData, buildClockPrompt, buildContextMessages } from "../src/memory.js";
+import { parseMemoryData, serializeMemoryData, buildClockPrompt, buildContextMessages, consolidateChatSummary } from "../src/memory.js";
 import { MEMORY_MAX_CHARS, MEMORY_UPDATE_INTERVAL, MAX_CONTEXT_MESSAGES } from "../src/config.js";
 
 test("parseMemoryData tolerates invalid input", () => {
@@ -79,4 +79,57 @@ test("buildContextMessages includes rolling history and clock in system", () => 
   assert.ok(messages.some((m) => m.role === "user" && String(m.content).indexOf("hi") !== -1));
   assert.ok(messages.some((m) => m.role === "assistant" && String(m.content).indexOf("hello") !== -1));
   assert.equal(messages[messages.length - 1].content, "how are you?");
+});
+
+test("chat summary uses the central AI client and persists the generated summary", async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  const requests = [];
+  globalThis.fetch = async (url, options) => {
+    requests.push({
+      url: String(url),
+      body: JSON.parse(options.body),
+      authorization: options.headers.Authorization
+    });
+    return new Response(JSON.stringify({
+      choices: [{ message: { content: "The group is discussing the project launch." } }]
+    }), { headers: { "content-type": "application/json" } });
+  };
+
+  const updates = [];
+  const env = {
+    AI_BASE_URL: "https://provider.example/v1",
+    AI_MODEL: "summary-model",
+    AI_API_KEY: "central-test-key",
+    DB: {
+      prepare(sql) {
+        return {
+          args: [],
+          bind(...args) { this.args = args; return this; },
+          async run() {
+            updates.push({ sql, args: this.args });
+            return { meta: { changes: 1 } };
+          }
+        };
+      }
+    }
+  };
+
+  await consolidateChatSummary(
+    env,
+    { chat_id: -1001, summary: "Old context" },
+    42,
+    [{ role: "user", content: "Let's discuss the project launch." }],
+    { user: "Let's discuss the project launch.", assistant: "Sounds good." }
+  );
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, "https://provider.example/v1/chat/completions");
+  assert.equal(requests[0].body.model, "summary-model");
+  assert.equal(requests[0].authorization, "Bearer central-test-key");
+  assert.equal(updates.length, 1);
+  assert.match(updates[0].sql, /UPDATE chats SET summary =/);
+  assert.equal(updates[0].args[0], "The group is discussing the project launch.");
+  assert.equal(updates[0].args[2], -1001);
 });
