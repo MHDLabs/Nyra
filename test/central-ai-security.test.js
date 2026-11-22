@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { notifyAdminOnError } from "../src/providers/fallback.js";
+import { notifyAdminOnError } from "../src/providers/agent.js";
 
 test("central API key is redacted from administrator error notifications", async () => {
   const secret = "central-private-key-123456789";
