@@ -76,7 +76,7 @@ function enforceTextLimit(method, payload) {
 // The Worker registers its own Telegram webhook without any user step:
 //   * GET /status (the bootstrap page, hit by the post-deploy probe) learns the
 //     public origin from the incoming request and registers it; any other
-//     Worker-handled request (for example a Mini App /api/* call) learns it too;
+//     Worker-handled application requests learn it too;
 //   * the scheduled handler re-verifies the learned URL (Telegram-side
 //     deletions then self-heal within one cron interval).
 // KV state bounds Telegram API traffic: at most one verification per
@@ -172,7 +172,7 @@ export async function ensureWebhook(env: NyraEnv, origin) {
   }
 }
 
-// Restore the default Telegram menu button once after removing the legacy WebApp.
+// Restore the standard Telegram command menu once after removing the legacy WebApp.
 // Telegram keeps custom menu buttons remotely, so deleting local Mini App code
 // alone would leave users with a dead WebApp entry in their chat UI.
 export async function restoreDefaultMenuButton(env: NyraEnv) {
@@ -478,8 +478,7 @@ export async function ensureBotCommands(env) {
     { command: "settings", description: "⚙️ Settings" },
     { command: "personality", description: "🎭 Personality" },
     { command: "memory", description: "🧠 Memory" },
-    { command: "usage", description: "📊 Usage" },
-    { command: "reminders", description: "⏰ Reminders" }
+    { command: "usage", description: "📊 Usage" }
   ];
   // Groups — only public commands
   const groupCmds = [
