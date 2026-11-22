@@ -195,7 +195,8 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
   let streamCompleted = false;
 
   try {
-    for await (const event of tryAgentWithFallback(env, user, messages, streamOptions)) {
+    for await (const rawEvent of tryAgentWithFallback(env, user, messages, streamOptions)) {
+      const event: any = rawEvent;
       if (event.type === "text") {
         if (!heartbeatStopped) {
           heartbeat.stop();
