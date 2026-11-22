@@ -5,17 +5,13 @@ import type { NyraEnv } from "../../types/env.js";
 // same public surface. Only `public` symbols cross this boundary:
 //   errors.js    error classification + user-facing text
 //   content.js   message content -> provider wire shapes
-//   openai.js    OpenAI-compatible chat (non-streaming + streaming) + /models
-//   anthropic.js Anthropic messages (non-streaming + streaming) + /models
-//   stream.js    stream dispatch + stall watchdog
+//   config.js    one operator-owned OpenAI-compatible model configuration
+//   openai.js    OpenAI-compatible chat completions
+//   fallback.js  central model execution, tools, and admin error notifications
 export {
   normalizeError, humanizeError, shouldNotifyAdmin
 } from "./errors.js";
 
 export {
-  fetchAvailableModels, testConnectionRaw, testUserConnectionById
-} from "./models.js";
-
-export {
-  generateWithConnection, generateAgentWithConnection, tryAgentWithFallback, tryStreamWithFallback, notifyAdminOnError
+  generateWithConnection, generateAgentWithConnection, tryAgentWithFallback, notifyAdminOnError
 } from "./fallback.js";
