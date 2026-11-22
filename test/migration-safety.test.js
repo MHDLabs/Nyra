@@ -5,6 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
+import { readFileSync } from "node:fs";
 import { SCHEMA_MIGRATIONS } from "../src/db/schema.js";
 import { SUPPORTED_LOCALES } from "../src/config.js";
 
