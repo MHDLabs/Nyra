@@ -1,27 +1,7 @@
-// @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
-// Nyra — cosmetic reaction classifier.
-//
+// Nyra — deterministic, cosmetic reaction helper.
 // Optional and fire-and-forget: when someone names Nyra in a group, the bot may
-// attach a single emoji reaction. Classification must therefore be cheap, must
-// never block the real reply, and must degrade to "no reaction" on any failure.
-//
-// Two hard-won constraints shape this module:
-//
-// 1. Telegram only accepts reactions from a fixed emoji set; anything else is
-//    rejected with 400 REACTION_INVALID. TELEGRAM_ALLOWED_REACTIONS mirrors that
-//    set, and nothing reaches `setMessageReaction` without passing through it —
-//    not model output, not the heuristic, not admin configuration.
-//
-// 2. A binary sentiment model must NEVER sit in the fallback path. An earlier
-//    version fell back to @cf/huggingface/distilbert-sst-2-int8, which is
-//    English-only: on Persian text it answers NEGATIVE at high confidence for
-//    almost everything, so every message naming Nyra got the same 👎. When the
-//    label model produces nothing usable, the correct answer is no reaction.
-//
-// Allowed-reaction resolution has two layers, most specific first: an
-// admin-configured global list, else the built-in defaults — and regardless of
-// layer, an emoji Telegram has already refused in a given chat is remembered and
-// skipped for that chat.
+// attach one emoji. Narrow heuristics only; ambiguous messages get no reaction.
+// Telegram's allowed set and per-chat/admin allowlists are checked before sending.
 import { checkRateLimit, containsNyraWord } from "./utils.js";
 import { tg } from "./telegram.js";
 const REACTION_RATE_LIMIT_PER_MIN = 20;
@@ -310,15 +290,8 @@ async function avoidRepeatedReaction(env, chatId, label, emoji, allowed) {
   return emoji;
 }
 
-/**
- * Classify a message and return one allowed emoji, or null when nothing fits.
- *
- * There is deliberately no sentiment fallback. A binary sentiment model is
- * English-only and answered NEGATIVE for nearly every Persian message, which is
- * what made the bot react 👎 to everything. If the label model yields nothing
- * usable, only the narrow heuristic is tried, and failing that: no reaction.
- */
-export async function classifyReaction(env, text, allowed, userId) {
+/** Classify only unambiguous question/laughter patterns; never calls an AI service. */
+export async function classifyReaction(env, text, allowed, _userId) {
   if (!text || String(text).trim().length < 3) return null;
   const sample = String(text).substring(0, 500);
   const whitelist = Array.isArray(allowed) ? allowed : await getAllowedReactions(env, null);
@@ -326,69 +299,6 @@ export async function classifyReaction(env, text, allowed, userId) {
   if (Object.keys(map).length === 0) return null;
   const label = heuristicReaction(sample);
   return label ? (map[label] || null) : null;
-}
-
-/**
- * Map a raw model result to one of REACTION_LABELS, or null. Pure — exported so
- * it is testable without Workers AI. Accepts every shape the AI binding returns:
- *   { response: "very_positive" }        (instruct / text generation)
- *   [{ label: "POSITIVE", score: 0.98 }] (text classification)
- *   { label: "positive", score: 0.4 }    (classification fallback)
- */
-export function pickLabel(result) {
-  // Instruct / text-generation shape: { response: "very_positive" }
-  if (result && typeof result === "object" && typeof result.response === "string") {
-    const label = normalizeLabel(result.response);
-    if (label) return label;
-  }
-  // Classification shapes: [{ label, score }] or { label, score }.
-  const entry = Array.isArray(result) ? result[0] : (result && result.label ? result : null);
-  if (entry && entry.label) {
-    // A label we recognise already states its own intensity, so it is
-    // authoritative: "very_positive" must not be flattened to "positive".
-    const named = normalizeLabel(entry.label);
-    if (named) return named;
-    // Only reached if a binary sentiment model is ever used again: those know
-    // just positive/negative, so the score has to supply the intensity.
-    const raw = String(entry.label).toLowerCase();
-    const score = Number(entry.score) || 0;
-    if (raw === "positive" || raw === "label_1") return score > 0.9 ? "very_positive" : "positive";
-    if (raw === "negative" || raw === "label_0") return score > 0.9 ? "very_negative" : "negative";
-  }
-  return null;
-}
-
-/**
- * Convenience wrapper: model result -> default emoji, falling back to the
- * heuristic. New code should prefer `classifyReaction`, which also applies the
- * chat's allowed-reaction list.
- */
-export function pickReaction(result, text) {
-  const label = pickLabel(result);
-  if (label) return DEFAULT_REACTIONS[label];
-  const heuristic = heuristicReaction(text);
-  return heuristic ? DEFAULT_REACTIONS[heuristic] : null;
-}
-
-/**
- * Normalize free-form model output to one of REACTION_LABELS. Longest-first so
- * "very_positive" is not shadowed by "positive".
- *
- * Punctuation and whitespace become separators, and the whole cleaned phrase is
- * also offered underscore-joined as a candidate. Without that second candidate,
- * "very_positive" splits into ["very", "positive"] and silently degrades to
- * "positive" — the exact intensity distinction this label set exists to make.
- */
-export function normalizeLabel(raw) {
-  if (!raw) return null;
-  const cleaned = String(raw).toLowerCase().replace(/[^a-z]+/g, " ").trim();
-  if (!cleaned) return null;
-  const candidates = [cleaned.replace(/ /g, "_")].concat(cleaned.split(" "));
-  const ordered = REACTION_LABELS.slice().sort(function (a, b) { return b.length - a.length; });
-  for (let i = 0; i < ordered.length; i++) {
-    if (candidates.indexOf(ordered[i]) !== -1) return ordered[i];
-  }
-  return null;
 }
 
 /**
@@ -402,16 +312,6 @@ export function heuristicReaction(text) {
   if (s.indexOf("?") !== -1 || s.indexOf("؟") !== -1) return "question";
   if (/(خخ+|ههه+|haha|hehe|lol|lmao)/i.test(s)) return "funny";
   return null;
-}
-
-function withTimeout(promise, ms) {
-  let timer = null;
-  const timeout = new Promise(function (_, reject) {
-    timer = setTimeout(function () { reject(new Error("timeout")); }, ms);
-  });
-  return Promise.race([promise, timeout]).finally(function () {
-    if (timer) clearTimeout(timer);
-  });
 }
 
 /**
