@@ -1,129 +1,34 @@
 import type { NyraEnv } from "../../types/env.js";
-import type { TelegramId } from "../../types/domain.js";
-// Global deployment settings (`app_settings` key/value toggles).
 import { now } from "../utils.js";
 import { NYRA_VARIANTS } from "../config.js";
-import {
-  SETTING_SHARED_SERVICE_ENABLED, SETTING_SHARED_REQUEST_LIMIT, SETTING_SHARED_TOKEN_LIMIT,
-  DEFAULT_SHARED_REQUEST_LIMIT, DEFAULT_SHARED_TOKEN_LIMIT
-} from "../config.js";
 
+// Small key/value settings used by group behavior and operational controls.
 export async function getSetting(env: NyraEnv, key, fallback) {
   try {
     const row = await env.DB.prepare("SELECT value FROM app_settings WHERE key = ?").bind(key).first();
-    if (!row) return fallback;
-    return row.value;
-  } catch (err) { return fallback; }
+    return row ? row.value : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 export async function setSetting(env: NyraEnv, key, value, updatedBy) {
   try {
-    await env.DB.prepare("INSERT INTO app_settings (key, value, updated_at, updated_by) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by")
-      .bind(key, String(value), now(), updatedBy || null).run();
+    await env.DB.prepare(
+      "INSERT INTO app_settings (key, value, updated_at, updated_by) VALUES (?, ?, ?, ?) " +
+      "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by"
+    ).bind(key, String(value), now(), updatedBy || null).run();
     return true;
-  } catch (err) { console.error("setSetting failed:", (err instanceof Error ? err.message : String(err))); return false; }
-}
-
-export async function isPersonalModelsAllowed(env: NyraEnv) {
-  const v = await getSetting(env, "allow_personal_models", "0");
-  return v === "1" || v === "true";
-}
-
-export async function getPersonalModelLimit(env: NyraEnv) {
-  const v = await getSetting(env, "personal_model_limit", "5");
-  const n = parseInt(v, 10);
-  return Number.isFinite(n) && n > 0 ? n : 5;
-}
-
-export async function getWorkersAIPolicy(env: NyraEnv) {
-  const value = await getSetting(env, "workers_ai_policy", "disabled");
-  return ["disabled", "admins", "all"].includes(value) ? value : "disabled";
-}
-
-export async function setWorkersAIPolicy(env: NyraEnv, policy, updatedBy) {
-  if (!["disabled", "admins", "all"].includes(policy)) return false;
-  return await setSetting(env, "workers_ai_policy", policy, updatedBy);
-}
-
-export async function getWorkersAIModel(env: NyraEnv) {
-  const value = await getSetting(env, "workers_ai_model", "@cf/meta/llama-3.1-8b-instruct");
-  return /^@cf\/[a-z0-9][a-z0-9./_-]{2,119}$/i.test(value) ? value : "@cf/meta/llama-3.1-8b-instruct";
-}
-
-export async function setWorkersAIModel(env: NyraEnv, model, updatedBy) {
-  const value = String(model || "").trim();
-  if (!/^@cf\/[a-z0-9][a-z0-9./_-]{2,119}$/i.test(value)) return false;
-  return await setSetting(env, "workers_ai_model", value, updatedBy);
-}
-
-export async function canUseWorkersAI(env: NyraEnv, userId) {
-  const policy = await getWorkersAIPolicy(env);
-  if (policy === "disabled") return false;
-  if (policy === "all") return true;
-  const { isAdmin } = await import("../utils.js");
-  return isAdmin(env, userId);
-}
-
-// --- Shared service (admin-provided global connections) -------------------
-
-export async function isSharedServiceEnabled(env: NyraEnv) {
-  // Opt-in only: an admin must explicitly enable the shared service, so a
-  // freshly deployed bot never gives away operator-paid credit by accident.
-  const v = await getSetting(env, SETTING_SHARED_SERVICE_ENABLED, "0");
-  return v === "1" || v === "true";
-}
-
-function quotaFromSetting(v, fallback) {
-  const n = parseInt(v, 10);
-  if (!Number.isFinite(n) || n < 0) return fallback;
-  return n;
-}
-
-export async function getSharedRequestLimit(env: NyraEnv) {
-  return quotaFromSetting(await getSetting(env, SETTING_SHARED_REQUEST_LIMIT, String(DEFAULT_SHARED_REQUEST_LIMIT)), DEFAULT_SHARED_REQUEST_LIMIT);
-}
-
-export async function getSharedTokenLimit(env: NyraEnv) {
-  return quotaFromSetting(await getSetting(env, SETTING_SHARED_TOKEN_LIMIT, String(DEFAULT_SHARED_TOKEN_LIMIT)), DEFAULT_SHARED_TOKEN_LIMIT);
-}
-
-export async function getSharedServiceSettings(env: NyraEnv) {
-  return {
-    enabled: await isSharedServiceEnabled(env),
-    daily_request_limit: await getSharedRequestLimit(env),
-    daily_token_limit: await getSharedTokenLimit(env)
-  };
-}
-
-export async function setSharedServiceSettings(env: NyraEnv, updatedBy, body) {
-  const patch = {};
-  if (body && body.enabled !== undefined) patch[SETTING_SHARED_SERVICE_ENABLED] = body.enabled ? "1" : "0";
-  if (body && body.daily_request_limit !== undefined) {
-    const n = parseInt(body.daily_request_limit, 10);
-    if (!Number.isFinite(n) || n < 0) return { ok: false, error: "daily_request_limit must be 0 or a positive integer" };
-    patch[SETTING_SHARED_REQUEST_LIMIT] = String(n);
+  } catch (error) {
+    console.error("setSetting failed:", error instanceof Error ? error.message : String(error));
+    return false;
   }
-  if (body && body.daily_token_limit !== undefined) {
-    const n = parseInt(body.daily_token_limit, 10);
-    if (!Number.isFinite(n) || n < 0) return { ok: false, error: "daily_token_limit must be 0 or a positive integer" };
-    patch[SETTING_SHARED_TOKEN_LIMIT] = String(n);
-  }
-  const keys = Object.keys(patch);
-  if (keys.length === 0) return { ok: false, error: "no settings supplied" };
-  for (let i = 0; i < keys.length; i++) {
-    const ok = await setSetting(env, keys[i], patch[keys[i]], updatedBy);
-    if (!ok) return { ok: false, error: "failed to persist " + keys[i] };
-  }
-  return { ok: true, settings: await getSharedServiceSettings(env) };
 }
-
-
-// --- Group triggers & guest mode ------------------------------------------
 
 function parseWordList(raw) {
-  const s = String(raw || "").trim();
-  if (!s) return NYRA_VARIANTS.slice();
-  const parts = s.split(/[,\n]+/).map(function (w) { return w.trim(); }).filter(Boolean);
+  const value = String(raw || "").trim();
+  if (!value) return NYRA_VARIANTS.slice();
+  const parts = value.split(/[,\n]+/).map(word => word.trim()).filter(Boolean);
   return parts.length ? parts : NYRA_VARIANTS.slice();
 }
 
@@ -133,47 +38,39 @@ export async function getTriggerConfig(env: NyraEnv) {
   const reply = (await getSetting(env, "trigger_reply", "1")) !== "0";
   const mention = (await getSetting(env, "trigger_mention", "1")) !== "0";
   const words = parseWordList(await getSetting(env, "trigger_words", NYRA_VARIANTS.join(",")));
-  const guestMode = (await getSetting(env, "guest_mode", "0")) === "1" || (await getSetting(env, "guest_mode", "0")) === "true";
-  return { enabled: enabled, reply: reply, mention: mention, words: words, guestMode: guestMode };
+  const guestMode = (await getSetting(env, "guest_mode", "0")) === "1"
+    || (await getSetting(env, "guest_mode", "0")) === "true";
+  return { enabled, reply, mention, words, guestMode };
 }
 
 export async function setTriggerFlag(env: NyraEnv, key, on, updatedBy) {
   const allowed = ["trigger_enabled", "trigger_reply", "trigger_mention", "guest_mode"];
-  if (allowed.indexOf(key) === -1) return false;
+  if (!allowed.includes(key)) return false;
   return await setSetting(env, key, on ? "1" : "0", updatedBy);
 }
 
 export async function setTriggerWords(env: NyraEnv, words, updatedBy) {
   const list = Array.isArray(words) ? words : parseWordList(words);
-  const cleaned = list.map(function (w) { return String(w).trim().slice(0, 32); }).filter(Boolean).slice(0, 20);
+  const cleaned = list.map(word => String(word).trim().slice(0, 32)).filter(Boolean).slice(0, 20);
   return await setSetting(env, "trigger_words", cleaned.join(","), updatedBy);
 }
 
-/** @deprecated Admin toggle removed — use detectGuestContext. */
-export async function isGuestModeEnabled(env: NyraEnv) {
+/** Legacy compatibility export; guest detection now depends on Telegram membership. */
+export async function isGuestModeEnabled(_env: NyraEnv) {
   return false;
 }
 
-/**
- * Guest mode: Nyra was addressed but is not a full group member (restricted /
- * left / unknown). In private chats, never treat as guest.
- * When true, replies are prefixed with bold "Guest mode".
- */
+/** Guest mode applies when Nyra was addressed but is not a full group member. */
 export async function detectGuestContext(env: NyraEnv, chat, botId) {
   if (!chat || !chat.id) return false;
   const type = chat.type || "";
-  if (type === "private") return false;
-  if (type !== "group" && type !== "supergroup") return false;
-  if (!botId) return false;
+  if (type === "private" || (type !== "group" && type !== "supergroup") || !botId) return false;
   try {
     const { tg } = await import("../telegram.js");
-    const res = await tg(env, "getChatMember", { chat_id: chat.id, user_id: botId });
-    const status = res && res.ok && res.result ? String(res.result.status || "") : "";
-    // Full members: member / administrator / creator
-    if (status === "member" || status === "administrator" || status === "creator") return false;
-    // restricted / left / kicked / empty → guest-style reply when we still got the update
-    return true;
-  } catch (err) {
+    const response = await tg(env, "getChatMember", { chat_id: chat.id, user_id: botId });
+    const status = response && response.ok && response.result ? String(response.result.status || "") : "";
+    return status !== "member" && status !== "administrator" && status !== "creator";
+  } catch {
     return false;
   }
 }
