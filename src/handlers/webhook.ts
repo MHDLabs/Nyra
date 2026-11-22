@@ -4,7 +4,7 @@
 import type { NyraEnv } from "../../types/env.js";
 import type { CallbackQuery, TelegramMessage, TelegramUpdate } from "../../types/telegram.js";
 import { okResponse, constantTimeEqual } from "../utils.js";
-import { getMasterKey, getWebhookSecret } from "../crypto.js";
+import { getWebhookSecret } from "../crypto.js";
 import { ensureSchema } from "../db.js";
 import { processMessage } from "./message.js";
 import { handleCallbackQuery } from "./callback.js";
@@ -98,11 +98,6 @@ export async function handleWebhook(request: Request, env: NyraEnv, ctx: WorkerC
   const expectedSecret = await getWebhookSecret(env);
   if (!expectedSecret || !constantTimeEqual(secret, expectedSecret)) {
     return new Response("Unauthorized", { status: 401 });
-  }
-  const masterKey = getMasterKey(env);
-  if (!masterKey) {
-    console.error("ENCRYPTION_KEY missing or invalid. Refusing to process requests.");
-    return new Response("Service Unavailable", { status: 503 });
   }
   let updateRaw: unknown;
   try {
