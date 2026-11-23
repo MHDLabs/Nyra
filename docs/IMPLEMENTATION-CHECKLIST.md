@@ -14,7 +14,7 @@ Tracking file for the Nyra product simplification. See [SIMPLIFICATION-ROADMAP.m
 - [x] Remove Mini App routes, APIs, auth, UI, assets, settings, types, and tests.
 - [x] Remove Mini App menu-button setup while retaining Telegram bot commands.
 - [x] Preserve `/admin-panel`, `/admin-api/*`, `src/admin-panel/`, `public/admin-panel/**`, and Assets binding.
-- [x] Verify admin panel routing and authorization (auth regression tests and Wrangler dry-run pass in the latest CI run [#45051910112](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)).
+- [x] Verify admin panel routing and authorization (auth regression tests and Wrangler dry-run pass in the latest CI run [#45176393152](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)).
 
 ## Phase 2 — Central AI architecture
 
@@ -35,7 +35,7 @@ Tracking file for the Nyra product simplification. See [SIMPLIFICATION-ROADMAP.m
 - [x] Remove obsolete runtime database repositories, types, settings, and provider credential encryption; physical cleanup is handled by forward-only migration 23.
 - [x] Preserve historical migration files.
 - [x] Remove the obsolete ENCRYPTION_KEY requirement after removing retained runtime use; AI_API_KEY remains a server-side Worker secret.
-- [x] Add migration safety regression tests for retired tables/columns, allowlisted deletes, core data preservation, and the admin chat listing on the post-migration schema.
+- [x] Add migration safety regression tests for retired tables/columns, allowlisted deletes, core data preservation, the admin chat listing, and a real `ensureSchema` re-bootstrap check after migration 23.
 
 ## Phase 4 — Reminders, voice, and automations
 
@@ -56,13 +56,13 @@ Tracking file for the Nyra product simplification. See [SIMPLIFICATION-ROADMAP.m
 
 ## Phase 6 — Final verification
 
-- [x] `npm ci` — latest PR CI [#45051910112](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)
-- [x] `npm run typecheck` — latest PR CI [#45051910112](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)
-- [x] `npm run test:all` — latest PR CI [#45051910112](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)
-- [x] `./node_modules/.bin/wrangler deploy --dry-run` — latest PR CI [#45051910112](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)
+- [x] `npm ci` — latest PR CI [#45176393152](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)
+- [x] `npm run typecheck` — latest PR CI [#45176393152](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)
+- [x] `npm run test:all` — latest PR CI [#45176393152](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)
+- [x] `./node_modules/.bin/wrangler deploy --dry-run` — latest PR CI [#45176393152](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)
 - [x] Focused regression tests pass, including migration safety, central AI configuration/security, and post-migration admin chat listing.
-- [ ] Complete manual, line-by-line review of every changed file in the 144-file PR (automated stale-reference and targeted risk review are complete).
-- [x] Verify CI remains two CodeQL analyses plus one combined verification/deploy workflow; latest CodeQL run [#45051906761](https://github.com/MHDLabs/Nyra/actions/runs/45051906761) and CI run [#45051910112](https://github.com/MHDLabs/Nyra/actions/runs/45051910112) both pass. No duplicate pre-deploy test workflow was reintroduced.
+- [ ] Complete manual, line-by-line review of all 144 changed files (automated stale-reference, admin-panel, schema-bootstrap, central AI retry and migration-preservation reviews are complete).
+- [x] Verify CI remains two CodeQL analyses plus one combined verification/deploy workflow; latest CodeQL run [#45176384476](https://github.com/MHDLabs/Nyra/actions/runs/45051906761) and CI run [#45176393152](https://github.com/MHDLabs/Nyra/actions/runs/45051910112) both pass. No duplicate pre-deploy test workflow was reintroduced.
 - [x] Draft PR #132 opened with CI evidence; no production deploy or production data mutation.
 
 > A task remains unchecked until the actual implementation and its verification evidence are available. Documentation updates alone do not complete runtime tasks.
