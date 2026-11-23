@@ -1,6 +1,6 @@
 // @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
 // Nyra — memory: memory data handling, system prompts, personalities, consolidation.
-import { MEMORY_UPDATE_INTERVAL, MEMORY_MAX_CHARS, AI_PRIMARY_ATTEMPT_TIMEOUT_MS, CONSOLIDATE_USER_TRUNCATE, CONSOLIDATE_ASSISTANT_TRUNCATE, PERSIAN_STYLE_RULES_PROMPT, DEFAULT_PERSONALITIES, RETIRED_PERSONALITY_IDS } from "./config.js";
+import { MEMORY_UPDATE_INTERVAL, MEMORY_MAX_CHARS, AI_REQUEST_TIMEOUT_MS, CONSOLIDATE_USER_TRUNCATE, CONSOLIDATE_ASSISTANT_TRUNCATE, PERSIAN_STYLE_RULES_PROMPT, DEFAULT_PERSONALITIES, RETIRED_PERSONALITY_IDS } from "./config.js";
 import { localeForUser, normalizeLocale, t } from "./i18n/index.js";
 import { now, truncate, escapeHtml, sanitizeMemoryString, sanitizeMemoryFact, dedupeArray, filterSubstrings } from "./utils.js";
 import { getUser } from "./db/users.js";
@@ -385,7 +385,7 @@ export async function consolidateMemory(env, user, recentContext, exchange) {
     const result = await generateCentralAI(env, [
       { role: "system", content: "You output only valid JSON. No markdown, no explanation." },
       { role: "user", content: prompt }
-    ], { max_tokens: 1000, temperature: 0.3 }, AI_PRIMARY_ATTEMPT_TIMEOUT_MS);
+    ], { max_tokens: 1000, temperature: 0.3 }, AI_REQUEST_TIMEOUT_MS);
     if (!result || !result.text) return;
     const cleaned = result.text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
     let parsed;
@@ -424,7 +424,7 @@ export async function consolidateChatSummary(env, chat, userId, recentContext, e
     const result = await generateCentralAI(env, [
       { role: "system", content: "You output very short chat summaries. Be extremely concise." },
       { role: "user", content: prompt }
-    ], { max_tokens: 200, temperature: 0.3 }, AI_PRIMARY_ATTEMPT_TIMEOUT_MS);
+    ], { max_tokens: 200, temperature: 0.3 }, AI_REQUEST_TIMEOUT_MS);
     if (result && result.text && result.text.trim().length > 0 && result.text.trim() !== currentSummary) {
       await env.DB.prepare("UPDATE chats SET summary = ?, updated_at = ? WHERE chat_id = ?").bind(truncate(result.text.trim(), 500), now(), chat.chat_id).run();
     }
