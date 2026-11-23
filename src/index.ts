@@ -11,13 +11,17 @@ import { ensureSchema, maybeInitSchema } from "./db.js";
 import { ensureWebhook, restoreDefaultMenuButton, ensureBotCommands } from "./telegram.js";
 import { routeAdminPanel } from "./admin-panel/router.js";
 import { logFailedUpdate, cleanupOldFailedUpdates } from "./dlq.js";
+import { processTelegramPhotoAlbum } from "./media-groups.js";
 import { handleWebhook, handleSetup, handleStatus, processMessage, handleCallbackQuery } from "./handlers/index.js";
 
 // A queue message's ordering group. Two updates only need to stay serialized
 // when they belong to the same conversation, so the chat id is the key and the
 // user id is the fallback for callback queries that carry no chat.
-function conversationKey(update) {
-  if (!update) return "none";
+function conversationKey(body) {
+  if (!body) return "none";
+  const album = body.media_group_flush;
+  if (album && album.chat_id !== undefined) return "c:" + album.chat_id;
+  const update = body.update || body;
   const msg = update.message || update.edited_message;
   if (msg && msg.chat && msg.chat.id !== undefined) return "c:" + msg.chat.id;
   const q = update.callback_query;
@@ -51,7 +55,22 @@ async function markHandled(env: NyraEnv, updateId) {
 async function processChain(env: NyraEnv, ctx, messages) {
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
-    const update = msg.body && msg.body.update;
+    const body = msg.body && (msg.body as any);
+    const albumFlush = body && body.media_group_flush;
+    if (albumFlush) {
+      try {
+        await processTelegramPhotoAlbum(env, ctx, albumFlush);
+        safeAck(msg);
+      } catch (err) {
+        console.error("Queued photo-album processing failed:", err.message);
+        safeRetry(msg);
+        for (let j = i + 1; j < messages.length; j++) safeRetry(messages[j]);
+        return;
+      }
+      continue;
+    }
+
+    const update = body && body.update;
     if (!update) { safeAck(msg); continue; }
     if (msg.attempts > 1 && (await alreadyHandled(env, update.update_id))) { safeAck(msg); continue; }
     try {
@@ -164,7 +183,7 @@ export default {
     const groups = new Map<string, any[]>();
     for (let i = 0; i < batch.messages.length; i++) {
       const msg = batch.messages[i];
-      const key = conversationKey(msg.body && (msg.body as any).update);
+      const key = conversationKey(msg.body && (msg.body as any));
       const list = groups.get(key);
       if (list) list.push(msg);
       else groups.set(key, [msg]);

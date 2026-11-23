@@ -6,8 +6,9 @@ import { detectGuestContext } from "../db/settings.js";
 // surfacing. This is the single most performance-sensitive path in the bot —
 // it runs inside the queue consumer, never inside the webhook request.
 import { MAX_TELEGRAM_LENGTH, MEMORY_UPDATE_INTERVAL, RATE_LIMIT_USER_PER_MIN, RATE_LIMIT_USER_PER_HOUR, RATE_LIMIT_CHAT_PER_HOUR, STREAM_EDIT_THROTTLE_MS, STREAM_PLACEHOLDER, AI_STREAM_TOTAL_BUDGET_MS, AI_STREAM_STALL_TIMEOUT_MS } from "../config.js";
-import { now, buildUserContent, checkRateLimit } from "../utils.js";
-import { sendMessageReturn, sendMessage, sendMessageSafeResult, editMessage, deleteMessage, startTypingHeartbeat, pickImageFile, downloadTelegramFile, sendRichMessageSafe } from "../telegram.js";
+import { now, buildUserContent, checkRateLimit, base64ToBytes } from "../utils.js";
+import { sendMessageReturn, sendMessage, sendMessageSafeResult, editMessage, deleteMessage, startTypingHeartbeat, pickImageFiles, downloadTelegramFile, sendRichMessageSafe } from "../telegram.js";
+import { inspectTextDocument, isImageDocument, buildTextDocumentPrompt, MAX_TEXT_DOCUMENT_BYTES, MAX_TEXT_DOCUMENT_CHARS, MAX_AI_ALBUM_IMAGES, MAX_AI_ALBUM_TOTAL_BYTES, MAX_AI_IMAGE_FILE_BYTES } from "../file-input.js";
 import { getUser, upsertUser, getChat, saveThreadMessage, getThreadContext, updateUsageStatsAsync } from "../db.js";
 import { logChatMessage, detectMediaType } from "../db/chat-logs.js";
 import { normalizeError, humanizeError, shouldNotifyAdmin, streamCentralAI, notifyAdminOnError } from "../ai.js";
@@ -131,8 +132,60 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
   const chatRow = isGroup ? await getChat(env, chatId) : null;
   const mode = (user && user.memory_mode) || "normal";
   let userContent = buildUserContent(message);
+  let modelInputText = userContent;
 
+  // Text/code attachments are read for this turn only. The conversation history
+  // stores the compact message summary, never the full file body.
+  if (message.document && !isImageDocument(message.document)) {
+    const inspection = inspectTextDocument(message.document);
+    if (!inspection.ok) {
+      const isPersian = String(user.locale || "").toLowerCase().startsWith("fa");
+      const warning = inspection.reason === "sensitive"
+        ? (isPersian
+          ? "⚠️ این نام یا نوع فایل ممکن است شامل کلید خصوصی یا اطلاعات محرمانه باشد؛ برای محافظت از اطلاعاتت، نیرا آن را باز نمی‌کند."
+          : "⚠️ This file name or type may contain private keys or secrets. Nyra will not open it.")
+        : inspection.reason === "too_large"
+          ? (isPersian
+            ? "⚠️ حجم فایل متنی بیشتر از ۵۱۲ کیلوبایت است. لطفاً فایل کوچک‌تری بفرست."
+            : "⚠️ Text files are limited to 512 KiB. Please send a smaller file.")
+          : (isPersian
+            ? "⚠️ این فرمت پشتیبانی نمی‌شود. فایل متنی یا سورس‌کد مثل py، js، ts، json، md، txt، sql یا csv بفرست."
+            : "⚠️ Unsupported file format. Send a text or source file such as py, js, ts, json, md, txt, sql or csv.");
+      await sendMessage(env, chatId, warning);
+      return;
+    }
 
+    const downloaded = await downloadTelegramFile(env, message.document.file_id, MAX_TEXT_DOCUMENT_BYTES);
+    if (!downloaded) {
+      const isPersian = String(user.locale || "").toLowerCase().startsWith("fa");
+      await sendMessage(env, chatId, isPersian
+        ? "⚠️ دریافت یا خواندن فایل ممکن نشد. لطفاً فایل را دوباره بفرست."
+        : "⚠️ Nyra could not download or read that file. Please send it again.");
+      return;
+    }
+
+    let fileText = "";
+    try {
+      fileText = new TextDecoder("utf-8", { fatal: true }).decode(base64ToBytes(downloaded.data));
+    } catch (error) {
+      const isPersian = String(user.locale || "").toLowerCase().startsWith("fa");
+      await sendMessage(env, chatId, isPersian
+        ? "⚠️ محتوای فایل متن UTF-8 معتبر نیست؛ فایل‌های باینری پشتیبانی نمی‌شوند."
+        : "⚠️ This file is not valid UTF-8 text. Binary files are not supported.");
+      return;
+    }
+    if (!fileText.trim()) {
+      const isPersian = String(user.locale || "").toLowerCase().startsWith("fa");
+      await sendMessage(env, chatId, isPersian
+        ? "⚠️ فایل خالی است و محتوایی برای تحلیل ندارد."
+        : "⚠️ The file is empty; there is nothing to analyze.");
+      return;
+    }
+    if (fileText.length > MAX_TEXT_DOCUMENT_CHARS) {
+      fileText = fileText.slice(0, MAX_TEXT_DOCUMENT_CHARS) + "\n\n[File content truncated at 50,000 characters.]";
+    }
+    modelInputText += "\n\n" + buildTextDocumentPrompt(inspection.fileName, inspection.language, fileText);
+  }
 
   await saveThreadMessage(env, chatId, threadId, message.message_id, userId, "user", userContent);
   // Durable archive for admin panel (groups: only triggered turns reach here).
@@ -147,14 +200,42 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
     created_at: now()
   }));
 
-  // Vision is enabled only when the operator has confirmed that the configured
-  // central model and endpoint accept image content. Otherwise keep the text placeholder.
-  let currentTurn: string | { text: string; images: Array<{ mediaType: string; data: string }> } = userContent;
+  // Vision is opt-in and bounded. Album images are downloaded one at a time,
+  // deduplicated, and capped by both per-file and total request size.
+  let currentTurn: string | { text: string; images: Array<{ mediaType: string; data: string }> } = modelInputText;
   if (aiConfig.supports_vision === 1) {
-    const image = pickImageFile(message);
-    if (image) {
-      const file = await downloadTelegramFile(env, image.fileId);
-      if (file) currentTurn = { text: userContent, images: [{ mediaType: file.mediaType || image.mediaType, data: file.data }] };
+    const imageCandidates = pickImageFiles(message, MAX_AI_ALBUM_IMAGES);
+    if (imageCandidates.length > 0) {
+      const images: Array<{ mediaType: string; data: string }> = [];
+      let totalBytes = 0;
+      let skippedImages = 0;
+      for (const candidate of imageCandidates) {
+        const remainingBytes = MAX_AI_ALBUM_TOTAL_BYTES - totalBytes;
+        if (remainingBytes <= 0) {
+          skippedImages++;
+          continue;
+        }
+        const file = await downloadTelegramFile(
+          env,
+          candidate.fileId,
+          Math.min(MAX_AI_IMAGE_FILE_BYTES, remainingBytes)
+        );
+        if (!file) {
+          skippedImages++;
+          continue;
+        }
+        const estimatedBytes = Math.ceil(file.data.length * 3 / 4);
+        if (estimatedBytes > remainingBytes) {
+          skippedImages++;
+          continue;
+        }
+        totalBytes += estimatedBytes;
+        images.push({ mediaType: file.mediaType || candidate.mediaType, data: file.data });
+      }
+      const requestText = skippedImages > 0
+        ? modelInputText + "\n\n[" + skippedImages + " image(s) could not be attached because of download or size limits.]"
+        : modelInputText;
+      currentTurn = images.length > 0 ? { text: requestText, images } : requestText;
     }
   }
 

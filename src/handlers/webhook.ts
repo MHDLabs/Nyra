@@ -8,6 +8,7 @@ import { getWebhookSecret } from "../crypto.js";
 import { ensureSchema } from "../db.js";
 import { processMessage } from "./message.js";
 import { handleCallbackQuery } from "./callback.js";
+import { enqueueTelegramPhotoAlbum, isTelegramPhotoAlbumMessage } from "../media-groups.js";
 
 type WorkerCtx = { waitUntil?(promise: Promise<unknown>): void };
 
@@ -149,6 +150,22 @@ export async function handleWebhook(request: Request, env: NyraEnv, ctx: WorkerC
       await safeProcessMessage(env, ctx, msgUpdate);
       return okResponse();
     }
+  }
+  if (msgUpdate && msgUpdate.from && !msgUpdate.from.is_bot && isTelegramPhotoAlbumMessage(msgUpdate)) {
+    try {
+      await enqueueTelegramPhotoAlbum(env, msgUpdate);
+    } catch (err) {
+      console.error("photo-album enqueue failed:", errorMessage(err));
+      if (updateId !== null) {
+        try {
+          await env.DB.prepare("DELETE FROM processed_updates WHERE update_id = ?").bind(updateId).run();
+        } catch (e) {
+          console.error("dedup rollback failed:", errorMessage(e));
+        }
+      }
+      return new Response("Service Unavailable", { status: 503 });
+    }
+    return okResponse();
   }
   try {
     await env.NYRA_QUEUE.send({ update: update });
