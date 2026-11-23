@@ -99,7 +99,7 @@ test("unsupported tool schema retries once on the same model without tools", asy
   assert.equal(requests[0].body.model, requests[1].body.model);
   assert.ok(Array.isArray(requests[0].body.tools) && requests[0].body.tools.length > 0);
   assert.equal(Object.hasOwn(requests[1].body, "tools"), false);
-  assert.equal(events.filter(event => event.type === "done").length, 1);
+  assert.equal(events.filter(event => event.type === "done").length, 1, JSON.stringify(events.map(event => ({ type: event.type, message: event.error && event.error.message, category: event.category }))));
   assert.equal(events.find(event => event.type === "done").attempts, 2);
 });
 
@@ -109,14 +109,19 @@ test("a partial stream failure is never retried to avoid duplicated answer text"
   globalThis.fetch = async () => {
     requests++;
     const failure = Object.assign(new Error("stream interrupted"), { status: 400 });
+    let sentChunk = false;
     const body = new ReadableStream({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode(
-          "data: " + JSON.stringify({ choices: [{ delta: { content: "Partial answer" } }] }) + "\n\n"
-        ));
-        controller.error(failure);
+      pull(controller) {
+        if (!sentChunk) {
+          sentChunk = true;
+          controller.enqueue(new TextEncoder().encode(
+            "data: " + JSON.stringify({ choices: [{ delta: { content: "Partial answer" } }] }) + "\n\n"
+          ));
+        } else {
+          controller.error(failure);
+        }
       }
-    });
+    }, { highWaterMark: 0 });
     return new Response(body, { headers: { "content-type": "text/event-stream" } });
   };
 
