@@ -69,11 +69,11 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
   const userId = from.id;
   const chatId = chat.id;
   const rawText = (message.text || message.caption || "").trim();
-  if (message.voice) {
+  if (message.voice || message.audio) {
     const isPersian = String(from.language_code || "").toLowerCase().startsWith("fa");
     await sendMessage(env, chatId, isPersian
-      ? "پیام صوتی در این نسخه پشتیبانی نمی‌شود. لطفاً پیام خود را به‌صورت متنی بفرستید."
-      : "Voice messages are not supported in this version. Please send a text message.");
+      ? "پیام صوتی و فایل صوتی در این نسخه پشتیبانی نمی‌شوند. لطفاً پیام خود را به‌صورت متنی بفرستید."
+      : "Voice messages and audio files are not supported in this version. Please send a text message.");
     return;
   }
   const hasSticker = !!message.sticker;
