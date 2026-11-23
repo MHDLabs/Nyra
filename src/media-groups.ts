@@ -24,6 +24,7 @@ export function isTelegramPhotoAlbumMessage(message: TelegramMessage | undefined
 }
 
 function minimalStoredMessage(message: TelegramMessage): TelegramMessage {
+  const reply = message.reply_to_message;
   return {
     message_id: message.message_id,
     date: message.date,
@@ -31,7 +32,14 @@ function minimalStoredMessage(message: TelegramMessage): TelegramMessage {
     from: message.from,
     caption: message.caption,
     caption_entities: message.caption_entities,
-    reply_to_message: message.reply_to_message,
+    reply_to_message: reply ? {
+      message_id: reply.message_id,
+      chat: reply.chat,
+      from: reply.from ? { id: reply.from.id, is_bot: reply.from.is_bot } : undefined,
+      text: reply.text,
+      caption: reply.caption,
+      sticker: reply.sticker ? { file_id: reply.sticker.file_id, emoji: reply.sticker.emoji } : undefined
+    } : undefined,
     message_thread_id: message.message_thread_id,
     photo: message.photo,
     media_group_id: message.media_group_id
@@ -132,34 +140,41 @@ export async function processTelegramPhotoAlbum(
 
   if (!Number(claim.meta?.changes || 0)) return false;
 
-  const selected = await env.DB.prepare(
-    "SELECT message_id, message_json FROM telegram_media_group_items " +
-    "WHERE chat_id = ? AND media_group_id = ? ORDER BY message_id ASC LIMIT ?"
-  ).bind(album.chat_id, album.media_group_id, MAX_PHOTO_ALBUM_ITEMS).all();
-
-  const rows = selected.results || [];
-  const messages: TelegramMessage[] = [];
-  for (const row of rows) {
-    try {
-      const parsed = JSON.parse(String(row.message_json || ""));
-      if (parsed && typeof parsed.message_id === "number" && parsed.chat && Array.isArray(parsed.photo)) {
-        messages.push(parsed as TelegramMessage);
-      }
-    } catch (error) {
-      console.error("Ignoring malformed stored photo-album item:", error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  const merged = buildTelegramPhotoAlbumMessage(messages);
-  const messageIds = rows.map((row) => Number(row.message_id)).filter((id) => Number.isFinite(id));
-  if (messageIds.length === 0) {
-    await env.DB.prepare(
-      "DELETE FROM telegram_media_groups WHERE chat_id = ? AND media_group_id = ?"
-    ).bind(album.chat_id, album.media_group_id).run();
-    return false;
-  }
-
   try {
+    // If the Worker stops after claiming the album, this delayed marker gives
+    // another consumer a chance to recover it after the processing lease expires.
+    await env.NYRA_QUEUE.send(
+      { media_group_flush: { chat_id: album.chat_id, media_group_id: album.media_group_id } },
+      { delaySeconds: Math.ceil(PHOTO_ALBUM_LEASE_MS / 1000) + 1 }
+    );
+
+    const selected = await env.DB.prepare(
+      "SELECT message_id, message_json FROM telegram_media_group_items " +
+      "WHERE chat_id = ? AND media_group_id = ? ORDER BY message_id ASC LIMIT ?"
+    ).bind(album.chat_id, album.media_group_id, MAX_PHOTO_ALBUM_ITEMS).all();
+
+    const rows = selected.results || [];
+    const messages: TelegramMessage[] = [];
+    for (const row of rows) {
+      try {
+        const parsed = JSON.parse(String(row.message_json || ""));
+        if (parsed && typeof parsed.message_id === "number" && parsed.chat && Array.isArray(parsed.photo)) {
+          messages.push(parsed as TelegramMessage);
+        }
+      } catch (error) {
+        console.error("Ignoring malformed stored photo-album item:", error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    const merged = buildTelegramPhotoAlbumMessage(messages);
+    const messageIds = rows.map((row) => Number(row.message_id)).filter((id) => Number.isFinite(id));
+    if (messageIds.length === 0) {
+      await env.DB.prepare(
+        "DELETE FROM telegram_media_groups WHERE chat_id = ? AND media_group_id = ?"
+      ).bind(album.chat_id, album.media_group_id).run();
+      return false;
+    }
+
     if (merged) await processMessage(env, ctx, merged);
 
     const placeholders = messageIds.map(() => "?").join(", ");
