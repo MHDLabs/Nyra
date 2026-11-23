@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
-import { SCHEMA_MIGRATIONS } from "../src/db/schema.js";
+import { SCHEMA_MIGRATIONS, ensureSchema } from "../src/db/schema.js";
 import { listPrivateChatUsers } from "../src/db/chat-logs.js";
 import { SUPPORTED_LOCALES, RETIRED_PERSONALITY_IDS } from "../src/config.js";
 
@@ -289,4 +289,59 @@ test("admin private-chat listing works after retired columns are dropped", async
   const users = await listPrivateChatUsers(env, { limit: 20, offset: 0 });
   assert.equal(users.length, 3);
   assert.ok(users.every(user => typeof user.telegram_id === "number"));
+});
+
+test("ensureSchema does not recreate retired tables or columns after migration 23", async () => {
+  const db = createLegacyDb();
+  seedLegacyData(db);
+  const pending = SCHEMA_MIGRATIONS.filter(m => m.id >= 10).sort((a, b) => a.id - b.id);
+  applyMigrations(db, pending);
+
+  const d1 = {
+    prepare(sql) {
+      const statement = db.prepare(sql);
+      let values = [];
+      return {
+        bind(...args) { values = args; return this; },
+        async run() { return statement.run(...values); },
+        async first() { return statement.get(...values) || null; },
+        async all() { return { results: statement.all(...values) }; }
+      };
+    }
+  };
+  const env = {
+    DB: d1,
+    KV: {
+      async get() { return null; },
+      async put() {}
+    }
+  };
+
+  await ensureSchema(env);
+
+  const retiredTables = [
+    "ai_connections", "connection_models", "connection_usage",
+    "routes", "route_models", "route_tokens",
+    "routing_profiles", "routing_profile_entries",
+    "reminders", "reminder_delivery_attempts",
+    "schedules", "schedule_delivery_attempts",
+    "proactive_delivery_attempts", "shared_service_usage", "voice_transcripts"
+  ];
+  for (const table of retiredTables) {
+    const row = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+    assert.equal(row, undefined, "ensureSchema recreated retired table: " + table);
+  }
+
+  const userColumns = new Set(db.prepare("PRAGMA table_info(users)").all().map(column => column.name));
+  for (const column of [
+    "active_connection_id", "active_route_id", "fallback_enabled", "active_profile_id",
+    "last_inbound_at", "proactive_enabled", "proactive_threshold_hours",
+    "proactive_quiet_start", "proactive_quiet_end", "proactive_last_sent_at",
+    "proactive_episode_key"
+  ]) {
+    assert.equal(userColumns.has(column), false, "ensureSchema recreated retired user column: " + column);
+  }
+
+  assert.equal(db.prepare("SELECT COUNT(*) AS c FROM users").get().c, 3);
+  assert.equal(db.prepare("SELECT COUNT(*) AS c FROM thread_messages").get().c, 1);
 });
