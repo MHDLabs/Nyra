@@ -17,7 +17,7 @@ export const RATE_LIMIT_ADMIN_PER_MIN = 10;
 export const RATE_LIMIT_CALLBACK_PER_MIN = 30;
 export const RATE_LIMIT_SETUP_PER_MIN = 5;
 // Single attempt against the centrally configured model.
-export const AI_PRIMARY_ATTEMPT_TIMEOUT_MS = 120000;
+export const AI_REQUEST_TIMEOUT_MS = 120000;
 export const AI_MAX_PRIMARY_ATTEMPTS = 1;
 // No provider or model failover.
 export const AI_MAX_RETRYABLE_ATTEMPTS = 1;
