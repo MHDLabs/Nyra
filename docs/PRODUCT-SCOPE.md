@@ -108,6 +108,13 @@ Remove ENCRYPTION_KEY only after proving that no retained data or runtime featur
 - Keep existing D1, Queue, and Telegram boundaries unless the code audit proves a component is no longer needed.
 - Keep the web admin panel isolated from Telegram chat logic and Mini App code.
 
+## Telegram input handling
+
+- Telegram text and source-code attachments are supported up to 512 KiB and 50,000 characters. Binary files and obvious secret-bearing filenames/extensions (such as `.env`, private keys and certificates) are rejected.
+- File bodies are added only to the active model request. Persistent thread history and admin chat logs retain a compact attachment summary rather than copying the full file contents into D1.
+- Photo albums are collected durably in D1 and processed as one AI turn, with a maximum of 10 images and a 16 MiB aggregate download budget. Image analysis remains subject to the operator's existing `AI_SUPPORTS_VISION` setting.
+- Album staging rows are cleaned after successful processing and stale rows are purged by scheduled maintenance. Queue retries and the failed-update replay path support internal album-flush messages.
+
 ## 6. Acceptance criteria
 
 The implementation is ready for review when all of the following are true:
