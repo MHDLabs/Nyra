@@ -8,19 +8,18 @@ import { ensureSchema, SCHEMA_MIGRATIONS } from "../src/db/schema.js";
 function makeD1(db) {
   return {
     prepare(sql) {
-      const statement = db.prepare(sql);
       let values = [];
       return {
         bind(...args) { values = args; return this; },
         async run() {
-          const result = statement.run(...values);
+          const result = db.prepare(sql).run(...values);
           return { meta: { changes: Number(result.changes || 0) } };
         },
         async first() {
-          return statement.get(...values) || null;
+          return db.prepare(sql).get(...values) || null;
         },
         async all() {
-          return { results: statement.all(...values) };
+          return { results: db.prepare(sql).all(...values) };
         }
       };
     },
