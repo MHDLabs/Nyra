@@ -143,7 +143,7 @@ export async function processMessage(env: NyraEnv, ctx: WorkerCtx, message: Tele
     return;
   }
 
-  const hasContent = text || message.sticker || message.photo || message.animation || message.video || message.voice || message.document;
+  const hasContent = text || message.sticker || message.photo || message.animation || message.video || message.voice || message.audio || message.document;
   if (!hasContent) return;
 
   if (isGroup) {
