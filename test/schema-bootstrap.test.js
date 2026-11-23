@@ -80,7 +80,7 @@ test("fresh ensureSchema applies all migrations and leaves only the simplified s
     assert.equal(columns.has(column), false, "fresh schema retained retired user column: " + column);
   }
 
-  for (const table of ["users", "chats", "thread_messages", "app_settings", "custom_personalities", "chat_logs", "broadcasts", "broadcast_recipients", "blocked_users", "failed_updates"]) {
+  for (const table of ["users", "chats", "thread_messages", "app_settings", "custom_personalities", "chat_logs", "broadcasts", "broadcast_recipients", "blocked_users", "failed_updates", "telegram_media_groups", "telegram_media_group_items"]) {
     const row = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
     assert.ok(row, "fresh schema omitted retained table: " + table);
   }
