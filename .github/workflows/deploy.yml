@@ -1,0 +1,70 @@
+name: Deploy Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy latest main to Cloudflare
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install Wrangler
+        run: npm ci --no-audit --no-fund
+
+      - name: Require Cloudflare credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::Missing CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID repository secret."
+            exit 1
+          fi
+
+      - name: Deploy exact commit
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          SHA="${GITHUB_SHA}"
+          REF="${GITHUB_REF_NAME}"
+          TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "Deploying Nyra@${SHA} ref=${REF} at=${TIME}"
+          ./node_modules/.bin/wrangler deploy \
+            --var "NYRA_BUILD_SHA:${SHA}" \
+            --var "NYRA_BUILD_REF:${REF}" \
+            --var "NYRA_BUILD_TIME:${TIME}" \
+            --var "NYRA_BUILD_SOURCE:github-actions"
+
+      - name: Confirm deployed build
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA="${GITHUB_SHA:0:7}"
+          STATUS="$(curl -fsS --retry 3 --retry-all-errors --retry-delay 5 --max-time 60 "https://nyra.mhdlabs.workers.dev/status")"
+          printf '%s\n' "$STATUS"
+          if ! printf '%s\n' "$STATUS" | grep -Fq "$EXPECTED_SHA"; then
+            echo "::error::The live Worker did not report the expected commit ${EXPECTED_SHA}."
+            exit 1
+          fi
+          echo "Confirmed: production Worker is running commit ${GITHUB_SHA}."
