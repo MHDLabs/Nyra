@@ -1,5 +1,5 @@
 import type { NyraEnv } from "../../types/env.js";
-import { ADMIN_NOTIFY_THROTTLE_TTL, AI_PRIMARY_ATTEMPT_TIMEOUT_MS, AI_STREAM_STALL_TIMEOUT_MS } from "../config.js";
+import { ADMIN_NOTIFY_THROTTLE_TTL, AI_REQUEST_TIMEOUT_MS, AI_STREAM_STALL_TIMEOUT_MS } from "../config.js";
 import { truncate, escapeHtml, getAdminIds } from "../utils.js";
 import { sendMessage } from "../telegram.js";
 import { normalizeError, humanizeError } from "./errors.js";
@@ -15,7 +15,7 @@ export async function generateCentralAI(env: NyraEnv, messages, options, timeout
     config.api_key,
     messages,
     options,
-    timeoutMs || AI_PRIMARY_ATTEMPT_TIMEOUT_MS
+    timeoutMs || AI_REQUEST_TIMEOUT_MS
   );
 }
 
