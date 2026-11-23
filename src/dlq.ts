@@ -219,7 +219,11 @@ export async function replayFailedUpdate(env: DlqEnv, id: unknown): Promise<bool
     if (body.media_group_flush && typeof body.media_group_flush === "object") {
       await env.NYRA_QUEUE.send({ media_group_flush: body.media_group_flush });
     } else if (body.update && typeof body.update === "object") {
+      // Current records wrap Telegram updates so internal queue jobs can coexist.
       await env.NYRA_QUEUE.send({ update: body.update });
+    } else if ("update_id" in body && typeof body.update_id === "number") {
+      // Backward compatibility: older DLQ rows stored the Telegram update directly.
+      await env.NYRA_QUEUE.send({ update: body });
     } else {
       return false;
     }
