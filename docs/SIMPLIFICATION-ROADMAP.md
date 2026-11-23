@@ -22,7 +22,7 @@ This roadmap tracks the approved runtime simplification. A checkbox is completed
 - [x] Remove Mini App-only environment variables and build/deployment remnants.
 - [x] Keep `/admin-panel`, `/admin-api/*`, `src/admin-panel/`, `public/admin-panel/**`, and the Cloudflare Assets binding.
 - [x] Make the non-admin root path behavior explicit (no orphaned Mini App shell).
-- [x] Verify admin panel serving, authentication, and authorization paths remain wired (auth regression test + Wrangler dry-run, latest CI run [#45177873457](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)).
+- [x] Verify admin panel serving, authentication, and authorization paths remain wired (auth regression test + Wrangler dry-run, latest CI run [#45178517298](https://github.com/MHDLabs/Nyra/actions/runs/45178517298)).
 
 **Exit:** No Mini App runtime path remains; the standalone Web Admin Panel and its assets remain intact.
 
@@ -43,7 +43,7 @@ This roadmap tracks the approved runtime simplification. A checkbox is completed
 ## Phase 3 — Safe database and configuration cleanup
 
 - [x] Remove runtime references and preserve historical migration files.
-- [x] Add migration 23 to remove retired-only credentials, routing, reminder, voice, schedule, proactive, and obsolete settings state; regression tests cover legacy data preservation and a real `ensureSchema` boot after migration 23.
+- [x] Add migration 23 to remove retired-only credentials, routing, reminder, voice, schedule, proactive, and obsolete settings state; tests cover legacy data preservation, fresh-install bootstrap and a real `ensureSchema` boot after migration 23.
 - [x] Remove obsolete runtime database repositories, types, and settings.
 - [x] Verify preservation of users, custom instructions, memory, usage stats, groups, messages, custom personalities, blocked users, broadcasts/recipients, chat logs, failed-update/DLQ records, and admin chat listing after migration 23.
 - [x] Preserve historical migrations; no production data has been touched.
@@ -75,14 +75,15 @@ This roadmap tracks the approved runtime simplification. A checkbox is completed
 
 ## Phase 6 — Validation and review
 
-- [x] Run `npm ci` (latest PR CI [#45177873457](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)).
-- [x] Run `npm run typecheck` (latest PR CI [#45177873457](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)).
-- [x] Run `npm run test:all` (latest PR CI [#45177873457](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)).
-- [x] Run `./node_modules/.bin/wrangler deploy --dry-run` (latest PR CI [#45177873457](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)).
+- [x] Run `npm ci` (latest PR CI [#45178517298](https://github.com/MHDLabs/Nyra/actions/runs/45178517298)).
+- [x] Run `npm run typecheck` (latest PR CI [#45178517298](https://github.com/MHDLabs/Nyra/actions/runs/45178517298)).
+- [x] Run `npm run test:all` (latest PR CI [#45178517298](https://github.com/MHDLabs/Nyra/actions/runs/45178517298)).
+- [x] Run `./node_modules/.bin/wrangler deploy --dry-run` (latest PR CI [#45178517298](https://github.com/MHDLabs/Nyra/actions/runs/45178517298)).
 - [x] Verify focused regression tests for central AI configuration/security, retained admin panel behavior, and migration safety.
 - [x] Search runtime source, types, tests, commands, package manifests, Worker configuration, and docs for retired-feature references. Remaining matches are intentional historical migrations, migration fixtures/assertions, generic secret redaction, and one-time Telegram menu cleanup comments.
 - [ ] Complete manual, line-by-line review of all 145 changed files (automated stale-reference and targeted risk review are complete).
-- [x] Verify GitHub Actions remains one combined CI/deploy workflow plus the two CodeQL checks; latest CI [#45177873457](https://github.com/MHDLabs/Nyra/actions/runs/45051910112) and CodeQL [#45177864776](https://github.com/MHDLabs/Nyra/actions/runs/45051906761) pass.
+- [ ] Run migration 23 against a staging D1 copy and verify schema/data preservation before production.
+- [x] Verify GitHub Actions remains one combined CI/deploy workflow plus the two CodeQL checks; latest CI [#45178517298](https://github.com/MHDLabs/Nyra/actions/runs/45178517298) and CodeQL [#45178512796](https://github.com/MHDLabs/Nyra/actions/runs/45178512796) pass.
 - [x] Open Draft PR #132 with CI evidence; do not merge or deploy to production without explicit authorization.
 
 **Exit:** All available checks pass, the PR documents evidence and known limitations, and no production deployment/data mutation occurred.
