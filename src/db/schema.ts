@@ -407,6 +407,16 @@ const SIMPLIFICATION_MIGRATIONS = [
       "ALTER TABLE users DROP COLUMN proactive_episode_key",
       "DELETE FROM app_settings WHERE key IN ('workers_ai_policy', 'workers_ai_model', 'allow_personal_models', 'personal_model_limit', 'shared_service_enabled', 'shared_daily_request_limit', 'shared_daily_token_limit', 'allow_cross_source_fallback')"
     ]
+  },
+  {
+    id: 24,
+    label: "add durable Telegram photo-album staging",
+    statements: [
+      "CREATE TABLE IF NOT EXISTS telegram_media_groups (chat_id INTEGER NOT NULL, media_group_id TEXT NOT NULL, updated_at INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', lease_until INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(chat_id, media_group_id))",
+      "CREATE INDEX IF NOT EXISTS idx_telegram_media_groups_updated ON telegram_media_groups(updated_at)",
+      "CREATE TABLE IF NOT EXISTS telegram_media_group_items (chat_id INTEGER NOT NULL, media_group_id TEXT NOT NULL, message_id INTEGER NOT NULL, message_json TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(chat_id, media_group_id, message_id))",
+      "CREATE INDEX IF NOT EXISTS idx_telegram_media_group_items_created ON telegram_media_group_items(created_at)"
+    ]
   }
 ];
 
@@ -468,6 +478,9 @@ async function runMaintenance(env: NyraEnv) {
     await env.KV.put("nyra:purge:last_run", String(t), { expirationTtl: 172800 });
     await env.DB.prepare("DELETE FROM thread_messages WHERE created_at < ?").bind(now() - (CONTEXT_TTL * 2)).run();
     await env.DB.prepare("DELETE FROM processed_updates WHERE received_at < ?").bind(Math.floor(Date.now() / 1000) - UPDATE_DEDUP_RETENTION_S).run();
+    const staleAlbumsBefore = Date.now() - 24 * 60 * 60 * 1000;
+    await env.DB.prepare("DELETE FROM telegram_media_group_items WHERE created_at < ?").bind(staleAlbumsBefore).run();
+    await env.DB.prepare("DELETE FROM telegram_media_groups WHERE updated_at < ?").bind(staleAlbumsBefore).run();
     // chat_logs: keep 90 days (free D1 size). shortcut: fixed TTL; upgrade: per-chat caps
     await env.DB.prepare("DELETE FROM chat_logs WHERE created_at < ?").bind(now() - (90 * 24 * 60 * 60)).run();
     console.log("Maintenance purge completed.");
