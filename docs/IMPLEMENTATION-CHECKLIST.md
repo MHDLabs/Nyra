@@ -67,3 +67,10 @@ Tracking file for the Nyra product simplification. See [SIMPLIFICATION-ROADMAP.m
 - [x] Draft PR #132 opened with CI evidence; no production deploy or production data mutation.
 
 > A task remains unchecked until the actual implementation and its verification evidence are available. Documentation updates alone do not complete runtime tasks.
+
+
+## Telegram input capabilities
+
+- [x] Bounded text/code file reading with sensitive-file rejection and request-only file bodies.
+- [x] Durable Telegram photo-album aggregation with a delayed queue flush and bounded vision payload.
+- [x] Regression coverage for file policy, album merging and fresh D1 schema.
