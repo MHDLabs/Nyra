@@ -45,7 +45,7 @@ export async function handleAIMessage(
   threadId: string | number | null | undefined
 ): Promise<void> {
   // The typing indicator is owned by this wrapper, not by the stream loop, so
-  // it covers *every* slow phase (profile load, connection resolution, context
+  // it covers *every* slow phase (profile load, configuration checks, context
   // assembly, tool calls) and is always stopped — including on early returns
   // and thrown errors. `stop()` is idempotent, so the stream loop may stop it
   // as soon as real text starts arriving.
