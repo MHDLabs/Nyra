@@ -1,6 +1,6 @@
 # Nyra Simplification Roadmap
 
-**Status:** Implementation complete; final CI-backed review in progress  
+**Status:** Implementation complete; CI and both CodeQL analyses pass on the current PR head  
 **Working branch:** `refactor/full-product-simplification`  
 **Base:** `main` at `2b12ab4cd7308b2c7209eb1e43e63899c2a47408`  
 **Principle:** Keep it simple :)
@@ -22,7 +22,7 @@ This roadmap tracks the approved runtime simplification. A checkbox is completed
 - [x] Remove Mini App-only environment variables and build/deployment remnants.
 - [x] Keep `/admin-panel`, `/admin-api/*`, `src/admin-panel/`, `public/admin-panel/**`, and the Cloudflare Assets binding.
 - [x] Make the non-admin root path behavior explicit (no orphaned Mini App shell).
-- [x] Verify admin panel serving, authentication, and authorization paths remain wired (auth regression test + Wrangler dry-run, latest CI run [#45176393152](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)).
+- [x] Verify admin panel serving, authentication, and authorization paths remain wired (auth regression test + Wrangler dry-run, latest CI run [#45177873457](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)).
 
 **Exit:** No Mini App runtime path remains; the standalone Web Admin Panel and its assets remain intact.
 
@@ -75,14 +75,14 @@ This roadmap tracks the approved runtime simplification. A checkbox is completed
 
 ## Phase 6 — Validation and review
 
-- [x] Run `npm ci` (latest PR CI [#45176393152](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)).
-- [x] Run `npm run typecheck` (latest PR CI [#45176393152](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)).
-- [x] Run `npm run test:all` (latest PR CI [#45176393152](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)).
-- [x] Run `./node_modules/.bin/wrangler deploy --dry-run` (latest PR CI [#45176393152](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)).
+- [x] Run `npm ci` (latest PR CI [#45177873457](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)).
+- [x] Run `npm run typecheck` (latest PR CI [#45177873457](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)).
+- [x] Run `npm run test:all` (latest PR CI [#45177873457](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)).
+- [x] Run `./node_modules/.bin/wrangler deploy --dry-run` (latest PR CI [#45177873457](https://github.com/MHDLabs/Nyra/actions/runs/45051910112)).
 - [x] Verify focused regression tests for central AI configuration/security, retained admin panel behavior, and migration safety.
 - [x] Search runtime source, types, tests, commands, package manifests, Worker configuration, and docs for retired-feature references. Remaining matches are intentional historical migrations, migration fixtures/assertions, generic secret redaction, and one-time Telegram menu cleanup comments.
-- [ ] Complete manual, line-by-line review of all 144 changed files (automated stale-reference and targeted risk review are complete).
-- [x] Verify GitHub Actions remains one combined CI/deploy workflow plus the two CodeQL checks; latest CI [#45176393152](https://github.com/MHDLabs/Nyra/actions/runs/45051910112) and CodeQL [#45176384476](https://github.com/MHDLabs/Nyra/actions/runs/45051906761) pass.
+- [ ] Complete manual, line-by-line review of all 145 changed files (automated stale-reference and targeted risk review are complete).
+- [x] Verify GitHub Actions remains one combined CI/deploy workflow plus the two CodeQL checks; latest CI [#45177873457](https://github.com/MHDLabs/Nyra/actions/runs/45051910112) and CodeQL [#45177864776](https://github.com/MHDLabs/Nyra/actions/runs/45051906761) pass.
 - [x] Open Draft PR #132 with CI evidence; do not merge or deploy to production without explicit authorization.
 
 **Exit:** All available checks pass, the PR documents evidence and known limitations, and no production deployment/data mutation occurred.
