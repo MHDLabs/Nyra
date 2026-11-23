@@ -166,7 +166,7 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
 
     let fileText = "";
     try {
-      fileText = new TextDecoder("utf-8", { fatal: true }).decode(base64ToBytes(downloaded.data));
+      fileText = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(base64ToBytes(downloaded.data));
     } catch (error) {
       const isPersian = String(user.locale || "").toLowerCase().startsWith("fa");
       await sendMessage(env, chatId, isPersian
