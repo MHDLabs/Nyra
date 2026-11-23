@@ -27,7 +27,8 @@ Configure the single shared model with `AI_MODEL` and the server-side `AI_API_KE
 - 💬 AI conversations with streaming replies
 - 🧠 Personal memory and customizable personalities
 - 🌐 Built-in web search
-- 🖼️ Image understanding when supported by the configured model
+- 🖼️ Image understanding and multi-image Telegram albums when supported by the configured model (up to 10 images)
+- 📎 Text and source-code file analysis (up to 512 KiB)
 - 👥 Private and group chats
 - 🛠️ Telegram admin tools and a separate [web admin panel](/admin-panel)
 - ☁️ Serverless runtime on Cloudflare Workers
