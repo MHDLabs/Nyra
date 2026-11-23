@@ -8,7 +8,7 @@ export type CentralAIConfig = {
 };
 
 /**
- * Resolve the only AI connection used by Nyra.
+ * Resolve Nyra's centrally configured AI endpoint and model.
  *
  * Credentials and model selection are operator-owned Worker configuration.
  * This function never reads user records or D1 and never returns the API key
