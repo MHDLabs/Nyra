@@ -112,6 +112,20 @@ test("replayFailedUpdate re-enqueues the stored update and stamps replayed_at", 
   assert.ok(env.store[0].replayed_at, "replayed_at must be set so it cannot loop");
 });
 
+test("replayFailedUpdate re-enqueues an internal photo-album flush marker", async () => {
+  const marker = { chat_id: -100123, media_group_id: "album-42" };
+  const env = fakeEnv([row({
+    id: 30,
+    error_info: JSON.stringify({ body: { media_group_flush: marker } })
+  })]);
+
+  const ok = await replayFailedUpdate(env, 30);
+
+  assert.equal(ok, true);
+  assert.deepEqual(env.sent, [{ media_group_flush: marker }]);
+  assert.ok(env.store[0].replayed_at);
+});
+
 test("replayFailedUpdate refuses a record that was already replayed", async () => {
   const body = { update_id: 555 };
   const env = fakeEnv([row({ id: 4, replayed_at: 1735689700, error_info: JSON.stringify({ body: body }) })]);
