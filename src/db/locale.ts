@@ -2,10 +2,10 @@ import type { NyraEnv } from "../../types/env.js";
 import type { TelegramId } from "../../types/domain.js";
 // Per-user locale persistence (users.locale).
 //
-// The Mini App (and, through the same row, the Telegram bot) reads this value;
-// GET /api/i18n and the prompt builder fall back to Telegram's language_code
-// only while the column is still NULL. Writing a locale touches ONE column and
-// one timestamp - memory, preferences, connections and history are untouched,
+// The Telegram bot reads this value for each user's messages and menus.
+// The prompt builder falls back to Telegram's language_code only while the
+// column is still NULL. Writing a locale touches ONE column and one timestamp;
+// memory, preferences and history are untouched,
 // so switching language can never lose data.
 import { SUPPORTED_LOCALES, normalizeLocale, isSupportedLocaleInput, localeForUser } from "../i18n/index.js";
 import { getUserStrict } from "./users.js";

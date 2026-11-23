@@ -1,14 +1,11 @@
-// GET /status — plain-text status and bootstrap endpoint. The Mini App owns
-// "/", so this is the URL that initialises the schema, teaches the Worker
-// its public origin, and registers the Telegram webhook + menu button.
+// GET /status — plain-text status and bootstrap endpoint for the Worker and Telegram webhook.
 import type { NyraEnv } from "../../types/env.js";
 import type { AdminIdResult } from "../utils/admin.js";
 import { checkMemoryRate } from "../utils.js";
-import { ensureWebhook, ensureMenuButton, tg } from "../telegram.js";
+import { ensureWebhook, restoreDefaultMenuButton, tg } from "../telegram.js";
 import { maybeInitSchema } from "../db.js";
 import { getBuildInfo, checkUpstreamUpdate, UPSTREAM_REPO, UPSTREAM_BRANCH } from "../version.js";
-import { MINIAPP_DISABLED } from "../config.js";
-import { getMasterKey, getWebhookSecret } from "../crypto.js";
+import { getWebhookSecret } from "../crypto.js";
 
 function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message || String(err);
@@ -27,15 +24,10 @@ export async function handleStatus(
   await maybeInitSchema(env);
   const origin = new URL(request.url).origin;
   const hook = await ensureWebhook(env, origin);
-  const menu = await ensureMenuButton(env, origin);
+  await restoreDefaultMenuButton(env);
   const hookLine = hook.ok
     ? hook.status + " → " + hook.url
     : "problem: " + hook.status + (hook.detail ? " — " + hook.detail : "");
-  const menuLine = menu.ok
-    ? menu.status === "registered"
-      ? "registered → " + origin
-      : menu.status
-    : "problem: " + menu.status;
   const adminLine = adminIds.configured
     ? adminIds.valid.length +
       " configured" +
@@ -129,23 +121,18 @@ export async function handleStatus(
   const missing: string[] = [];
   if (!env.TELEGRAM_BOT_TOKEN) missing.push("TELEGRAM_BOT_TOKEN");
   if (!(await getWebhookSecret(env))) missing.push("TELEGRAM_SECRET");
-  if (!getMasterKey(env)) missing.push("ENCRYPTION_KEY(invalid_or_missing)");
   if (missing.length) secretsLine = "MISSING/INVALID: " + missing.join(", ");
 
   const body = [
     "Nyra is running.",
     "",
     "Secrets:     " + secretsLine,
+    "Central AI:  " + (env.AI_MODEL && env.AI_API_KEY ? String(env.AI_MODEL) : "NOT CONFIGURED"),
     "Webhook:     " + hookLine,
     "TG webhook:  " + tgHookLine,
     "Bot:         " + botLine,
-    "Menu button: " + menuLine,
     "Admin IDs:   " + adminLine,
     "Queue:       " + (env.NYRA_QUEUE ? "bound (NYRA_QUEUE)" : "MISSING — check the queues config in wrangler.toml"),
-    "Mini App:    " +
-      (MINIAPP_DISABLED
-        ? "DISABLED (maintenance) — use chat commands"
-        : origin + "/ (served from the ASSETS binding)"),
     "Build:       " + buildLine,
     "Updates:     " + updateLine,
     "",

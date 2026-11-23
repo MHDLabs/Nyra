@@ -1,14 +1,14 @@
 // Offline migration-safety test (Lead-owned).
 //
-// Applies the real, shipped migration arrays to a compatibility-shaped legacy
-// SQLite database using Node's built-in `node:sqlite` module. No network, no
-// dependencies, no Cloudflare account: this is a local proof that the upgrade
-// path is additive and preserves user data, which a static review cannot give.
+// Applies shipped migrations to a legacy SQLite database using Node's built-in
+// `node:sqlite`. Retired feature state is deleted; core user-owned data is preserved.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { SCHEMA_MIGRATIONS } from "../src/db/schema.js";
-import { SUPPORTED_LOCALES } from "../src/config.js";
+import { readFileSync } from "node:fs";
+import { SCHEMA_MIGRATIONS, ensureSchema } from "../src/db/schema.js";
+import { listPrivateChatUsers } from "../src/db/chat-logs.js";
+import { SUPPORTED_LOCALES, RETIRED_PERSONALITY_IDS } from "../src/config.js";
 
 const NOW = Math.floor(Date.now() / 1000);
 
@@ -47,6 +47,13 @@ function createLegacyDb() {
     CREATE TABLE routes (route_id TEXT PRIMARY KEY, telegram_id INTEGER NOT NULL, label TEXT NOT NULL, provider TEXT NOT NULL, base_url TEXT, is_default INTEGER DEFAULT 0, display_order INTEGER DEFAULT 100, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
     CREATE TABLE route_models (model_id TEXT PRIMARY KEY, route_id TEXT NOT NULL, model TEXT NOT NULL, label TEXT, is_default INTEGER DEFAULT 0, display_order INTEGER DEFAULT 100, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
     CREATE TABLE route_tokens (token_id TEXT PRIMARY KEY, route_id TEXT NOT NULL, label TEXT, encrypted_key TEXT NOT NULL, key_iv TEXT NOT NULL, encryption_version INTEGER DEFAULT 2, enabled INTEGER DEFAULT 1, is_primary INTEGER DEFAULT 0, display_order INTEGER DEFAULT 100, consecutive_failures INTEGER DEFAULT 0, last_success_at INTEGER, last_used_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+    CREATE TABLE personalities (personality_id TEXT PRIMARY KEY, name TEXT NOT NULL, prompt TEXT NOT NULL, enabled INTEGER DEFAULT 1, is_builtin INTEGER DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+    CREATE TABLE custom_personalities (personality_id TEXT PRIMARY KEY, telegram_id INTEGER NOT NULL, name TEXT NOT NULL, description TEXT, prompt TEXT NOT NULL, enabled INTEGER DEFAULT 1, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+    CREATE TABLE blocked_users (telegram_id INTEGER PRIMARY KEY, reason TEXT, blocked_at INTEGER NOT NULL, blocked_by INTEGER NOT NULL);
+    CREATE TABLE broadcasts (broadcast_id TEXT PRIMARY KEY, created_by INTEGER NOT NULL, message TEXT NOT NULL, target_type TEXT NOT NULL, target_filter TEXT, status TEXT DEFAULT 'draft', total_count INTEGER DEFAULT 0, sent_count INTEGER DEFAULT 0, failed_count INTEGER DEFAULT 0, created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER);
+    CREATE TABLE broadcast_recipients (id INTEGER PRIMARY KEY AUTOINCREMENT, broadcast_id TEXT NOT NULL, recipient_id INTEGER NOT NULL, status TEXT DEFAULT 'pending', error_message TEXT, created_at INTEGER NOT NULL, sent_at INTEGER, claimed_at INTEGER, UNIQUE(broadcast_id, recipient_id));
+    CREATE TABLE chat_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER NOT NULL, chat_type TEXT NOT NULL, message_id INTEGER, user_id INTEGER, role TEXT NOT NULL, content TEXT NOT NULL, media_type TEXT, created_at INTEGER NOT NULL);
+    CREATE TABLE failed_updates (id INTEGER PRIMARY KEY AUTOINCREMENT, update_id INTEGER NOT NULL, user_id INTEGER, chat_id INTEGER, message_text TEXT, error_info TEXT, created_at INTEGER NOT NULL, replayed_at INTEGER);
   `);
   // Columns added by the core "alters" pass (which happens before migrations).
   for (const sql of [
@@ -65,10 +72,10 @@ function createLegacyDb() {
 }
 
 function seedLegacyData(db) {
-  const user = db.prepare("INSERT INTO users (telegram_id, first_name, language_code, personality_id, memory_data, usage_stats, created_at, last_seen_at, updated_at) VALUES (?, ?, ?, 'default', '{}', '{}', ?, ?, ?)");
-  user.run(101, "Ali", "fa", NOW - 5000, NOW - 4000, NOW - 4000);
-  user.run(102, "John", "en-US", NOW - 5000, NOW - 4000, NOW - 4000);
-  user.run(103, "Unknown", null, NOW - 5000, NOW - 4000, NOW - 4000);
+  const user = db.prepare("INSERT INTO users (telegram_id, first_name, language_code, preferred_name, custom_instructions, personality_id, memory_data, usage_stats, created_at, last_seen_at, updated_at) VALUES (?, ?, ?, ?, ?, 'default', ?, ?, ?, ?, ?)");
+  user.run(101, "Ali", "fa", "Ali", "Prefer concise answers.", JSON.stringify({ preferred_name: "Ali", explicit_facts: ["Uses Linux"] }), JSON.stringify({ requests: 7 }), NOW - 5000, NOW - 4000, NOW - 4000);
+  user.run(102, "John", "en-US", null, null, "{}", "{}", NOW - 5000, NOW - 4000, NOW - 4000);
+  user.run(103, "Unknown", null, null, null, "{}", "{}", NOW - 5000, NOW - 4000, NOW - 4000);
   db.prepare("INSERT INTO chats (chat_id, chat_type, title, enabled, mode, created_at, updated_at) VALUES (?,?,?,?,?,?,?)")
     .run(-1001, "group", "Legacy auto-disabled", 0, "disabled", NOW - 5000, NOW - 5000);
   db.prepare("INSERT INTO chats (chat_id, chat_type, title, enabled, mode, disabled_by_admin, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)")
@@ -81,6 +88,18 @@ function seedLegacyData(db) {
     .run(101, 1, 101, 101, "user", "hello", NOW - 1000);
   db.prepare("INSERT INTO route_models (model_id, route_id, model, created_at, updated_at) VALUES (?,?,?,?,?)")
     .run("m-legacy", "r-legacy", "model-smart", NOW - 1000, NOW - 1000);
+  db.prepare("INSERT INTO custom_personalities (personality_id, telegram_id, name, description, prompt, created_at, updated_at) VALUES (?,?,?,?,?,?,?)")
+    .run("custom-ali", 101, "Ali's style", "Personal writing style", "Be concise and practical.", NOW - 1000, NOW - 1000);
+  db.prepare("INSERT INTO blocked_users (telegram_id, reason, blocked_at, blocked_by) VALUES (?,?,?,?)")
+    .run(103, "test block", NOW - 500, 101);
+  db.prepare("INSERT INTO broadcasts (broadcast_id, created_by, message, target_type, status, total_count, sent_count, created_at) VALUES (?,?,?,?,?,?,?,?)")
+    .run("b-legacy", 101, "Maintenance notice", "all_users", "completed", 3, 3, NOW - 900);
+  db.prepare("INSERT INTO broadcast_recipients (broadcast_id, recipient_id, status, created_at, sent_at) VALUES (?,?,?,?,?)")
+    .run("b-legacy", 102, "sent", NOW - 800, NOW - 700);
+  db.prepare("INSERT INTO chat_logs (chat_id, chat_type, message_id, user_id, role, content, created_at) VALUES (?,?,?,?,?,?,?)")
+    .run(101, "private", 42, 101, "assistant", "Welcome back, Ali.", NOW - 600);
+  db.prepare("INSERT INTO failed_updates (update_id, user_id, chat_id, message_text, error_info, created_at) VALUES (?,?,?,?,?,?)")
+    .run(9001, 101, 101, "Retry me", JSON.stringify({ message: "temporary failure" }), NOW - 500);
 }
 
 function applyMigrations(db, migrations) {
@@ -101,14 +120,60 @@ test("shipped migration ids are unique, numeric and strictly ascending", () => {
   }
 });
 
-test("no shipped migration destroys user-owned data tables", () => {
-  const forbidden = [/DROP\s+TABLE\s+(IF\s+EXISTS\s+)?(users|thread_messages|ai_connections|routes|app_settings|chats|shared_service_usage)/i,
-    /DELETE\s+FROM\s+(users|thread_messages|ai_connections|routes|app_settings|chats|shared_service_usage)/i,
-    /DROP\s+COLUMN/i];
-  for (const m of SCHEMA_MIGRATIONS) {
-    if (m.id === 1) continue; // historical: dropped the dead continuation_states table only
-    for (const sql of m.statements) {
-      for (const re of forbidden) assert.ok(!re.test(sql), "destructive migration " + m.id + ": " + sql);
+test("destructive migrations are limited to retired feature-owned tables", () => {
+  const approved = new Set([
+    "continuation_states", "ai_connections", "connection_models", "connection_usage",
+    "routes", "route_models", "route_tokens",
+    "routing_profiles", "routing_profile_entries",
+    "shared_service_usage", "voice_transcripts",
+    "reminders", "reminder_delivery_attempts",
+    "schedules", "schedule_delivery_attempts", "proactive_delivery_attempts"
+  ]);
+  const approvedRetiredUserColumns = new Set(["active_connection_id", "active_route_id", "fallback_enabled", "active_profile_id", "last_inbound_at", "proactive_enabled", "proactive_threshold_hours", "proactive_quiet_start", "proactive_quiet_end", "proactive_last_sent_at", "proactive_episode_key"]);
+  const retained = new Set([
+    "users", "thread_messages", "chats", "app_settings", "personalities",
+    "custom_personalities", "chat_logs", "broadcasts", "broadcast_recipients",
+    "blocked_users", "failed_updates", "processed_updates"
+  ]);
+  for (const migration of SCHEMA_MIGRATIONS) {
+    for (const sql of migration.statements) {
+      const drop = sql.match(/^\s*DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?([a-z_]+)/i);
+      if (drop) {
+        assert.ok(approved.has(drop[1]), "unapproved table deletion in migration " + migration.id + ": " + sql);
+        assert.ok(!retained.has(drop[1]), "retained table was dropped: " + drop[1]);
+      }
+      const dropColumn = sql.match(/^\s*ALTER\s+TABLE\s+users\s+DROP\s+COLUMN\s+([a-z_]+)/i);
+      if (/DROP\s+COLUMN/i.test(sql)) {
+        assert.ok(dropColumn, "only explicit retired user columns may be removed: " + sql);
+        assert.ok(approvedRetiredUserColumns.has(dropColumn[1]), "unapproved user column deletion: " + dropColumn[1]);
+      }
+      if (/^\s*DELETE\s+FROM\s+app_settings/i.test(sql)) {
+        const settingDelete = sql.match(/^\s*DELETE\s+FROM\s+app_settings\s+WHERE\s+key\s+IN\s*\(([^)]+)\)\s*$/i);
+        assert.ok(settingDelete, "settings cleanup must use an explicit key allowlist: " + sql);
+        const allowedRetiredSettings = new Set([
+          "workers_ai_policy", "workers_ai_model", "allow_personal_models", "personal_model_limit",
+          "shared_service_enabled", "shared_daily_request_limit", "shared_daily_token_limit",
+          "allow_cross_source_fallback"
+        ]);
+        const keys = settingDelete[1].split(",").map(key => key.trim().replace(/^['"]|['"]$/g, ""));
+        assert.ok(keys.length > 0, "settings cleanup must name retired keys");
+        assert.equal(new Set(keys).size, keys.length, "settings cleanup must not repeat keys");
+        for (const key of keys) assert.ok(allowedRetiredSettings.has(key), "unapproved setting deletion: " + key);
+      }
+      const personalityDelete = sql.match(/^\s*DELETE\s+FROM\s+personalities\s+WHERE\s+(.+)$/i);
+      if (personalityDelete) {
+        // Legacy migrations 7/8 intentionally retire only known built-in IDs.
+        // A blanket ban on DELETE FROM personalities would reject this safe,
+        // tightly scoped cleanup while custom/user-created personalities remain.
+        const where = personalityDelete[1].trim();
+        const scoped = where.match(/^(?:personality_id\s+IN\s*\(([^)]+)\)\s+AND\s+is_builtin\s*=\s*1|is_builtin\s*=\s*1\s+AND\s+personality_id\s+IN\s*\(([^)]+)\))$/i);
+        assert.ok(scoped, "personality cleanup must be restricted to retired built-ins: " + sql);
+        const ids = (scoped[1] || scoped[2]).split(",").map(id => id.trim().replace(/^['"]|['"]$/g, ""));
+        assert.ok(ids.length > 0, "personality cleanup must name retired IDs");
+        assert.equal(new Set(ids).size, ids.length, "personality cleanup must not repeat IDs");
+        for (const id of ids) assert.ok(RETIRED_PERSONALITY_IDS.includes(id), "unapproved personality deletion: " + id);
+      }
+      assert.doesNotMatch(sql, /^\s*DELETE\s+FROM\s+(users|thread_messages|chats|custom_personalities|chat_logs|broadcasts|broadcast_recipients|blocked_users|failed_updates|processed_updates)\b/i);
     }
   }
 });
@@ -141,22 +206,59 @@ test("upgrading a legacy database preserves data and applies the new defaults", 
   assert.equal(settings.get("maintenance_enabled"), "0");
   assert.equal(settings.get("default_locale"), "en-US");
 
-  // Conversation history and encrypted credentials are untouched.
-  assert.equal(db.prepare("SELECT COUNT(*) AS c FROM thread_messages").get().c, 1);
-  const conn = db.prepare("SELECT * FROM ai_connections WHERE connection_id = 'c-legacy'").get();
-  assert.equal(conn.encrypted_key, "ciphertext");
-  assert.equal(conn.key_iv, "iv");
+  // User personalization and usage records survive the destructive retirement.
+  const preservedUser = db.prepare("SELECT preferred_name, custom_instructions, memory_data, usage_stats FROM users WHERE telegram_id = 101").get();
+  assert.equal(preservedUser.preferred_name, "Ali");
+  assert.equal(preservedUser.custom_instructions, "Prefer concise answers.");
+  assert.deepEqual(JSON.parse(preservedUser.memory_data), { preferred_name: "Ali", explicit_facts: ["Uses Linux"] });
+  assert.deepEqual(JSON.parse(preservedUser.usage_stats), { requests: 7 });
+  assert.equal(db.prepare("SELECT prompt FROM custom_personalities WHERE personality_id = ?").get("custom-ali").prompt, "Be concise and practical.");
+  assert.equal(db.prepare("SELECT reason FROM blocked_users WHERE telegram_id = ?").get(103).reason, "test block");
+  assert.equal(db.prepare("SELECT message FROM broadcasts WHERE broadcast_id = ?").get("b-legacy").message, "Maintenance notice");
+  assert.equal(db.prepare("SELECT status FROM broadcast_recipients WHERE broadcast_id = ? AND recipient_id = ?").get("b-legacy", 102).status, "sent");
+  assert.equal(db.prepare("SELECT content FROM chat_logs WHERE message_id = ?").get(42).content, "Welcome back, Ali.");
+  assert.equal(db.prepare("SELECT update_id FROM failed_updates WHERE update_id = ?").get(9001).update_id, 9001);
 
-  // If the routing migration backfills per-connection models, the legacy model
-  // must be present exactly once and never duplicate the connection.
-  const hasModels = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'connection_models'").get();
-  if (hasModels) {
-    const models = db.prepare("SELECT connection_id, model FROM connection_models WHERE connection_id = 'c-legacy'").all();
-    assert.equal(models.length, 1);
-    assert.equal(models[0].model, "model-fast");
+  // Core user, group, and conversation records are retained.
+  assert.equal(db.prepare("SELECT COUNT(*) AS c FROM users").get().c, 3);
+  assert.equal(db.prepare("SELECT COUNT(*) AS c FROM thread_messages").get().c, 1);
+  assert.equal(db.prepare("SELECT COUNT(*) AS c FROM chats").get().c, 3);
+
+  // Migration 23 removes retired columns from the core users table.
+  const userColumns = new Set(db.prepare("PRAGMA table_info(users)").all().map(column => column.name));
+  for (const column of [
+    "active_connection_id", "active_route_id", "fallback_enabled", "active_profile_id",
+    "last_inbound_at", "proactive_enabled", "proactive_threshold_hours",
+    "proactive_quiet_start", "proactive_quiet_end", "proactive_last_sent_at",
+    "proactive_episode_key"
+  ]) {
+    assert.equal(userColumns.has(column), false, "retired user column should be absent: " + column);
+  }
+
+  // The final migration removes provider credentials and retired feature state.
+  for (const table of [
+    "ai_connections", "connection_models", "connection_usage",
+    "routes", "route_models", "route_tokens",
+    "routing_profiles", "routing_profile_entries",
+    "reminders", "reminder_delivery_attempts",
+    "schedules", "schedule_delivery_attempts",
+    "proactive_delivery_attempts", "shared_service_usage", "voice_transcripts"
+  ]) {
+    const row = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+    assert.equal(row, undefined, "retired table should be absent: " + table);
   }
 });
 
+test("retired feature tables are not recreated after migration 23", () => {
+  const source = readFileSync(new URL("../src/db/schema.ts", import.meta.url), "utf8");
+  assert.match(source, /const retiredStateAlreadyCleaned = await isMigrationApplied\(env, 23\)/);
+  assert.match(source, /retiredBootstrap/);
+  assert.match(source, /statements = statements\.filter/);
+  assert.match(source, /activeAlters[\s\S]*?item\[0\] !== "ai_connections"/);
+  assert.match(source, /item\[0\] === "users" && retiredUserColumns\.has\(item\[1\]\)/);
+  assert.match(source, /"active_connection_id"[\s\S]*?"proactive_episode_key"/);
+  assert.match(source, /id: 23,[\s\S]*?DROP TABLE IF EXISTS ai_connections/);
+});
 test("applying the same pending migrations twice is rejected by migration tracking, not silently repeated", () => {
   const db = createLegacyDb();
   const pending = SCHEMA_MIGRATIONS.filter(m => m.id >= 10).sort((a, b) => a.id - b.id);
@@ -164,4 +266,82 @@ test("applying the same pending migrations twice is rejected by migration tracki
   // The runtime skips already-applied ids; INSERTing a duplicate id would fail,
   // proving the tracking table is the single source of truth.
   assert.throws(() => db.prepare("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)").run(pending[0].id, NOW));
+});
+
+test("admin private-chat listing works after retired columns are dropped", async () => {
+  const db = createLegacyDb();
+  seedLegacyData(db);
+  const pending = SCHEMA_MIGRATIONS.filter(m => m.id >= 10).sort((a, b) => a.id - b.id);
+  applyMigrations(db, pending);
+
+  const env = {
+    DB: {
+      prepare(sql) {
+        const statement = db.prepare(sql);
+        let values = [];
+        return {
+          bind(...args) { values = args; return this; },
+          async all() { return { results: statement.all(...values) }; }
+        };
+      }
+    }
+  };
+  const users = await listPrivateChatUsers(env, { limit: 20, offset: 0 });
+  assert.equal(users.length, 3);
+  assert.ok(users.every(user => typeof user.telegram_id === "number"));
+});
+
+test("ensureSchema does not recreate retired tables or columns after migration 23", async () => {
+  const db = createLegacyDb();
+  seedLegacyData(db);
+  const pending = SCHEMA_MIGRATIONS.filter(m => m.id >= 10).sort((a, b) => a.id - b.id);
+  applyMigrations(db, pending);
+
+  const d1 = {
+    prepare(sql) {
+      const statement = db.prepare(sql);
+      let values = [];
+      return {
+        bind(...args) { values = args; return this; },
+        async run() { return statement.run(...values); },
+        async first() { return statement.get(...values) || null; },
+        async all() { return { results: statement.all(...values) }; }
+      };
+    }
+  };
+  const env = {
+    DB: d1,
+    KV: {
+      async get() { return null; },
+      async put() {}
+    }
+  };
+
+  await ensureSchema(env);
+
+  const retiredTables = [
+    "ai_connections", "connection_models", "connection_usage",
+    "routes", "route_models", "route_tokens",
+    "routing_profiles", "routing_profile_entries",
+    "reminders", "reminder_delivery_attempts",
+    "schedules", "schedule_delivery_attempts",
+    "proactive_delivery_attempts", "shared_service_usage", "voice_transcripts"
+  ];
+  for (const table of retiredTables) {
+    const row = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+    assert.equal(row, undefined, "ensureSchema recreated retired table: " + table);
+  }
+
+  const userColumns = new Set(db.prepare("PRAGMA table_info(users)").all().map(column => column.name));
+  for (const column of [
+    "active_connection_id", "active_route_id", "fallback_enabled", "active_profile_id",
+    "last_inbound_at", "proactive_enabled", "proactive_threshold_hours",
+    "proactive_quiet_start", "proactive_quiet_end", "proactive_last_sent_at",
+    "proactive_episode_key"
+  ]) {
+    assert.equal(userColumns.has(column), false, "ensureSchema recreated retired user column: " + column);
+  }
+
+  assert.equal(db.prepare("SELECT COUNT(*) AS c FROM users").get().c, 3);
+  assert.equal(db.prepare("SELECT COUNT(*) AS c FROM thread_messages").get().c, 1);
 });

@@ -4,10 +4,8 @@ compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
 # One-click deploy: press the "Deploy to Cloudflare" button in the README.
-# The Cloudflare deploy flow prompts for TELEGRAM_BOT_TOKEN, TELEGRAM_SECRET,
-# ENCRYPTION_KEY and ADMIN_IDS, and provisions D1, KV and the queue
-# automatically. Nothing is generated or derived — all three secrets must be
-# provided by you (see the README for the openssl commands that generate them).
+# The Cloudflare deploy flow prompts for Telegram credentials, the central AI
+# API key/model, and admin IDs, and provisions D1, KV and the queue automatically.
 
 # Expose the Worker on https://nyra.<your-subdomain>.workers.dev so it works
 # without any custom domain.
@@ -22,16 +20,14 @@ workers_dev = true
 [placement]
 mode = "smart"
 
-# Static assets — the Mini App lives in ./public and is served by Cloudflare's
-# native asset layer (no inlined copy in the Worker bundle). Requests under
-# run_worker_first still go to the Worker first so the secret gate, the Telegram
-# webhook, /setup, the /status bootstrap page and the /api/* endpoints all stay
-# Worker-owned; everything else is served directly from ./public.
+# Static assets are retained for the standalone web admin panel under
+# ./public/admin-panel. The application root is intentionally not a Mini App;
+# only admin paths are routed through the Worker before asset serving.
 [assets]
 directory = "public"
 binding = "ASSETS"
 not_found_handling = "none"
-run_worker_first = ["/", "/index.html", "/app.js", "/styles.css", "/webhook", "/setup", "/status", "/api/*", "/admin-panel", "/admin-panel/*", "/admin-api/*"]
+run_worker_first = ["/", "/webhook", "/setup", "/status", "/admin-panel", "/admin-panel/*", "/admin-api/*"]
 
 [triggers]
 # Self-healing (part of the zero-manual-setup flow): the scheduled handler
@@ -40,22 +36,20 @@ run_worker_first = ["/", "/index.html", "/app.js", "/styles.css", "/webhook", "/
 # uses 1 of the 5 cron triggers allowed per account on the free plan.
 crons = ["*/5 * * * *"]
 
-# Secrets — ALL THREE ARE MANDATORY and must be set manually; nothing is derived
-# from the bot token. Set them with `wrangler secret put <NAME>` (never commit
-# them here) or as inputs to the Deploy to Cloudflare flow:
-#   TELEGRAM_BOT_TOKEN  — bot token from @BotFather
-#   TELEGRAM_SECRET     — webhook secret token; also the X-Setup-Secret header
-#                         for /setup. Generate: openssl rand -hex 32
-#   ENCRYPTION_KEY      — base64-encoded 32-byte master key that wraps every
-#                         stored API key. Generate: openssl rand -base64 32
-# The Worker refuses every request (HTTP 500 "Server misconfigured") when any of
-# the three is missing, blank, or malformed — see validateSecrets() in src/crypto.js.
+# Required secrets (never commit actual values):
+#   TELEGRAM_BOT_TOKEN — Telegram bot token from @BotFather
+#   TELEGRAM_SECRET — random webhook secret; also the X-Setup-Secret header for /setup
+#   AI_API_KEY — central OpenAI-compatible API credential
+# AI_MODEL and AI_BASE_URL are plain Worker variables in [vars].
 
 [vars]
 # REQUIRED — the second deploy-flow prompt: comma-separated numeric Telegram
 # user IDs with admin access (e.g. ADMIN_IDS = "123456789"). Non-numeric
 # entries are ignored; GET /status warns until at least one valid ID is set.
 ADMIN_IDS = "7141112393"
+AI_MODEL = ""
+AI_BASE_URL = "https://api.openai.com/v1"
+AI_SUPPORTS_VISION = "false"
 
 # D1 database — no database_id on purpose: Wrangler's automatic provisioning
 # creates the database on `wrangler deploy` and writes its ID back into this
@@ -71,11 +65,6 @@ database_id = "2173aded-26b0-45f0-98b9-71ee1b39a18d"
 [[kv_namespaces]]
 binding = "KV"
 id = "9e7579fee18e45a2865a1e4bf5495b99"
-
-# Workers AI — available on all plans (generous free tier)
-# Used exclusively for reaction classification (sentiment analysis)
-[ai]
-binding = "AI"
 
 # Queue: the Telegram webhook acks immediately and hands every update to this
 # queue. The consumer runs the full AI pipeline with the long wall time that

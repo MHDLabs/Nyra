@@ -8,7 +8,6 @@
   const userDetail = $("user-detail");
   const groupList = $("group-list");
   const groupDetail = $("group-detail");
-  const modelList = $("model-list");
   const statsEl = $("stats");
 
   function theme(name) {
@@ -66,13 +65,13 @@
   async function showApp() {
     loginView.hidden = true;
     appView.hidden = false;
-    await Promise.all([loadStats(), loadUsers(), loadGroups(), loadModels()]);
+    await Promise.all([loadStats(), loadUsers(), loadGroups()]);
   }
 
   async function loadStats() {
     try {
       const s = await api("/admin-api/stats");
-      statsEl.textContent = "کاربران " + s.users + " · لاگ " + s.chat_logs + " · مدل " + s.models;
+      statsEl.textContent = "کاربران " + s.users + " · لاگ " + s.chat_logs + " · مدل مرکزی " + (s.ai_model || "پیکربندی‌نشده");
     } catch (e) {
       statsEl.textContent = "";
     }
@@ -107,7 +106,6 @@
       return;
     }
     const u = data.user;
-    const conn = data.connection;
     const memory = data.memory || {};
     let msgs = { messages: [] };
     try { msgs = await api("/admin-api/users/" + id + "/messages?limit=80"); } catch (e) {}
@@ -120,9 +118,8 @@
       '<div class="kv">' +
       "<div>شخصیت</div><div>" + escapeHtml(u.personality_id || "—") + "</div>" +
       "<div>حافظه</div><div>" + escapeHtml(u.memory_mode || "—") + "</div>" +
-      "<div>مدل فعال</div><div>" + escapeHtml(conn ? (conn.label + " (" + conn.model + ")") : "—") + "</div>" +
       "<div>locale</div><div>" + escapeHtml(u.locale || u.language_code || "—") + "</div>" +
-      "<div>آخرین پیام</div><div>" + fmtTime(u.last_inbound_at) + "</div>" +
+      "<div>آخرین پیام</div><div>" + fmtTime(u.last_seen_at) + "</div>" +
       "<div>مسدود</div><div>" + (data.blocked ? "بله" : "خیر") + "</div>" +
       "</div>" +
       "<h3>مموری</h3><div class='memory-box'>" + escapeHtml(JSON.stringify(memory, null, 2)) + "</div>" +
@@ -196,24 +193,6 @@
     });
   }
 
-  async function loadModels() {
-    const data = await api("/admin-api/models");
-    modelList.innerHTML = "";
-    (data.models || []).forEach((m) => {
-      const el = document.createElement("div");
-      el.className = "card";
-      el.innerHTML =
-        "<h3>" + escapeHtml(m.label || m.connection_id) + "</h3>" +
-        "<div class='muted'>" + escapeHtml(m.model || "") + "</div>" +
-        "<div class='muted'>" + escapeHtml(m.provider || "") + "</div>" +
-        "<div style='margin-top:8px'>" +
-        (m.enabled ? "<span class='badge'>enabled</span>" : "<span class='badge off'>disabled</span>") +
-        (m.is_default ? " <span class='badge'>default</span>" : "") +
-        (m.is_global ? " <span class='badge'>global</span>" : "") +
-        "</div>";
-      modelList.appendChild(el);
-    });
-  }
 
   // Tabs (bottom nav — White Panel style)
   function activateTab(name) {

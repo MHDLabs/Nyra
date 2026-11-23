@@ -16,9 +16,11 @@ describe("queue ordering and telegram retries", () => {
     assert.match(src, /return await tg\(env, method, payload, currentAttempt \+ 1\)/);
   });
 
-  it("fast path takes a per-user lock before inline AI", () => {
+  it("queues every non-command AI message and keeps command/callback handling inline", () => {
     const src = readFileSync(new URL("../src/handlers/webhook.ts", import.meta.url), "utf8");
-    assert.match(src, /fastlock:/);
-    assert.match(src, /fall through to queue/);
-  });
+    assert.match(src, /env\.NYRA_QUEUE\.send/);
+    assert.match(src, /if \(isCommand\)/);
+    assert.match(src, /await safeCallback/);
+    assert.doesNotMatch(src, /fastlock:|isFastMessage/);
+  });;
 });

@@ -4,17 +4,15 @@
 // indirection.
 import type { CallbackQuery } from "../../types/telegram.js";
 import type { NyraEnv } from "../../types/env.js";
-import { RATE_LIMIT_ADMIN_PER_MIN, RATE_LIMIT_CALLBACK_PER_MIN, RATE_LIMIT_CONN_TEST_PER_MIN, MAX_PERSONALITY_PROMPT, MAX_PERSONALITY_DESC, MAX_CUSTOM_INSTRUCTIONS, OPENAI_DEFAULT_URL, ANTHROPIC_DEFAULT_URL, RETIRED_PERSONALITY_IDS } from "../config.js";
-import { now, truncate, escapeHtml, isAdmin, checkRateLimit } from "../utils.js";
+import { RATE_LIMIT_CALLBACK_PER_MIN, MAX_PERSONALITY_PROMPT, MAX_PERSONALITY_DESC, MAX_CUSTOM_INSTRUCTIONS, RETIRED_PERSONALITY_IDS } from "../config.js";
+import { now, escapeHtml, isAdmin, checkRateLimit } from "../utils.js";
 import { sendMessage, answerCallback, editMessage, buildInlineKeyboard } from "../telegram.js";
-import { getUser, getFlowState, setFlowState, clearFlowState, getUserConnectionById, deleteUserConnection, toggleUserConnection, setDefaultConnection, setConnectionFast, setConnectionVision, updateUserConnectionTest, setDefaultRoute, deleteRoute, setRouteDefaultModel, removeRouteModel, removeRouteToken, toggleRouteToken , blockUser, unblockUser} from "../db.js";
-import { humanizeError, testUserConnectionById } from "../ai.js";
-import { showSettingsMenu, showModelList, showPersonalitiesForUser, showMyPersonalities, showPersonalityDetail, showMemorySubmenu, showCustomInstructionsMenu, showUsage, showPrivacy, sourceSuffix, sourceBackButton, showMyConnections, resolveUserConnectionShortId, showRoutesList, showRouteDetail, resolveRouteShortId, resolveRouteItemShortId, showPersonalModelsMenu } from "../menus.js";
-import { startAddConnectionFlow, startEditConnectionFlow, flowPromptLabel, flowPromptApiKey, flowPromptReview, handleFlowSkip, flowFetchModels, showModelPage, flowSelectModel, finalizeConnectionFromFlow, startAddRouteFlow, startEditRouteFlow, routePromptBaseUrl, routePromptModels, routePromptReview, finalizeRouteFromFlow } from "../flows.js";
+import { getUser, getFlowState, setFlowState, clearFlowState, blockUser, unblockUser } from "../db.js";
+
+import { showSettingsMenu, showPersonalitiesForUser, showMyPersonalities, showPersonalityDetail, showMemorySubmenu, showCustomInstructionsMenu, showUsage, showPrivacy } from "../menus.js";
 import { showAdminMenu, showAdminUsers, showAdminGroups, showAdminBlocked, showAdminStats, showAdminStatus, showAdminReactions } from "../commands.js";
 import { setConfiguredReactions, clearConfiguredReactions } from "../reactions.js";
 import { handleOnboardingCallback } from "./onboarding.js";
-import { handleReminderCallback } from "../reminders/commands.js";
 
 type WorkerCtx = { waitUntil?(promise: Promise<unknown>): void };
 
@@ -37,142 +35,6 @@ export async function handleCallbackQuery(
   const parts = data.split(":");
   const namespace = parts[0];
 
-  if (namespace === "flow") {
-    await answerCallback(env, query.id, "");
-    const flowState = await getFlowState(env, userId);
-    const action = parts[1];
-    if (action === "cancel") { await clearFlowState(env, userId); await editMessage(env, chatId, messageId, "Cancelled."); return; }
-    if (!flowState) { await editMessage(env, chatId, messageId, "Setup flow expired. Start again."); return; }
-    if (action === "provider") {
-      const provider = parts[2];
-      if (provider !== "openai-compatible" && provider !== "anthropic") return;
-      flowState.provider = provider;
-      flowState.step = "label";
-      await setFlowState(env, userId, flowState);
-      await editMessage(env, chatId, messageId, "Provider: " + provider);
-      await flowPromptLabel(env, chatId, null);
-      return;
-    }
-    if (action === "use_default_url") {
-      flowState.base_url = flowState.provider === "anthropic" ? ANTHROPIC_DEFAULT_URL : OPENAI_DEFAULT_URL;
-      const isEdit = flowState.flowType === "edit";
-      flowState.step = isEdit ? "edit_api_key" : "api_key";
-      await setFlowState(env, userId, flowState);
-      await editMessage(env, chatId, messageId, "Using default URL.");
-      await flowPromptApiKey(env, chatId, isEdit);
-      return;
-    }
-    if (action === "skip") { await handleFlowSkip(env, chatId, userId, flowState); return; }
-    if (action === "vision") {
-      flowState.supports_vision = parts[2] === "1" ? 1 : 0;
-      flowState.step = flowState.flowType === "edit" ? "edit_confirm" : "confirm";
-      await setFlowState(env, userId, flowState);
-      await editMessage(env, chatId, messageId, flowState.supports_vision ? "Images enabled for this model." : "Text-only model.");
-      await flowPromptReview(env, chatId, flowState);
-      return;
-    }
-    if (action === "fetchmodels") { await flowFetchModels(env, chatId, userId, flowState); return; }
-    if (action === "manual") {
-      flowState.step = flowState.flowType === "edit" ? "edit_model" : "model";
-      await setFlowState(env, userId, flowState);
-      await sendMessage(env, chatId, "Send the model name.");
-      return;
-    }
-    if (action === "mp") {
-      const page = parseInt(parts[2], 10);
-      if (isNaN(page)) return;
-      await showModelPage(env, chatId, messageId, userId, flowState, page);
-      return;
-    }
-    if (action === "ms") {
-      const idx = parseInt(parts[2], 10);
-      if (isNaN(idx)) return;
-      await flowSelectModel(env, chatId, userId, flowState, idx);
-      return;
-    }
-    if (action === "save" || action === "retry_test") {
-      if (flowState.flowType === "add_route" || flowState.flowType === "edit_route") {
-        await editMessage(env, chatId, messageId, "Saving route...");
-        await finalizeRouteFromFlow(env, chatId, userId, flowState);
-        return;
-      }
-      if (!flowState.encrypted_key || !flowState.model) { await editMessage(env, chatId, messageId, "Flow state incomplete. Restart."); return; }
-      await editMessage(env, chatId, messageId, "Testing connection... This may take up to 10 seconds.");
-      await finalizeConnectionFromFlow(env, chatId, userId, flowState);
-      return;
-    }
-    if (action === "route_provider") {
-      const provider = parts[2];
-      if (provider !== "openai-compatible" && provider !== "anthropic") return;
-      flowState.provider = provider;
-      flowState.step = "route_base_url";
-      await setFlowState(env, userId, flowState);
-      await editMessage(env, chatId, messageId, "Provider: " + provider);
-      await routePromptBaseUrl(env, chatId, provider);
-      return;
-    }
-    if (action === "route_default_url") {
-      flowState.base_url = flowState.provider === "anthropic" ? ANTHROPIC_DEFAULT_URL : OPENAI_DEFAULT_URL;
-      flowState.step = "route_models";
-      await setFlowState(env, userId, flowState);
-      await editMessage(env, chatId, messageId, "Using default URL.");
-      await routePromptModels(env, chatId, null);
-      return;
-    }
-    if (action === "route_save") {
-      await editMessage(env, chatId, messageId, "Saving route...");
-      await finalizeRouteFromFlow(env, chatId, userId, flowState);
-      return;
-    }
-    if (action === "route_keep_tokens") {
-      flowState.step = "route_confirm";
-      await setFlowState(env, userId, flowState);
-      await routePromptReview(env, chatId, flowState);
-      return;
-    }
-    return;
-  }
-
-  if (namespace === "route") {
-    await answerCallback(env, query.id, "");
-    if (!isAdmin(env, userId)) { await editMessage(env, chatId, messageId, "Only administrators can manage routes.", buildInlineKeyboard([[{ text: "Back", callback_data: "set:menu" }]]), "HTML"); return; }
-    const action = parts[1];
-    if (action === "list") { await showRoutesList(env, chatId, messageId, userId, "set"); return; }
-    if (action === "add") { await startAddRouteFlow(env, chatId, userId, "set"); return; }
-    const routeId = await resolveRouteShortId(env, userId, parts[2]);
-    if (!routeId) { await editMessage(env, chatId, messageId, "Route not found.", buildInlineKeyboard([[{ text: "Back", callback_data: "route:list" }]]), "HTML"); return; }
-    if (action === "view") { await showRouteDetail(env, chatId, messageId, userId, routeId, "set"); return; }
-    if (action === "def") { await setDefaultRoute(env, userId, routeId); await showRoutesList(env, chatId, messageId, userId, "set"); return; }
-    if (action === "edit") { await startEditRouteFlow(env, chatId, userId, routeId, "set"); return; }
-    if (action === "del") { await deleteRoute(env, userId, routeId); await showRoutesList(env, chatId, messageId, userId, "set"); return; }
-    if (action === "madd") { await setFlowState(env, userId, { flowType: "route_add_model", routeId: routeId }); await sendMessage(env, chatId, "Send the model name to add."); return; }
-    if (action === "tadd") { await setFlowState(env, userId, { flowType: "route_add_token", routeId: routeId }); await sendMessage(env, chatId, "Send the API key to add.\n\n⚠ Your message will be deleted immediately after Nyra reads it."); return; }
-    const itemId = await resolveRouteItemShortId(env, routeId, parts[3]);
-    if (action === "mdef") { await setRouteDefaultModel(env, userId, routeId, itemId); await showRouteDetail(env, chatId, messageId, userId, routeId, "set"); return; }
-    if (action === "mdel") { await removeRouteModel(env, userId, routeId, itemId); await showRouteDetail(env, chatId, messageId, userId, routeId, "set"); return; }
-    if (action === "ttog") { await toggleRouteToken(env, userId, routeId, itemId); await showRouteDetail(env, chatId, messageId, userId, routeId, "set"); return; }
-    if (action === "tdel") { await removeRouteToken(env, userId, routeId, itemId); await showRouteDetail(env, chatId, messageId, userId, routeId, "set"); return; }
-    return;
-  }
-
-  if (namespace === "mypersonal") {
-    await answerCallback(env, query.id, "");
-    const action = parts[1];
-    if (action === "menu") { await showPersonalModelsMenu(env, chatId, messageId, userId); return; }
-    if (action === "add") { await startAddConnectionFlow(env, chatId, userId, "set"); return; }
-    const connId = await resolveUserConnectionShortId(env, userId, parts[2]);
-    if (!connId) { await editMessage(env, chatId, messageId, "Model not found.", buildInlineKeyboard([[{ text: "Back", callback_data: "set:menu" }]]), "HTML"); return; }
-    if (action === "edit") { await startEditConnectionFlow(env, chatId, userId, connId, "set"); return; }
-    if (action === "del") {
-      const conn = await getUserConnectionById(env, userId, connId);
-      if (conn && conn.is_global === 0) { await deleteUserConnection(env, userId, connId); }
-      await showPersonalModelsMenu(env, chatId, messageId, userId);
-      return;
-    }
-    return;
-  }
-
-
   if (namespace === "onboard") {
     const action = parts[1];
     const value = parts[2];
@@ -191,21 +53,12 @@ export async function handleCallbackQuery(
       await showSettingsMenu(env, chatId, messageId, userId);
       return;
     }
-    if (action === "model") { await showModelList(env, chatId, messageId, userId, 0); return; }
     if (action === "pers") { await showPersonalitiesForUser(env, chatId, messageId, userId); return; }
     if (action === "mem") { await showMemorySubmenu(env, chatId, messageId, userId); return; }
     if (action === "ci") { await showCustomInstructionsMenu(env, chatId, messageId, userId); return; }
     if (action === "usage") { await showUsage(env, chatId, messageId, userId); return; }
     if (action === "privacy") { await showPrivacy(env, chatId, messageId); return; }
     if (action === "close") { await editMessage(env, chatId, messageId, "Settings closed."); return; }
-    if (action === "fallback") {
-      const user = await getUser(env, userId);
-      const current = !user || user.fallback_enabled !== 0;
-      const newVal = current ? 0 : 1;
-      await env.DB.prepare("UPDATE users SET fallback_enabled = ?, updated_at = ? WHERE telegram_id = ?").bind(newVal, now(), userId).run();
-      await showSettingsMenu(env, chatId, messageId, userId);
-      return;
-    }
     return;
   }
 
@@ -305,65 +158,6 @@ export async function handleCallbackQuery(
     return;
   }
 
-  if (namespace === "myconn") {
-    await answerCallback(env, query.id, "");
-    if (!isAdmin(env, userId)) { await editMessage(env, chatId, messageId, "Only administrators can manage models.", buildInlineKeyboard([[{ text: "Back", callback_data: "set:menu" }]]), "HTML"); return; }
-    const action = parts[1];
-    const source = parseMyconnSource(action, parts);
-    if (action === "list") { await showMyConnections(env, chatId, messageId, userId, source); return; }
-    if (action === "add") { await startAddConnectionFlow(env, chatId, userId, source); return; }
-    const shortId = parts[2];
-    const connId = await resolveUserConnectionShortId(env, userId, shortId);
-    if (!connId) { await editMessage(env, chatId, messageId, "Connection not found.", buildInlineKeyboard([[sourceBackButton(source, false)]]), "HTML"); return; }
-    if (action === "tog") { await toggleUserConnection(env, userId, connId); await showMyConnections(env, chatId, messageId, userId, source); return; }
-    if (action === "fast") { await setConnectionFast(env, userId, connId); await showMyConnections(env, chatId, messageId, userId, source); return; }
-    if (action === "vision") { await setConnectionVision(env, userId, connId); await showMyConnections(env, chatId, messageId, userId, source); return; }
-    if (action === "del") { await deleteUserConnection(env, userId, connId); await showMyConnections(env, chatId, messageId, userId, source); return; }
-    if (action === "def") { await setDefaultConnection(env, userId, connId); await showMyConnections(env, chatId, messageId, userId, source); return; }
-    if (action === "edit") { await startEditConnectionFlow(env, chatId, userId, connId, source); return; }
-    if (action === "test") {
-      const testRateOk = await checkRateLimit(env, "conntest:" + userId, RATE_LIMIT_CONN_TEST_PER_MIN, 60);
-      if (!testRateOk) { await editMessage(env, chatId, messageId, "Too many tests."); return; }
-      const conn = await getUserConnectionById(env, userId, connId);
-      if (!conn) { await editMessage(env, chatId, messageId, "Connection not found."); return; }
-      await editMessage(env, chatId, messageId, "Testing...");
-      const test = await testUserConnectionById(env, userId, connId);
-      await updateUserConnectionTest(env, userId, connId, test.status, test.error, test.latency, test.diagnostic);
-      let text;
-      if (test.status === "success") {
-        text = "✅ <b>" + escapeHtml(conn.label) + "</b> test passed (" + (test.latency || "?") + " ms)";
-      } else {
-        text = "⚠ <b>" + escapeHtml(conn.label) + "</b> test failed\n<b>" + escapeHtml(test.status) + "</b>\n" + escapeHtml(humanizeError(test.status));
-        if (test.diagnostic) text += "\n\n<i>Diagnostic:</i>\n<code>" + escapeHtml(truncate(test.diagnostic, 400)) + "</code>";
-      }
-      await editMessage(env, chatId, messageId, text, buildInlineKeyboard([[{ text: "Back", callback_data: "myconn:list" + sourceSuffix(source) }]]), "HTML");
-      return;
-    }
-    return;
-  }
-
-  if (namespace === "model") {
-    await answerCallback(env, query.id, "");
-    const action = parts[1];
-    if (action === "pg") {
-      const page = parseInt(parts[2], 10);
-      if (isNaN(page)) return;
-      await showModelList(env, chatId, messageId, userId, page);
-      return;
-    }
-    if (action === "set") {
-      const shortId = parts[2];
-      const connId = await resolveUserConnectionShortId(env, userId, shortId);
-      if (!connId) { await editMessage(env, chatId, messageId, "That model is no longer available.", buildInlineKeyboard([[{ text: "Back", callback_data: "set:menu" }]]), "HTML"); return; }
-      const conn = await getUserConnectionById(env, userId, connId);
-      if (!conn || conn.enabled !== 1) { await editMessage(env, chatId, messageId, "That model is no longer available.", buildInlineKeyboard([[{ text: "Back", callback_data: "set:menu" }]]), "HTML"); return; }
-      await env.DB.prepare("UPDATE users SET active_connection_id = ?, updated_at = ? WHERE telegram_id = ?").bind(connId, now(), userId).run();
-      await editMessage(env, chatId, messageId, "✅ Active model set to <b>" + escapeHtml(conn.label) + "</b>.", buildInlineKeyboard([[{ text: "Back", callback_data: "set:menu" }]]), "HTML");
-      return;
-    }
-    return;
-  }
-
   if (namespace === "pers") {
     await answerCallback(env, query.id, "");
     const action = parts[1];
@@ -406,7 +200,6 @@ export async function handleCallbackQuery(
       else if (section === "groups") { await showAdminGroups(env, chatId, messageId); }
       else if (section === "blocked") { await showAdminBlocked(env, chatId, messageId); }
       else if (section === "stats") { await showAdminStats(env, chatId, messageId); }
-      else if (section === "conns") { await showMyConnections(env, chatId, messageId, userId, "adm"); }
       else if (section === "status") { await showAdminStatus(env, chatId, messageId); }
       else if (section === "triggers") {
         const { showAdminTriggers } = await import("../commands.js");
@@ -460,20 +253,6 @@ export async function handleCallbackQuery(
     return;
   }
 
-  // Reminder callbacks: time pickers, timezone, cancel/done/detail actions.
-  // handleReminderCallback answers the callback itself and returns true when
-  // the namespace was claimed, so we must not fall through to the generic ack.
-  if (namespace === "rmd") {
-    const handled = await handleReminderCallback(env, query, parts);
-    if (handled) return;
-  }
-
   await answerCallback(env, query.id, "");
 }
 
-export function parseMyconnSource(action, parts) {
-  if (action === "list" || action === "add") {
-    return parts[2] === "adm" ? "adm" : "set";
-  }
-  return parts[3] === "adm" ? "adm" : "set";
-}

@@ -1,33 +1,28 @@
 import type { NyraEnv } from "../../types/env.js";
-// OpenAI-compatible provider: /chat/completions (buffered and streamed) and
-// the paginated /models listing. Covers OpenAI itself, OpenRouter, Groq,
-// Together, Fireworks, DeepSeek, Ollama and anything else speaking the same
-// dialect.
-import { AI_TEST_TIMEOUT_MS, OPENAI_DEFAULT_URL, ANTHROPIC_VERSION, APP_TITLE } from "../config.js";
+// Single OpenAI-compatible endpoint: buffered and streamed /chat/completions.
+// The configured endpoint must implement the OpenAI chat-completions format.
+import { OPENAI_DEFAULT_URL, APP_TITLE } from "../config.js";
 import { isOpenRouterUrl, fetchWithTimeout } from "../utils.js";
-import { parseProviderError, normalizeError } from "./errors.js";
+import { parseProviderError } from "./errors.js";
 import { toOpenAIContent } from "./content.js";
 
-export function buildProviderHeaders(provider, apiKey, baseUrl) {
-  const headers: any = { "Content-Type": "application/json" };
-  if (provider === "anthropic") {
-    headers["x-api-key"] = apiKey;
-    headers["anthropic-version"] = ANTHROPIC_VERSION;
-  } else {
-    headers["Authorization"] = "Bearer " + apiKey;
-    if (isOpenRouterUrl(baseUrl)) {
-      headers["HTTP-Referer"] = "https://t.me";
-      headers["X-Title"] = APP_TITLE;
-    }
+export function buildProviderHeaders(apiKey, baseUrl) {
+  const headers: any = {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer " + apiKey
+  };
+  if (isOpenRouterUrl(baseUrl)) {
+    headers["HTTP-Referer"] = "https://t.me";
+    headers["X-Title"] = APP_TITLE;
   }
   return headers;
 }
 
-export async function generateOpenAICompatible(connection, apiKey, messages, options, timeoutMs) {
-  const baseUrl = (connection.base_url || OPENAI_DEFAULT_URL).replace(/\/+$/, "");
-  const model = connection.model;
+export async function generateOpenAICompatible(config, apiKey, messages, options, timeoutMs) {
+  const baseUrl = (config.base_url || OPENAI_DEFAULT_URL).replace(/\/+$/, "");
+  const model = config.model;
   const isReasoning = /(^|[-/])(o[1-9]|gpt-5)/i.test(model);
-  const allowImages = connection.supports_vision === 1;
+  const allowImages = config.supports_vision === 1;
   const finalMessages = messages.map(function (m: any) {
     const role = isReasoning && m.role === "system" ? "developer" : m.role;
     const mapped: any = { role: role, content: toOpenAIContent(m.content, allowImages) };
@@ -47,7 +42,7 @@ export async function generateOpenAICompatible(connection, apiKey, messages, opt
   }
   const resp = await fetchWithTimeout(baseUrl + "/chat/completions", {
     method: "POST",
-    headers: buildProviderHeaders("openai-compatible", apiKey, baseUrl),
+    headers: buildProviderHeaders(apiKey, baseUrl),
     body: JSON.stringify(body),
     cache: "no-store"
   }, timeoutMs);
@@ -94,11 +89,11 @@ export async function generateOpenAICompatible(connection, apiKey, messages, opt
   return { text: text, usage: usage };
 }
 
-export async function* streamOpenAICompatible(connection, apiKey, messages, options, signal) {
-  const baseUrl = (connection.base_url || OPENAI_DEFAULT_URL).replace(/\/+$/, "");
-  const model = connection.model;
+export async function* streamOpenAICompatible(config, apiKey, messages, options, signal) {
+  const baseUrl = (config.base_url || OPENAI_DEFAULT_URL).replace(/\/+$/, "");
+  const model = config.model;
   const isReasoning = /(^|[-/])(o[1-9]|gpt-5)/i.test(model);
-  const allowImages = connection.supports_vision === 1;
+  const allowImages = config.supports_vision === 1;
   const finalMessages = messages.map(function (m: any) {
     const role = isReasoning && m.role === "system" ? "developer" : m.role;
     const mapped: any = { role: role, content: toOpenAIContent(m.content, allowImages) };
@@ -118,7 +113,7 @@ export async function* streamOpenAICompatible(connection, apiKey, messages, opti
   }
   const resp = await fetch(baseUrl + "/chat/completions", {
     method: "POST",
-    headers: buildProviderHeaders("openai-compatible", apiKey, baseUrl),
+    headers: buildProviderHeaders(apiKey, baseUrl),
     body: JSON.stringify(body),
     signal: signal,
     cache: "no-store"
@@ -134,6 +129,7 @@ export async function* streamOpenAICompatible(connection, apiKey, messages, opti
   let buffer = "";
   const usage: any = { in: 0, out: 0, source: "unavailable" };
   let hasContent = false;
+  const streamedToolCalls = new Map<number, any>();
   try {
     while (true) {
       const chunk = await reader.read();
@@ -153,6 +149,20 @@ export async function* streamOpenAICompatible(connection, apiKey, messages, opti
           hasContent = true;
           yield { type: "text", text: choice.delta.content };
         }
+        const deltaCalls = choice && choice.delta && Array.isArray(choice.delta.tool_calls) ? choice.delta.tool_calls : [];
+        for (const deltaCall of deltaCalls) {
+          const index = Number.isInteger(deltaCall.index) ? deltaCall.index : streamedToolCalls.size;
+          const current = streamedToolCalls.get(index) || {
+            id: "",
+            type: "function",
+            function: { name: "", arguments: "" }
+          };
+          if (typeof deltaCall.id === "string") current.id = deltaCall.id;
+          if (deltaCall.type) current.type = deltaCall.type;
+          if (deltaCall.function && typeof deltaCall.function.name === "string") current.function.name += deltaCall.function.name;
+          if (deltaCall.function && typeof deltaCall.function.arguments === "string") current.function.arguments += deltaCall.function.arguments;
+          streamedToolCalls.set(index, current);
+        }
         if (parsed.usage) {
           usage.in = parsed.usage.prompt_tokens || usage.in || 0;
           usage.out = parsed.usage.completion_tokens || usage.out || 0;
@@ -165,7 +175,20 @@ export async function* streamOpenAICompatible(connection, apiKey, messages, opti
   } finally {
     try { reader.releaseLock(); } catch (e) {}
   }
-  if (!hasContent) {
+  const toolCalls = Array.from(streamedToolCalls.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(entry => entry[1]);
+  if (toolCalls.length) {
+    for (const call of toolCalls) {
+      if (!call.id || !call.function.name) {
+        const err: any = new Error("Malformed streamed tool call");
+        err.category = "unexpected_format";
+        throw err;
+      }
+    }
+    yield { type: "tool_calls", toolCalls: toolCalls };
+  }
+  if (!hasContent && toolCalls.length === 0) {
     const err: any = new Error("Empty response from provider");
     err.category = "empty_response";
     throw err;
@@ -173,45 +196,3 @@ export async function* streamOpenAICompatible(connection, apiKey, messages, opti
   yield { type: "usage", usage: usage };
 }
 
-export async function fetchOpenAICompatibleModels(base, headers) {
-  const all: any[] = [];
-  let afterId = null;
-  let pageCount = 0;
-  const maxPages = 5;
-  try {
-    while (pageCount < maxPages) {
-      let url = base + "/models";
-      if (afterId) url += "?after=" + encodeURIComponent(afterId);
-      const resp = await fetchWithTimeout(url, { method: "GET", headers: headers, cache: "no-store" }, AI_TEST_TIMEOUT_MS);
-      if (!resp.ok) {
-        if (pageCount === 0) {
-          const err = await parseProviderError(resp);
-          return { models: [], error: normalizeError(err, err.status), diagnostic: err.message };
-        }
-        break;
-      }
-      let data;
-      try { data = await resp.json(); }
-      catch (e) { break; }
-      let raw: any[] = [];
-      if (Array.isArray(data)) raw = data;
-      else if (data && Array.isArray(data.data)) raw = data.data;
-      else if (data && Array.isArray(data.models)) raw = data.models;
-      for (let i = 0; i < raw.length; i++) {
-        const item = raw[i];
-        if (typeof item === "string") all.push({ id: item });
-        else if (item && typeof item.id === "string") all.push({ id: item.id, name: item.name || item.id });
-      }
-      if (data && data.has_more === true && data.last_id) {
-        afterId = data.last_id;
-        pageCount++;
-      } else {
-        break;
-      }
-    }
-    all.sort(function (a, b) { return a.id.localeCompare(b.id); });
-    return { models: all, error: null };
-  } catch (err) {
-    return { models: [], error: normalizeError(err, err.status), diagnostic: err.message };
-  }
-}

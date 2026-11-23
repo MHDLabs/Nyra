@@ -4,7 +4,7 @@ import type { TelegramApiResponse } from "../types/telegram.js";
 type TgPayload = Record<string, any>;
 
 // Nyra — Telegram Bot API layer: calls, send/edit/delete, keyboards, typing heartbeat.
-import { TELEGRAM_API, MAX_TELEGRAM_LENGTH, TELEGRAM_TIMEOUT_MS, TELEGRAM_RETRY_MAX, TELEGRAM_RETRY_WAIT_CAP_MS, TYPING_HEARTBEAT_MS, WEBHOOK_RECHECK_MS, WEBHOOK_ATTEMPT_GUARD_MS, MINIAPP_DISABLED } from "./config.js";
+import { TELEGRAM_API, MAX_TELEGRAM_LENGTH, TELEGRAM_TIMEOUT_MS, TELEGRAM_RETRY_MAX, TELEGRAM_RETRY_WAIT_CAP_MS, TYPING_HEARTBEAT_MS, WEBHOOK_RECHECK_MS, WEBHOOK_ATTEMPT_GUARD_MS } from "./config.js";
 import { truncate, sleep, splitForTelegram, fetchWithTimeout } from "./utils.js";
 import { getWebhookSecret } from "./crypto.js";
 import { mdv2ToPlain } from "./markdown.js";
@@ -76,15 +76,14 @@ function enforceTextLimit(method, payload) {
 // The Worker registers its own Telegram webhook without any user step:
 //   * GET /status (the bootstrap page, hit by the post-deploy probe) learns the
 //     public origin from the incoming request and registers it; any other
-//     Worker-handled request (for example a Mini App /api/* call) learns it too;
+//     Worker-handled application requests learn it too;
 //   * the scheduled handler re-verifies the learned URL (Telegram-side
 //     deletions then self-heal within one cron interval).
 // KV state bounds Telegram API traffic: at most one verification per
 // WEBHOOK_ATTEMPT_GUARD_MS, full re-checks at most per WEBHOOK_RECHECK_MS.
 const WEBHOOK_STATE_KEY = "nyra:webhook:state";
-// Mini App menu button (the "Nyra" button next to the Telegram input field).
+// One-time cleanup marker for a legacy Telegram Mini App menu button.
 const MENU_BUTTON_STATE_KEY = "nyra:menu:button:state";
-const MENU_BUTTON_TEXT = "Nyra";
 
 async function readWebhookState(env) {
   try {
@@ -173,55 +172,30 @@ export async function ensureWebhook(env: NyraEnv, origin) {
   }
 }
 
-// Register the Mini App as the bot's chat menu button, so it is reachable from
-// the Telegram UI (the button next to the message input). Idempotent and
-// KV-gated: at most one setChatMenuButton per origin per WEBHOOK_RECHECK_MS.
-export async function ensureMenuButton(env: NyraEnv, origin) {
+// Restore the standard Telegram command menu once after removing the legacy WebApp.
+// Telegram keeps custom menu buttons remotely, so deleting local Mini App code
+// alone would leave users with a dead WebApp entry in their chat UI.
+export async function restoreDefaultMenuButton(env: NyraEnv) {
   try {
     if (!env.TELEGRAM_BOT_TOKEN) return { ok: false, status: "no_token" };
-    // Maintenance: remove the web_app menu button so users are not sent to an offline Mini App.
-    if (MINIAPP_DISABLED) {
-      let state: any = null;
-      try {
-        const raw = await env.KV.get(MENU_BUTTON_STATE_KEY);
-        state = raw ? JSON.parse(raw) : null;
-      } catch (err) { state = null; }
-      if (state && state.mode === "disabled" && state.setAt && Date.now() - state.setAt < WEBHOOK_RECHECK_MS) {
-        return { ok: true, status: "disabled" };
-      }
-      const result = await tg(env, "setChatMenuButton", {
-        menu_button: { type: "commands" }
-      });
-      if (result && result.ok) {
-        try { await env.KV.put(MENU_BUTTON_STATE_KEY, JSON.stringify({ mode: "disabled", url: null, setAt: Date.now() })); }
-        catch (err) {}
-        return { ok: true, status: "disabled" };
-      }
-      return { ok: false, status: "error", detail: (result && result.description) || "clear menu button failed" };
-    }
-    const target = origin ? origin.replace(/\/+$/, "") : null;
-    if (!target) return { ok: false, status: "awaiting_first_request" };
     let state: any = null;
     try {
       const raw = await env.KV.get(MENU_BUTTON_STATE_KEY);
       state = raw ? JSON.parse(raw) : null;
     } catch (err) { state = null; }
     const nowMs = Date.now();
-    if (state && state.mode !== "disabled" && state.url === target && state.setAt && nowMs - state.setAt < WEBHOOK_RECHECK_MS) {
-      return { ok: true, status: "cached" };
+    if (state && state.mode === "commands") {
+      return { ok: true, status: "already_default" };
     }
-    const result = await tg(env, "setChatMenuButton", {
-      menu_button: { type: "web_app", text: MENU_BUTTON_TEXT, web_app: { url: target } }
-    });
+    const result = await tg(env, "setChatMenuButton", { menu_button: { type: "commands" } });
     if (result && result.ok) {
-      try { await env.KV.put(MENU_BUTTON_STATE_KEY, JSON.stringify({ mode: "web_app", url: target, setAt: nowMs })); }
+      try { await env.KV.put(MENU_BUTTON_STATE_KEY, JSON.stringify({ mode: "commands", setAt: nowMs })); }
       catch (err) {}
-      console.log("Mini App menu button registered: " + target);
-      return { ok: true, status: "registered" };
+      return { ok: true, status: "default" };
     }
     return { ok: false, status: "error", detail: (result && result.description) || "setChatMenuButton failed" };
   } catch (err) {
-    console.error("ensureMenuButton failed:", err.message);
+    console.error("restoreDefaultMenuButton failed:", err.message);
     return { ok: false, status: "error", detail: err.message };
   }
 }
@@ -280,20 +254,34 @@ export function pickImageFile(message) {
   return null;
 }
 
+export function pickImageFiles(message, maxFiles = 10) {
+  if (!message || maxFiles <= 0) return [];
+  const albumIds = Array.isArray(message.album_photo_file_ids) ? message.album_photo_file_ids : [];
+  if (albumIds.length > 0) {
+    return Array.from(new Set(albumIds.filter((id) => typeof id === "string" && id.length > 0)))
+      .slice(0, Math.min(10, maxFiles))
+      .map((fileId) => ({ fileId, mediaType: "image/jpeg" }));
+  }
+  const single = pickImageFile(message);
+  return single ? [single] : [];
+}
+
 const TELEGRAM_FILE_MAX_BYTES = 10 * 1024 * 1024;
 
 /** Download a Telegram file by file_id and return base64 plus its media type. */
-export async function downloadTelegramFile(env: NyraEnv, fileId) {
+export async function downloadTelegramFile(env: NyraEnv, fileId, maxBytes = TELEGRAM_FILE_MAX_BYTES) {
   if (!env.TELEGRAM_BOT_TOKEN || !fileId) return null;
+  const limit = Math.max(1, Math.min(Number(maxBytes) || TELEGRAM_FILE_MAX_BYTES, TELEGRAM_FILE_MAX_BYTES));
   try {
     const info = await tg(env, "getFile", { file_id: fileId });
     if (!info || !info.ok || !info.result || !info.result.file_path) return null;
+    if (Number(info.result.file_size) > limit) return null;
     const filePath = info.result.file_path;
     const url = TELEGRAM_API + "/file/bot" + env.TELEGRAM_BOT_TOKEN + "/" + filePath;
     const resp = await fetchWithTimeout(url, { method: "GET", cache: "no-store" }, TELEGRAM_TIMEOUT_MS);
     if (!resp.ok) return null;
     const buf = await resp.arrayBuffer();
-    if (!buf || buf.byteLength === 0 || buf.byteLength > TELEGRAM_FILE_MAX_BYTES) return null;
+    if (!buf || buf.byteLength === 0 || buf.byteLength > limit) return null;
     const bytes = new Uint8Array(buf);
     let binary = "";
     const CHUNK = 0x8000;
@@ -504,8 +492,7 @@ export async function ensureBotCommands(env) {
     { command: "settings", description: "⚙️ Settings" },
     { command: "personality", description: "🎭 Personality" },
     { command: "memory", description: "🧠 Memory" },
-    { command: "usage", description: "📊 Usage" },
-    { command: "reminders", description: "⏰ Reminders" }
+    { command: "usage", description: "📊 Usage" }
   ];
   // Groups — only public commands
   const groupCmds = [

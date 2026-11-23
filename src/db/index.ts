@@ -1,90 +1,27 @@
-import type { NyraEnv } from "../../types/env.js";
-import type { TelegramId } from "../../types/domain.js";
-// Storage facade. `src/db.js` re-exports this verbatim, so no caller has to
-
-export {
-  isMaintenanceMode, setMaintenanceMode, getMaintenanceConfirmedBy
-} from "./maintenance.js";
-
-// know how storage is split internally.
-//
-//   schema.js       D1 schema bootstrap, versioned migrations, housekeeping
-//   identity.js     bot id / @username, KV-backed cache
-//   users.js        users, chats, threads, block list, conversation flow state
-//   usage.js        per-user token and request accounting
-//   connections.js  AI connection CRUD, health, active-connection resolution
-//   routes.js       route (multi-model x multi-token) CRUD, streaming plan
-//   settings.js     global app_settings toggles
-//   shared-service.js  admin-provided global connections: kill switch + quotas
-//   reminders.js    owner-scoped scheduled reminders, atomic claim/lease
-
+// Storage facade for retained Nyra capabilities.
 export {
   ensureSchema, maybeInitSchema, hasPendingMigrations
 } from "./schema.js";
 
-export {
-  getBotIdentity
-} from "./identity.js";
+export { getBotIdentity } from "./identity.js";
 
 export {
-  getUser, getUserStrict, upsertUser, touchLastInbound, getChat, recordGroupChatAndCheckAccess, isUserBlocked,
+  getUser, getUserStrict, upsertUser, getChat, recordGroupChatAndCheckAccess, isUserBlocked,
   saveThreadMessage, getThreadContext, isGroupTrigger, determineThreadId,
-  getFlowState, setFlowState, clearFlowState,
-  blockUser, unblockUser
+  getFlowState, setFlowState, clearFlowState, blockUser, unblockUser
 } from "./users.js";
 
 export {
   logChatMessage, listPrivateChatUsers, listGroupChats, listChatMessages, detectMediaType
 } from "./chat-logs.js";
 
-export {
-  trackConnectionUsage, getConnectionUsageStats, getAllConnectionUsageStats,
-  parseUsageStats, updateUsageStatsAsync
-} from "./usage.js";
+export { parseUsageStats, updateUsageStatsAsync } from "./usage.js";
 
 export {
-  getUserConnections, getEnabledUserConnections, getUserConnectionById,
-  saveGlobalConnection, updateUserConnection, deleteUserConnection,
-  toggleUserConnection, setDefaultConnection, setConnectionFast,
-  setConnectionVision, updateUserConnectionTest, recordConnectionFailure,
-  recordConnectionSuccess, resolveUserActiveConnection,
-  countPersonalConnections, getEnabledPersonalConnections, getEnabledSharedConnections,
-  listGlobalConnections, countEnabledSharedConnections, setGlobalConnectionEnabled
-} from "./connections.js";
-
-export {
-  getUserRoutes, getRouteById, getRouteModels, getRouteTokens,
-  getRouteBundle, buildRoutePlan, resolveUserActiveRoute, saveRoute,
-  updateRoute, deleteRoute, setDefaultRoute, addRouteModel, removeRouteModel,
-  setRouteDefaultModel, addRouteToken, removeRouteToken, toggleRouteToken,
-  recordRouteTokenFailure, recordRouteTokenSuccess
-} from "./routes.js";
-
-export {
-  getSetting, setSetting, isPersonalModelsAllowed, getPersonalModelLimit,
-  getWorkersAIPolicy, setWorkersAIPolicy, getWorkersAIModel, setWorkersAIModel, canUseWorkersAI,
-  isSharedServiceEnabled, getSharedRequestLimit, getSharedTokenLimit,
-  getSharedServiceSettings, setSharedServiceSettings
+  getSetting, setSetting, getTriggerConfig, setTriggerFlag, setTriggerWords,
+  isGuestModeEnabled, detectGuestContext
 } from "./settings.js";
 
 export {
-  todayUTC, isSharedConnection, getSharedQuotas, getSharedUsage,
-  reserveSharedRequest, recordSharedTokenUsage, getSharedUsageReport,
-  releaseSharedRequest, sharedQuotaMessage
-} from "./shared-service.js";
-
-export {
-  hydrateReminder, createReminder, getReminderById, listReminders, countReminders,
-  countActiveReminders, updateReminder, cancelReminder, completeReminder,
-  claimDueReminders, recoverStaleClaims, recordDeliveryAttempt, listDeliveryAttempts,
-  releaseReminderForRetry, failReminderPermanently, settleReminderDelivery,
-  setUserTimezone, getUserTimezone
-} from "./reminders.js";
-
-export {
-  listSchedules, createSchedule, updateSchedule, deleteSchedule, getScheduleById,
-  countUserSchedules, claimDueSchedules, settleScheduleDelivery, releaseScheduleForRetry,
-  computeNextRunAt, parseLocalTime, defaultTemplate,
-  SCHEDULE_KINDS, GENERATION_MODES, MAX_SCHEDULES_PER_USER
-} from "./schedules.js";
-
+  isMaintenanceMode, setMaintenanceMode, getMaintenanceConfirmedBy
+} from "./maintenance.js";

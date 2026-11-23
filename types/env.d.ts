@@ -8,7 +8,6 @@ declare namespace Cloudflare {
   interface Env {
     TELEGRAM_BOT_TOKEN?: string;
     TELEGRAM_SECRET?: string;
-    ENCRYPTION_KEY?: string;
     ADMIN_PANEL_PASSWORD?: string;
     NYRA_BUILD_SHA?: string;
     NYRA_BUILD_REF?: string;

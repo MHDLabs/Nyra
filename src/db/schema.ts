@@ -18,22 +18,14 @@ let migrationsSettled = false;
 // never user input.
 const RETIRED_PERSONALITY_SQL = RETIRED_PERSONALITY_IDS.map(function (id) { return "'" + id + "'"; }).join(",");
 
-async function seedWorkersAiCatalog(env: NyraEnv) {
-  const models = [
-    { id: "wai-llama-3.1-8b", model: "@cf/meta/llama-3.1-8b-instruct", label: "Workers AI · Llama 3.1 8B" },
-    { id: "wai-llama-3.3-70b", model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast", label: "Workers AI · Llama 3.3 70B Fast" },
-    { id: "wai-gemma-2-9b", model: "@cf/google/gemma-2-9b-it", label: "Workers AI · Gemma 2 9B" },
-    { id: "wai-qwen-1.5-7b", model: "@cf/qwen/qwen1.5-7b-chat-awq", label: "Workers AI · Qwen 1.5 7B" }
-  ];
-  const ts = Math.floor(Date.now() / 1000);
-  for (let i = 0; i < models.length; i++) {
-    const m = models[i];
-    try {
-      await env.DB.prepare(
-        "INSERT OR IGNORE INTO ai_connections (connection_id, telegram_id, label, provider, base_url, model, encrypted_key, key_iv, encryption_version, enabled, is_global, is_default, supports_tools, supports_vision, description, display_order, created_at, updated_at) " +
-        "VALUES (?, 0, ?, 'workers-ai', NULL, ?, 'workers-ai', 'workers-ai', 2, 0, 1, 0, 0, 0, 'Cloudflare Workers AI (free tier)', ?, ?, ?)"
-      ).bind(m.id, m.label, m.model, 200 + i, ts, ts).run();
-    } catch (e) { console.error("seed workers-ai", m.id, (e instanceof Error ? e.message : String(e))); }
+
+async function isMigrationApplied(env: NyraEnv, id: number) {
+  try {
+    const row = await env.DB.prepare("SELECT id FROM schema_migrations WHERE id = ?").bind(id).first();
+    return !!row;
+  } catch {
+    // A missing schema_migrations table means this is a fresh database.
+    return false;
   }
 }
 
@@ -48,7 +40,8 @@ export async function ensureSchema(env: NyraEnv) {
     catch (err) { console.error("Migration probe failed:", (err instanceof Error ? err.message : String(err))); return; }
     schemaReady = false;
   }
-  const statements = [
+  const retiredStateAlreadyCleaned = await isMigrationApplied(env, 23);
+  let statements = [
     "CREATE TABLE IF NOT EXISTS users (telegram_id INTEGER PRIMARY KEY, first_name TEXT, last_name TEXT, username TEXT, language_code TEXT, preferred_name TEXT, personality_id TEXT DEFAULT 'default', custom_instructions TEXT, memory_mode TEXT DEFAULT 'normal', memory_data TEXT DEFAULT '{}', usage_stats TEXT DEFAULT '{}', fallback_enabled INTEGER DEFAULT 1, msg_counter INTEGER DEFAULT 0, active_connection_id TEXT, active_route_id TEXT, locale TEXT, onboarding_state TEXT, onboarding_completed INTEGER DEFAULT 0, onboarding_version INTEGER DEFAULT 0, onboarding_started_at INTEGER, active_profile_id TEXT, created_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
     "CREATE INDEX IF NOT EXISTS idx_users_last_seen ON users(last_seen_at)",
     "CREATE TABLE IF NOT EXISTS chats (chat_id INTEGER PRIMARY KEY, chat_type TEXT NOT NULL, title TEXT, enabled INTEGER DEFAULT 1, mode TEXT DEFAULT 'enabled', disabled_by_admin INTEGER DEFAULT 0, summary TEXT DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
@@ -85,6 +78,29 @@ export async function ensureSchema(env: NyraEnv) {
     "CREATE INDEX IF NOT EXISTS idx_voice_transcripts_created ON voice_transcripts(created_at)",
     "CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)"
   ];
+  // These definitions exist only to bring older databases to a known legacy
+  // shape before migrations 1–23 run. Migration 23 removes the retired tables;
+  // once it is recorded, the bootstrap below deliberately skips recreating them.
+  const retiredSchemaPrefixes = [
+    "CREATE TABLE IF NOT EXISTS ai_connections",
+    "CREATE INDEX IF NOT EXISTS idx_conn_",
+    "CREATE TABLE IF NOT EXISTS routes",
+    "CREATE INDEX IF NOT EXISTS idx_routes_",
+    "CREATE TABLE IF NOT EXISTS route_models",
+    "CREATE INDEX IF NOT EXISTS idx_route_models_",
+    "CREATE TABLE IF NOT EXISTS route_tokens",
+    "CREATE INDEX IF NOT EXISTS idx_route_tokens_",
+    "CREATE TABLE IF NOT EXISTS shared_service_usage",
+    "CREATE INDEX IF NOT EXISTS idx_shared_usage_",
+    "CREATE TABLE IF NOT EXISTS voice_transcripts",
+    "CREATE INDEX IF NOT EXISTS idx_voice_transcripts_"
+  ];
+  const retiredBootstrap = statements.filter(function (sql) {
+    return retiredSchemaPrefixes.some(function (prefix) { return sql.indexOf(prefix) === 0; });
+  });
+  statements = statements.filter(function (sql) { return retiredBootstrap.indexOf(sql) === -1; });
+  if (!retiredStateAlreadyCleaned) statements.push.apply(statements, retiredBootstrap);
+
   const schemaErrors: string[] = [];
   for (let i = 0; i < statements.length; i++) {
     try { await env.DB.prepare(statements[i]).run(); }
@@ -107,10 +123,8 @@ export async function ensureSchema(env: NyraEnv) {
     // OpenAI-style image_url data URLs; otherwise images are described as text.
     ["ai_connections", "supports_vision", "INTEGER DEFAULT 0"],
     ["ai_connections", "supports_tools", "INTEGER DEFAULT 1"],
-    // IANA timezone of the user (e.g. "Asia/Tehran"). Reminder instants are
-    // always stored as UTC seconds; this column only preserves the user's
-    // wall-clock context so recurrences and confirmations can be rendered and
-    // recomputed in their own zone instead of the worker's.
+    // IANA timezone of the user (e.g. "Asia/Tehran"). Keep it for accurate
+    // wall-clock context in model prompts and locale-aware admin timestamps.
     ["users", "timezone", "TEXT"],
     // Locale + persistent onboarding state. Existing rows get their locale
     // backfilled from Telegram's language_code by migration 10; new rows start
@@ -120,8 +134,8 @@ export async function ensureSchema(env: NyraEnv) {
     ["users", "onboarding_completed", "INTEGER DEFAULT 0"],
     ["users", "onboarding_version", "INTEGER DEFAULT 0"],
     ["users", "onboarding_started_at", "INTEGER"],
-    // Selected routing profile (routing profiles are defined by the routing
-    // layer; this column only stores the user's choice).
+    // Retired user-selected routing profile. Kept in the legacy bootstrap
+    // shape only so migration 23 can remove it from existing installations.
     ["users", "active_profile_id", "TEXT"],
     // Reliable inbound activity (not throttled) and proactive check-in settings.
     // Proactive is opt-in; all defaults keep the feature off until the user enables it.
@@ -136,10 +150,22 @@ export async function ensureSchema(env: NyraEnv) {
     // never enabled (the old default). Migration 10 enables the latter only.
     ["chats", "disabled_by_admin", "INTEGER DEFAULT 0"]
   ];
-  for (let i = 0; i < alters.length; i++) {
-    const table = alters[i][0];
-    const column = alters[i][1];
-    const def = alters[i][2];
+  const retiredUserColumns = new Set([
+    "active_connection_id", "active_route_id", "fallback_enabled", "active_profile_id",
+    "last_inbound_at", "proactive_enabled", "proactive_threshold_hours",
+    "proactive_quiet_start", "proactive_quiet_end", "proactive_last_sent_at",
+    "proactive_episode_key"
+  ]);
+  const activeAlters = retiredStateAlreadyCleaned
+    ? alters.filter(function (item) {
+      return item[0] !== "ai_connections"
+        && !(item[0] === "users" && retiredUserColumns.has(item[1]));
+    })
+    : alters;
+  for (let i = 0; i < activeAlters.length; i++) {
+    const table = activeAlters[i][0];
+    const column = activeAlters[i][1];
+    const def = activeAlters[i][2];
     try {
       const cols = await env.DB.prepare("PRAGMA table_info(" + table + ")").all();
       const hasCol = (cols.results || []).some(function (c) { return c.name === column; });
@@ -155,7 +181,6 @@ export async function ensureSchema(env: NyraEnv) {
     throw new Error("Schema initialization failed: " + schemaErrors.join("; "));
   }
   await runPendingMigrations(env);
-  await seedWorkersAiCatalog(env);
   const ts = now();
   for (let i = 0; i < DEFAULT_PERSONALITIES.length; i++) {
     const p = DEFAULT_PERSONALITIES[i];
@@ -345,7 +370,57 @@ const CORE_MIGRATIONS = [
   }
 ];
 
-const MIGRATIONS = CORE_MIGRATIONS.concat(ROUTING_MIGRATIONS);
+const SIMPLIFICATION_MIGRATIONS = [
+  {
+    id: 23,
+    label: "remove retired provider credentials and feature-only persistence",
+    statements: [
+      // These tables contain only state belonging to explicitly removed features.
+      // Core conversations, profiles, usage statistics, broadcasts, groups, and
+      // admin records are deliberately not touched.
+      "DROP TABLE IF EXISTS routing_profile_entries",
+      "DROP TABLE IF EXISTS routing_profiles",
+      "DROP TABLE IF EXISTS connection_models",
+      "DROP TABLE IF EXISTS connection_usage",
+      "DROP TABLE IF EXISTS route_models",
+      "DROP TABLE IF EXISTS route_tokens",
+      "DROP TABLE IF EXISTS routes",
+      "DROP TABLE IF EXISTS ai_connections",
+      "DROP TABLE IF EXISTS shared_service_usage",
+      "DROP TABLE IF EXISTS voice_transcripts",
+      "DROP TABLE IF EXISTS reminder_delivery_attempts",
+      "DROP TABLE IF EXISTS reminders",
+      "DROP TABLE IF EXISTS proactive_delivery_attempts",
+      "DROP TABLE IF EXISTS schedule_delivery_attempts",
+      "DROP TABLE IF EXISTS schedules",
+      "DROP INDEX IF EXISTS idx_users_proactive_due",
+      "ALTER TABLE users DROP COLUMN active_connection_id",
+      "ALTER TABLE users DROP COLUMN active_route_id",
+      "ALTER TABLE users DROP COLUMN fallback_enabled",
+      "ALTER TABLE users DROP COLUMN active_profile_id",
+      "ALTER TABLE users DROP COLUMN last_inbound_at",
+      "ALTER TABLE users DROP COLUMN proactive_enabled",
+      "ALTER TABLE users DROP COLUMN proactive_threshold_hours",
+      "ALTER TABLE users DROP COLUMN proactive_quiet_start",
+      "ALTER TABLE users DROP COLUMN proactive_quiet_end",
+      "ALTER TABLE users DROP COLUMN proactive_last_sent_at",
+      "ALTER TABLE users DROP COLUMN proactive_episode_key",
+      "DELETE FROM app_settings WHERE key IN ('workers_ai_policy', 'workers_ai_model', 'allow_personal_models', 'personal_model_limit', 'shared_service_enabled', 'shared_daily_request_limit', 'shared_daily_token_limit', 'allow_cross_source_fallback')"
+    ]
+  },
+  {
+    id: 24,
+    label: "add durable Telegram photo-album staging",
+    statements: [
+      "CREATE TABLE IF NOT EXISTS telegram_media_groups (chat_id INTEGER NOT NULL, media_group_id TEXT NOT NULL, updated_at INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', lease_until INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(chat_id, media_group_id))",
+      "CREATE INDEX IF NOT EXISTS idx_telegram_media_groups_updated ON telegram_media_groups(updated_at)",
+      "CREATE TABLE IF NOT EXISTS telegram_media_group_items (chat_id INTEGER NOT NULL, media_group_id TEXT NOT NULL, message_id INTEGER NOT NULL, message_json TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(chat_id, media_group_id, message_id))",
+      "CREATE INDEX IF NOT EXISTS idx_telegram_media_group_items_created ON telegram_media_group_items(created_at)"
+    ]
+  }
+];
+
+const MIGRATIONS = CORE_MIGRATIONS.concat(ROUTING_MIGRATIONS, SIMPLIFICATION_MIGRATIONS);
 
 // Exposed for offline migration tests (test/migrations*.test.js), which apply
 // these statements to an in-memory SQLite database. Not used at runtime.
@@ -403,6 +478,9 @@ async function runMaintenance(env: NyraEnv) {
     await env.KV.put("nyra:purge:last_run", String(t), { expirationTtl: 172800 });
     await env.DB.prepare("DELETE FROM thread_messages WHERE created_at < ?").bind(now() - (CONTEXT_TTL * 2)).run();
     await env.DB.prepare("DELETE FROM processed_updates WHERE received_at < ?").bind(Math.floor(Date.now() / 1000) - UPDATE_DEDUP_RETENTION_S).run();
+    const staleAlbumsBefore = Date.now() - 24 * 60 * 60 * 1000;
+    await env.DB.prepare("DELETE FROM telegram_media_group_items WHERE created_at < ?").bind(staleAlbumsBefore).run();
+    await env.DB.prepare("DELETE FROM telegram_media_groups WHERE updated_at < ?").bind(staleAlbumsBefore).run();
     // chat_logs: keep 90 days (free D1 size). shortcut: fixed TTL; upgrade: per-chat caps
     await env.DB.prepare("DELETE FROM chat_logs WHERE created_at < ?").bind(now() - (90 * 24 * 60 * 60)).run();
     console.log("Maintenance purge completed.");

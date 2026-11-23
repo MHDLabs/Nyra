@@ -1,10 +1,10 @@
 # Nyra Simplification — Product Scope
 
 **Owner:** MHDLabs  
-**Status:** Approved direction; implementation pending  
+**Status:** Implementation completed on `refactor/full-product-simplification`; PR #132 is under final CI-backed review and has not been merged or deployed.  
 **Principle:** Keep it simple.
 
-This document is the source of truth for the next Nyra implementation phase. The documentation-preparation change does not itself remove runtime code. The coding agent must inspect the current TypeScript implementation and deliver the target behavior below without deploying to production.
+This document records the agreed product scope and the implementation delivered in PR #132. The working branch contains the runtime removals, central AI configuration, migration 23, tests, and documentation changes. It remains isolated from `main`; production deployment and live D1 migration are intentionally not part of this PR.
 
 ## 1. Product shape
 
@@ -19,10 +19,11 @@ Use Worker configuration, not per-user D1 records:
 - AI_BASE_URL — OpenAI-compatible API base URL. Use the official OpenAI endpoint as the default when omitted.
 - AI_MODEL — the single model identifier.
 - AI_API_KEY — Cloudflare Worker secret; never expose it to Telegram users, web UI, logs, or API responses.
+- AI_SUPPORTS_VISION — optional explicit operator opt-in; leave disabled unless the selected model and endpoint accept image input.
 
 All users share the operator's provider account and its costs. Keep normal per-user and per-chat rate limits and existing usage accounting where practical. Do not build another quota product to compensate for deleting BYOK.
 
-Only the OpenAI-compatible chat API is supported. One configured model is used for all requests. A bounded retry to that same endpoint for transient transport errors is acceptable; do not switch to another model, connection, provider, or route.
+Only the OpenAI-compatible chat API is supported. One configured model is used for all requests. A bounded retry against that same endpoint/model may disable unsupported tool calling for the current request; it must never switch to another model, connection, provider, or route.
 
 ## 2. Remove completely
 
@@ -94,7 +95,7 @@ Preserve all unrelated user and operational data, especially:
 
 Only retire data belonging to removed features: per-user provider credentials and connection metadata, routes, reminders, voice transcripts, Mini App-only settings, schedules, and proactive-check-in state.
 
-Use forward-only, versioned D1 migrations. Inspect foreign keys and every read/write path before dropping tables or columns. Do not reset D1, wipe unrelated records, or mutate production data as part of implementation. Add migration tests that prove preserved records remain intact.
+Use forward-only, versioned D1 migrations. Migration 23 removes only state owned by retired features: provider connection/credential and routing tables, reminder/voice/schedule/proactive tables, related user columns, and explicitly listed obsolete app settings. It leaves core users, conversations, messages, groups, memories, custom instructions, broadcasts, chat logs, admin records, and usage data untouched. The migration is tested against a legacy-shaped in-memory SQLite database and regression tests verify core row counts and the post-migration admin chat query. Historical migrations remain immutable. Before applying migration 23 to a live D1 database, take a backup and confirm that retaining historical BYOK credentials or reminder/voice/automation records is not required; those retired-feature records are intentionally deleted. No live database has been inspected or changed by this PR. The local SQLite migration tests and Wrangler dry-run do not prove remote D1 migration compatibility; validate migration 23 against a staging D1 copy before production rollout, because D1 is compatible with most but not all SQLite syntax.
 
 Remove ENCRYPTION_KEY only after proving that no retained data or runtime feature still depends on it. Remove Groq voice secrets and obsolete provider settings after their references are gone. Never log or print secret values.
 
@@ -106,6 +107,13 @@ Remove ENCRYPTION_KEY only after proving that no retained data or runtime featur
 - Avoid compatibility shims for features that are explicitly retired, except where a safe one-time data migration requires them.
 - Keep existing D1, Queue, and Telegram boundaries unless the code audit proves a component is no longer needed.
 - Keep the web admin panel isolated from Telegram chat logic and Mini App code.
+
+## Telegram input handling
+
+- Telegram text and source-code attachments are supported up to 512 KiB and 50,000 characters. Binary files and obvious secret-bearing filenames/extensions (such as `.env`, private keys and certificates) are rejected.
+- File bodies are added only to the active model request. Persistent thread history and admin chat logs retain a compact attachment summary rather than copying the full file contents into D1.
+- Photo albums are collected durably in D1 and processed as one AI turn, with a maximum of 10 images and a 16 MiB aggregate download budget. Image analysis remains subject to the operator's existing `AI_SUPPORTS_VISION` setting.
+- Album staging rows are cleaned after successful processing and stale rows are purged by scheduled maintenance. Queue retries and the failed-update replay path support internal album-flush messages.
 
 ## 6. Acceptance criteria
 

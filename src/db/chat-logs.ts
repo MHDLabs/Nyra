@@ -51,7 +51,7 @@ export async function listPrivateChatUsers(env: NyraEnv, options) {
     // LEFT JOIN pre-aggregate avoids 2 correlated subqueries per user row.
     const base =
       "SELECT u.telegram_id, u.first_name, u.last_name, u.username, u.preferred_name, u.locale, u.language_code, " +
-      "u.personality_id, u.memory_mode, u.active_connection_id, u.last_seen_at, u.last_inbound_at, u.created_at, u.msg_counter, " +
+      "u.personality_id, u.memory_mode, u.last_seen_at, u.created_at, u.msg_counter, " +
       "IFNULL(lg.log_count, 0) AS log_count, lg.last_log_at AS last_log_at " +
       "FROM users u LEFT JOIN (" +
       "SELECT chat_id, COUNT(*) AS log_count, MAX(created_at) AS last_log_at FROM chat_logs GROUP BY chat_id" +
@@ -66,7 +66,7 @@ export async function listPrivateChatUsers(env: NyraEnv, options) {
       return res.results || [];
     }
     const res = await env.DB.prepare(
-      base + "ORDER BY COALESCE(u.last_inbound_at, u.last_seen_at, 0) DESC LIMIT ? OFFSET ?"
+      base + "ORDER BY COALESCE(lg.last_log_at, u.last_seen_at, 0) DESC LIMIT ? OFFSET ?"
     ).bind(limit, offset).all();
     return res.results || [];
   } catch (err) {

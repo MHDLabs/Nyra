@@ -72,15 +72,15 @@ export function humanizeError(category) {
     quota_exceeded: "The provider account has a billing issue.",
     daily_quota_exceeded: "The daily free-tier quota for this model is exhausted. Try again tomorrow.",
     provider_overloaded: "The provider is temporarily overloaded. Try again in a few minutes.",
-    timeout: "The model did not respond in time after multiple attempts. Please try again.",
-    network_error: "Could not reach the provider after multiple attempts. Please try again.",
+    timeout: "The model did not respond in time. Please try again.",
+    network_error: "Could not reach the configured AI endpoint. Please try again.",
     server_error: "The provider returned a server error. Try again later.",
-    unexpected_format: "The model returned an unexpected response after multiple attempts. Please try again.",
-    empty_response: "The model returned an empty response after multiple attempts. Please try again.",
+    unexpected_format: "The model returned an unexpected response. Please try again.",
+    empty_response: "The model returned an empty response. Please try again.",
     invalid_base_url: "The Base URL is invalid.",
-    invalid_configuration: "The connection configuration is invalid.",
-    no_connection: "No AI model is available yet. Please ask an administrator to configure one.",
-    unknown: "The request failed after multiple attempts. Please try again."
+    invalid_configuration: "The central AI configuration is invalid.",
+    no_connection: "The AI service is not configured yet. Please contact the administrator.",
+    unknown: "The request failed. Please try again."
   };
   return map[category] || map.unknown;
 }

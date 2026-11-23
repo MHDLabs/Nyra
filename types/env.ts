@@ -7,12 +7,14 @@ export type NyraEnv = {
   KV: KVNamespace;
   NYRA_QUEUE: Queue;
   NYRA_DLQ: Queue;
-  AI: Ai;
+  AI_BASE_URL?: string;
+  AI_MODEL?: string;
+  AI_API_KEY?: string;
+  AI_SUPPORTS_VISION?: string;
   ASSETS: Fetcher;
   ADMIN_IDS?: string;
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_SECRET?: string;
-  ENCRYPTION_KEY?: string;
   ADMIN_PANEL_PASSWORD?: string;
   TELEGRAM_BOT_ID?: string;
   TELEGRAM_BOT_USERNAME?: string;

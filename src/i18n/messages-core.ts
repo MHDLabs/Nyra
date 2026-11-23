@@ -18,8 +18,6 @@ export const CORE_MESSAGES = {
     "common.retry": "Try again",
     "common.done": "Done",
     "common.unknown_command": "Unknown command. Use /help to see what Nyra can do.",
-    "common.open_miniapp": "Open the Mini App",
-    "common.miniapp_required": "This setting is managed in the Mini App. Open it from the menu button.",
     "common.admin_only": "This action is available to administrators only.",
     "common.not_available_in_group": "This action is only available in a private chat."
   },
@@ -39,8 +37,6 @@ export const CORE_MESSAGES = {
     "common.retry": "تلاش دوباره",
     "common.done": "انجام شد",
     "common.unknown_command": "دستور ناشناخته. با دستور /help ببینید نیرا چه کارهایی می‌تواند انجام دهد.",
-    "common.open_miniapp": "باز کردن مینی‌اپ",
-    "common.miniapp_required": "این تنظیم از مینی‌اپ انجام می‌شود. آن را از دکمه منو باز کنید.",
     "common.admin_only": "این بخش فقط برای مدیران است.",
     "common.not_available_in_group": "این کار فقط در چت خصوصی امکان‌پذیر است."
   }

@@ -2,7 +2,7 @@
   "name": "nyra",
   "private": true,
   "type": "module",
-  "description": "Nyra \u2014 Telegram AI bot on Cloudflare Workers",
+  "description": "Nyra — Telegram AI bot on Cloudflare Workers",
   "license": "MIT",
   "scripts": {
     "test": "tsx --test test/*.test.js",
@@ -20,16 +20,25 @@
   "cloudflare": {
     "bindings": {
       "TELEGRAM_BOT_TOKEN": {
-        "description": "REQUIRED \u2014 your Telegram bot token from @BotFather (format `123456789:AA...`). Get it: message @BotFather \u2192 /mybots \u2192 your bot \u2192 API Token."
+        "description": "REQUIRED — your Telegram bot token from @BotFather (format `123456789:AA...`). Get it: message @BotFather → /mybots → your bot → API Token."
       },
       "TELEGRAM_SECRET": {
-        "description": "REQUIRED \u2014 random webhook secret token, also used as the X-Setup-Secret header for /setup. Generate with `openssl rand -hex 32`. Never reuse the bot token."
-      },
-      "ENCRYPTION_KEY": {
-        "description": "REQUIRED \u2014 base64-encoded 32-byte master key that encrypts every stored API key. Generate with `openssl rand -base64 32`. Losing it makes existing stored keys unreadable."
+        "description": "REQUIRED — random webhook secret token, also used as the X-Setup-Secret header for /setup. Generate with `openssl rand -hex 32`. Never reuse the bot token."
       },
       "ADMIN_IDS": {
-        "description": "REQUIRED \u2014 numeric Telegram user ID(s) of the administrator(s), digits only (e.g. `123456789`), comma-separated for several. Find yours by sending any message to @userinfobot."
+        "description": "REQUIRED — numeric Telegram user ID(s) of the administrator(s), digits only (e.g. `123456789`), comma-separated for several. Find yours by sending any message to @userinfobot."
+      },
+      "AI_API_KEY": {
+        "description": "REQUIRED — central OpenAI-compatible API key, stored as a server-side Cloudflare Worker secret. Never expose it to users or browser clients."
+      },
+      "AI_MODEL": {
+        "description": "REQUIRED — one globally configured model identifier."
+      },
+      "AI_BASE_URL": {
+        "description": "Optional — OpenAI-compatible API base URL; defaults to https://api.openai.com/v1."
+      },
+      "AI_SUPPORTS_VISION": {
+        "description": "Optional — set to true only when the configured model and endpoint support image input."
       }
     }
   },

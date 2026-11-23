@@ -1,6 +1,5 @@
 /**
- * TypeScript smoke module for Task 2 tooling verification.
- * Production entry remains src/index.js until a later migration task.
+ * TypeScript smoke module for the current Cloudflare Worker binding surface.
  */
 
 /** Minimal binding surface used only to prove Cloudflare.Env merges. */
@@ -9,7 +8,6 @@ export type SmokeEnv = {
   KV: KVNamespace;
   NYRA_QUEUE: Queue;
   NYRA_DLQ: Queue;
-  AI: Ai;
   ASSETS: Fetcher;
 };
 
@@ -19,7 +17,6 @@ export function describeBindings(env: SmokeEnv): string[] {
   if (env.KV) names.push("KV");
   if (env.NYRA_QUEUE) names.push("NYRA_QUEUE");
   if (env.NYRA_DLQ) names.push("NYRA_DLQ");
-  if (env.AI) names.push("AI");
   if (env.ASSETS) names.push("ASSETS");
   return names;
 }

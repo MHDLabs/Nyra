@@ -1,11 +1,10 @@
 // @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
 // Nyra — memory: memory data handling, system prompts, personalities, consolidation.
-import { MEMORY_UPDATE_INTERVAL, MEMORY_MAX_CHARS, AI_PRIMARY_ATTEMPT_TIMEOUT_MS, CONSOLIDATE_USER_TRUNCATE, CONSOLIDATE_ASSISTANT_TRUNCATE, PERSIAN_STYLE_RULES_PROMPT, DEFAULT_PERSONALITIES, RETIRED_PERSONALITY_IDS } from "./config.js";
+import { MEMORY_UPDATE_INTERVAL, MEMORY_MAX_CHARS, AI_REQUEST_TIMEOUT_MS, CONSOLIDATE_USER_TRUNCATE, CONSOLIDATE_ASSISTANT_TRUNCATE, PERSIAN_STYLE_RULES_PROMPT, DEFAULT_PERSONALITIES, RETIRED_PERSONALITY_IDS } from "./config.js";
 import { localeForUser, normalizeLocale, t } from "./i18n/index.js";
 import { now, truncate, escapeHtml, sanitizeMemoryString, sanitizeMemoryFact, dedupeArray, filterSubstrings } from "./utils.js";
 import { getUser } from "./db/users.js";
-import { getEnabledUserConnections } from "./db/connections.js";
-import { generateWithConnection } from "./ai.js";
+import { generateCentralAI } from "./ai.js";
 
 
 // Default reply language follows the user's saved locale instead of a global
@@ -117,13 +116,13 @@ export function buildClockPrompt(user) {
   const hijri = formatInCalendar(nowDate, tz, "ar", "islamic") || formatInCalendar(nowDate, tz, "en", "islamic");
   const occasions = occasionHints(nowDate, tz);
   let block =
-    "Current date and time: (authoritative — use for today/tomorrow/schedules; never invent another clock)\n" +
+    "Current date and time: (authoritative — use for today/tomorrow/time-based planning; never invent another clock)\n" +
     "- Gregorian / wall clock: " + formatted + " (timezone: " + tz + ", UTC: " + iso + ")\n" +
     (jalali ? "- Solar Hijri (Jalali/Shamsi): " + jalali + "\n" : "") +
     (hijri ? "- Lunar Hijri (Qamari): " + hijri + "\n" : "");
   if (occasions.length) block += "- Occasion notes (approximate; confirm locally if critical): " + occasions.join("; ") + "\n";
   block +=
-    "Always use this clock for relative time (today, tomorrow, this week), deadlines, schedules, and any time-sensitive answer. " +
+    "Always use this clock for relative time (today, tomorrow, this week), deadlines, time-based plans, and any time-sensitive answer. " +
     "Do NOT print raw timestamps like [13 Nov, 21:31] or ISO strings in your reply unless the user explicitly asks for the time. " +
     "History lines may include internal time markers — never copy those markers into the answer.";
   return block;
@@ -361,16 +360,6 @@ export async function listAvailablePersonalities(env, userId) {
 
 export async function consolidateMemory(env, user, recentContext, exchange) {
   if (!user || user.memory_mode === "none") return;
-  const conns = await getEnabledUserConnections(env, user.telegram_id);
-  if (conns.length === 0) return;
-  let conn = null;
-  if (user.active_connection_id) {
-    for (let i = 0; i < conns.length; i++) if (conns[i].connection_id === user.active_connection_id) { conn = conns[i]; break; }
-  }
-  if (!conn) {
-    for (let i = 0; i < conns.length; i++) if (conns[i].is_global === 1 && conns[i].is_default === 1) { conn = conns[i]; break; }
-  }
-  if (!conn) conn = conns[0];
   const currentMemory = parseMemoryData(user.memory_data);
   const isGroup = !!user.is_group;
   const convo = recentContext.map(function (m) {
@@ -393,10 +382,10 @@ export async function consolidateMemory(env, user, recentContext, exchange) {
     : "";
   const prompt = "You maintain a compact structured memory about a single user. Return ONLY valid JSON with these fields:\n- preferred_name (string, if known)\n- communication_style (string, short)\n- interests (array of strings)\n- tools (array of strings)\n- projects (array of strings)\n- explicit_facts (array of strings)\n\nRules:\n" + modeInstructions + "\nKeep the total JSON under 2500 characters. Do not duplicate existing entries. Never include newlines inside string values. If nothing new, return the current memory unchanged." + groupRule + "\n\nCurrent memory (belongs to CURRENT_USER only):\n" + JSON.stringify(currentMemory) + "\n\nRecent conversation:\n" + convo + "\n\nLatest exchange:\nCURRENT_USER: " + userPart + "\nNyra: " + assistantPart + "\n\nReturn only the JSON object, nothing else.";
   try {
-    const result = await generateWithConnection(env, conn, [
+    const result = await generateCentralAI(env, [
       { role: "system", content: "You output only valid JSON. No markdown, no explanation." },
       { role: "user", content: prompt }
-    ], { max_tokens: 1000, temperature: 0.3 }, AI_PRIMARY_ATTEMPT_TIMEOUT_MS);
+    ], { max_tokens: 1000, temperature: 0.3 }, AI_REQUEST_TIMEOUT_MS);
     if (!result || !result.text) return;
     const cleaned = result.text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
     let parsed;
@@ -423,17 +412,6 @@ export async function consolidateMemory(env, user, recentContext, exchange) {
 
 export async function consolidateChatSummary(env, chat, userId, recentContext, exchange) {
   if (!chat) return;
-  const conns = await getEnabledUserConnections(env, userId);
-  if (conns.length === 0) return;
-  const user = await getUser(env, userId);
-  let conn = null;
-  if (user && user.active_connection_id) {
-    for (let i = 0; i < conns.length; i++) if (conns[i].connection_id === user.active_connection_id) { conn = conns[i]; break; }
-  }
-  if (!conn) {
-    for (let i = 0; i < conns.length; i++) if (conns[i].is_global === 1 && conns[i].is_default === 1) { conn = conns[i]; break; }
-  }
-  if (!conn) conn = conns[0];
   const currentSummary = chat.summary || "";
   const convo = recentContext.map(function (m) {
     if (m.role === "assistant") return "Nyra: " + m.content;
@@ -443,10 +421,10 @@ export async function consolidateChatSummary(env, chat, userId, recentContext, e
   const assistantPart = truncate(exchange.assistant, CONSOLIDATE_ASSISTANT_TRUNCATE);
   const prompt = "Summarize the chat context in 2-3 short sentences. Focus on the current topic, general tone, and any important ongoing discussion. This is shared group context, not any single person's profile. Output only the summary.\n\nCurrent summary: " + (currentSummary || "(none)") + "\n\nRecent conversation:\n" + convo + "\n\nLatest exchange:\nUser: " + userPart + "\nNyra: " + assistantPart;
   try {
-    const result = await generateWithConnection(env, conn, [
+    const result = await generateCentralAI(env, [
       { role: "system", content: "You output very short chat summaries. Be extremely concise." },
       { role: "user", content: prompt }
-    ], { max_tokens: 200, temperature: 0.3 }, AI_PRIMARY_ATTEMPT_TIMEOUT_MS);
+    ], { max_tokens: 200, temperature: 0.3 }, AI_REQUEST_TIMEOUT_MS);
     if (result && result.text && result.text.trim().length > 0 && result.text.trim() !== currentSummary) {
       await env.DB.prepare("UPDATE chats SET summary = ?, updated_at = ? WHERE chat_id = ?").bind(truncate(result.text.trim(), 500), now(), chat.chat_id).run();
     }

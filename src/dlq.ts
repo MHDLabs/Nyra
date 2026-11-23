@@ -26,6 +26,7 @@ type DlqEnv = {
 type QueueMessageLike = {
   body?: {
     update?: TelegramUpdateLike;
+    media_group_flush?: { chat_id?: number | string; media_group_id?: string };
   };
   attempts?: number;
   timestamp?: number;
@@ -100,6 +101,9 @@ export async function logFailedUpdate(env: DlqEnv, message: unknown): Promise<vo
   const msg = message && typeof message === "object" ? (message as Record<string, unknown>) : {};
   const body = msg.body && typeof msg.body === "object" ? (msg.body as Record<string, unknown>) : undefined;
   const update = body && body.update && typeof body.update === "object" ? (body.update as TelegramUpdateLike) : undefined;
+  const album = body && body.media_group_flush && typeof body.media_group_flush === "object"
+    ? body.media_group_flush as { chat_id?: number | string; media_group_id?: string }
+    : undefined;
   const updateId = (update && update.update_id) || 0;
   const userId =
     (update && update.message && update.message.from && update.message.from.id) ||
@@ -112,11 +116,12 @@ export async function logFailedUpdate(env: DlqEnv, message: unknown): Promise<vo
       update.callback_query.message &&
       update.callback_query.message.chat &&
       update.callback_query.message.chat.id) ||
+    (album && album.chat_id) ||
     0;
   const messageText =
     (update && update.message && update.message.text) ||
     (update && update.callback_query && update.callback_query.data) ||
-    "";
+    (album ? "[photo album " + String(album.media_group_id || "") + "]" : "");
   const attempts = typeof msg.attempts === "number" ? msg.attempts : 0;
   let timestamp: number = ts;
   if (typeof msg.timestamp === "number") timestamp = msg.timestamp;
@@ -124,7 +129,7 @@ export async function logFailedUpdate(env: DlqEnv, message: unknown): Promise<vo
   const errorInfo = JSON.stringify({
     attempts,
     timestamp,
-    body: update
+    body: update ? { update } : (album ? { media_group_flush: album } : null)
   }).substring(0, 10000);
 
   try {
@@ -205,11 +210,23 @@ export async function replayFailedUpdate(env: DlqEnv, id: unknown): Promise<bool
   if (record.replayed_at) return false;
 
   try {
-    const errorInfo = JSON.parse(record.error_info || "{}") as { body?: unknown };
-    const update = errorInfo.body;
-    if (!update || typeof update !== "object") return false;
+    const errorInfo = JSON.parse(record.error_info || "{}") as {
+      body?: { update?: unknown; media_group_flush?: unknown };
+    };
+    const body = errorInfo.body;
+    if (!body || typeof body !== "object") return false;
 
-    await env.NYRA_QUEUE.send({ update });
+    if (body.media_group_flush && typeof body.media_group_flush === "object") {
+      await env.NYRA_QUEUE.send({ media_group_flush: body.media_group_flush });
+    } else if (body.update && typeof body.update === "object") {
+      // Current records wrap Telegram updates so internal queue jobs can coexist.
+      await env.NYRA_QUEUE.send({ update: body.update });
+    } else if ("update_id" in body && typeof body.update_id === "number") {
+      // Backward compatibility: older DLQ rows stored the Telegram update directly.
+      await env.NYRA_QUEUE.send({ update: body });
+    } else {
+      return false;
+    }
     await env.DB.prepare("UPDATE failed_updates SET replayed_at = ? WHERE id = ?").bind(now(), recordId).run();
     return true;
   } catch (err) {

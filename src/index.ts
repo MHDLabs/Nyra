@@ -6,24 +6,22 @@ import type { NyraEnv } from "../types/env.js";
 // `export default` the Workers runtime looks for, the startup contract
 // (secrets + schema) and the HTTP route table that dispatches into the handlers.
 import { parseAdminIds } from "./utils.js";
-import { getMasterKey, validateSecrets } from "./crypto.js";
+import { validateSecrets } from "./crypto.js";
 import { ensureSchema, maybeInitSchema } from "./db.js";
-import { ensureWebhook, ensureMenuButton, ensureBotCommands } from "./telegram.js";
-import { routeMiniAppAPI } from "./miniapp.js";
+import { ensureWebhook, restoreDefaultMenuButton, ensureBotCommands } from "./telegram.js";
 import { routeAdminPanel } from "./admin-panel/router.js";
-import { MINIAPP_DISABLED } from "./config.js";
 import { logFailedUpdate, cleanupOldFailedUpdates } from "./dlq.js";
-import { pruneOldTranscripts } from "./voice/stt.js";
-import { deliverDueReminders } from "./reminders/deliver.js";
-import { deliverProactiveCheckins } from "./proactive.js";
-import { deliverDueSchedules } from "./schedules/deliver.js";
+import { processTelegramPhotoAlbum } from "./media-groups.js";
 import { handleWebhook, handleSetup, handleStatus, processMessage, handleCallbackQuery } from "./handlers/index.js";
 
 // A queue message's ordering group. Two updates only need to stay serialized
 // when they belong to the same conversation, so the chat id is the key and the
 // user id is the fallback for callback queries that carry no chat.
-function conversationKey(update) {
-  if (!update) return "none";
+function conversationKey(body) {
+  if (!body) return "none";
+  const album = body.media_group_flush;
+  if (album && album.chat_id !== undefined) return "c:" + album.chat_id;
+  const update = body.update || body;
   const msg = update.message || update.edited_message;
   if (msg && msg.chat && msg.chat.id !== undefined) return "c:" + msg.chat.id;
   const q = update.callback_query;
@@ -57,7 +55,22 @@ async function markHandled(env: NyraEnv, updateId) {
 async function processChain(env: NyraEnv, ctx, messages) {
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
-    const update = msg.body && msg.body.update;
+    const body = msg.body && (msg.body as any);
+    const albumFlush = body && body.media_group_flush;
+    if (albumFlush) {
+      try {
+        await processTelegramPhotoAlbum(env, ctx, albumFlush);
+        safeAck(msg);
+      } catch (err) {
+        console.error("Queued photo-album processing failed:", err.message);
+        safeRetry(msg);
+        for (let j = i + 1; j < messages.length; j++) safeRetry(messages[j]);
+        return;
+      }
+      continue;
+    }
+
+    const update = body && body.update;
     if (!update) { safeAck(msg); continue; }
     if (msg.attempts > 1 && (await alreadyHandled(env, update.update_id))) { safeAck(msg); continue; }
     try {
@@ -80,16 +93,12 @@ function safeRetry(msg) { try { msg.retry(); } catch (e) { console.error("queue 
 export default {
   async fetch(request: Request, env: NyraEnv, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
-    // All three secrets are mandatory manual entries. A deployment without any
-    // one of them crashes loudly on every request — no derivation, no fallback.
+    // Telegram webhook credentials are mandatory. AI credentials are checked when
+    // a model request is attempted, so the Worker can still serve health/admin routes.
     const missing = validateSecrets(env);
     if (missing) {
       console.error("Server misconfigured — missing required secret(s): " + missing.join(", "));
       return new Response("Server misconfigured: missing " + missing.join(", "), { status: 500 });
-    }
-    if (!getMasterKey(env)) {
-      console.error("ENCRYPTION_KEY is not a valid 32-byte base64 key.");
-      return new Response("Server misconfigured: invalid ENCRYPTION_KEY", { status: 500 });
     }
     // ADMIN_IDS is a required one-click-deploy input; enforce at runtime so a
     // missing/typo'd value is loud (status page + logs) instead of silent.
@@ -102,57 +111,23 @@ export default {
     // Setup endpoint (admin only)
     if (request.method === "GET" && url.pathname === "/setup") return await handleSetup(request, env);
 
-    // Public status / bootstrap page. The Mini App owns "/", so this is the
-    // endpoint that initialises the schema, learns the public origin and
-    // registers the Telegram webhook + Mini App menu button.
+    // Public status / bootstrap endpoint. It initialises the schema and registers
+    // the Telegram webhook; the web admin panel is routed separately below.
     if (request.method === "GET" && url.pathname === "/status") return await handleStatus(request, env, adminIds);
 
-    // Admin web panel (password-gated, separate from Mini App).
+    // Standalone password-gated web admin panel.
     if (url.pathname === "/admin-panel" || url.pathname.startsWith("/admin-panel/") || url.pathname.startsWith("/admin-api/")) {
       return (await routeAdminPanel(env, ctx, request, url.pathname)) as Response;
     }
 
-    // Every other Worker-handled request also teaches us the public origin, so
-    // the webhook bootstraps even when only the Mini App (/api/*) is used and
-    // /status is never opened. KV-gated inside ensureWebhook; never blocks.
+    // Any Worker-handled request can teach the public origin for webhook
+    // bootstrapping, even when /status has not been opened. This is KV-gated.
     ctx.waitUntil(ensureWebhook(env, url.origin).catch(function () {}));
 
-    // Mini App offline (temporary maintenance): block API + static shell.
-    if (MINIAPP_DISABLED) {
-      const path = url.pathname;
-      if (path.startsWith("/api/")) {
-        return new Response(JSON.stringify({
-          error: "maintenance",
-          message: "Mini App is temporarily offline. Use Telegram chat commands (/settings, /admin, /help)."
-        }), { status: 503, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } });
-      }
-      if (path === "/" || path === "/index.html" || path.startsWith("/app.") || path.startsWith("/styles") || path.endsWith(".css") || path.endsWith(".js") || path.endsWith(".svg") || path.endsWith(".png") || path.endsWith(".ico")) {
-        const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Nyra — Maintenance</title>
-<style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;background:#0b1220;color:#e8eefc;padding:24px;text-align:center}
-card{max-width:420px}h1{font-size:1.35rem;margin:0 0 8px}p{opacity:.85;line-height:1.5;margin:0 0 12px}code{background:#1a2438;padding:2px 6px;border-radius:6px}</style></head>
-<body><div><h1>Mini App temporarily offline</h1>
-<p>Nyra chat bot is running. Use Telegram commands:</p>
-<p><code>/start</code> · <code>/help</code> · <code>/settings</code> · <code>/admin</code></p>
-<p style="opacity:.6;font-size:.9rem">مینی‌اپ موقتاً غیرفعال است. از دستورات داخل چت استفاده کنید.</p>
-</div></body></html>`;
-        return new Response(html, { status: 503, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
-      }
-    }
-
-    // Mini App API endpoints
-    if (url.pathname.startsWith("/api/")) {
-      return await routeMiniAppAPI(env, ctx, request, url.pathname);
-    }
-
-    // Everything else (the Mini App: /, /index.html, /app.js, /styles.css) is
-    // served by Cloudflare's native asset layer from ./public — see [assets] in
-    // wrangler.toml. Reaching this point means no asset matched.
+    // No public Mini App or general-purpose asset shell is exposed by the Worker.
     return new Response("Not Found", { status: 404 });
   },
-  // Cron: self-healing — schema probe (KV-gated) plus webhook and Mini App
-  // menu-button re-verification of the learned URL (no-op until a request has
-  // taught the Worker its public origin). Runs every
-  // 5 minutes via [triggers] in wrangler.toml.
+  // Scheduled maintenance: schema probe, webhook verification, and queue hygiene.
   async scheduled(event: ScheduledEvent, env: NyraEnv, ctx: ExecutionContext): Promise<void> {
     const missing = validateSecrets(env);
     if (missing) {
@@ -164,26 +139,14 @@ card{max-width:420px}h1{font-size:1.35rem;margin:0 0 8px}p{opacity:.85;line-heig
     if (!res.ok && res.status !== "awaiting_first_request") {
       console.error("Webhook re-check failed [" + res.status + "]:" + (res.detail ? " " + res.detail : ""));
     }
-    const menu = await ensureMenuButton(env, null);
-    if (!menu.ok && menu.status !== "awaiting_first_request") {
-      console.error("Menu button re-check failed [" + menu.status + "]:" + (menu.detail ? " " + menu.detail : ""));
-    }
-    // Voice transcripts are pruned by their originating turn (see
-    // `pruneStaleTranscripts`); this is the safety net for rows whose thread was
-    // never visited again.
-    ctx.waitUntil(pruneOldTranscripts(env, 7 * 24 * 3600));
-    // Deliver due reminders (5-minute Cron precision — not second-level)
-    ctx.waitUntil(deliverDueReminders(env, Math.floor(Date.now() / 1000)));
-    // Proactive inactivity check-ins (opt-in; one per inactivity episode)
-    ctx.waitUntil(deliverProactiveCheckins(env, Math.floor(Date.now() / 1000)));
-    ctx.waitUntil(deliverDueSchedules(env, Math.floor(Date.now() / 1000)));
+    await restoreDefaultMenuButton(env);
     ctx.waitUntil(ensureBotCommands(env));
     // Clean up old failed updates (30 day retention)
     ctx.waitUntil(cleanupOldFailedUpdates(env, 30));
   },
   // Queue consumer: runs the full AI pipeline outside the webhook request lifecycle.
   // Consumer invocations allow long wall time (vs. the 30s post-response waitUntil cap),
-  // so streaming, fallbacks, consolidation and heartbeats are no longer cut off at 30s.
+  // so streaming, bounded same-model tool retries, consolidation and heartbeats are no longer cut off at 30s.
   async queue(batch: MessageBatch, env: NyraEnv, ctx: ExecutionContext): Promise<void> {
     const missing = validateSecrets(env);
     if (missing) {
@@ -220,7 +183,7 @@ card{max-width:420px}h1{font-size:1.35rem;margin:0 0 8px}p{opacity:.85;line-heig
     const groups = new Map<string, any[]>();
     for (let i = 0; i < batch.messages.length; i++) {
       const msg = batch.messages[i];
-      const key = conversationKey(msg.body && (msg.body as any).update);
+      const key = conversationKey(msg.body && (msg.body as any));
       const list = groups.get(key);
       if (list) list.push(msg);
       else groups.set(key, [msg]);

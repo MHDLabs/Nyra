@@ -1,43 +1,17 @@
 // @ts-nocheck — progressive domain typing (Task 7); refine in Task 10
-// Nyra — commands: full in-chat control (settings, memory, admin) + reminders.
-// Mini App remains available, but nothing requires it.
-import { RATE_LIMIT_ADMIN_PER_MIN, MAX_PERSONALITIES, MAX_PERSONALITY_PROMPT, MAX_PERSONALITY_DESC, ONBOARDING_MAX_NAME_LENGTH, MINIAPP_DISABLED } from "./config.js";
+// Nyra — Telegram commands for settings, memory, personalities, and administration.
+import { RATE_LIMIT_ADMIN_PER_MIN, MAX_PERSONALITIES, MAX_PERSONALITY_PROMPT, MAX_PERSONALITY_DESC, ONBOARDING_MAX_NAME_LENGTH } from "./config.js";
 import { now, escapeHtml, generateShortId, isAdmin, checkRateLimit } from "./utils.js";
-import { getMasterKey } from "./crypto.js";
 import { sendMessage, editMessage, buildInlineKeyboard, buildMainReplyKeyboard } from "./telegram.js";
-import { getUser, upsertUser, resolveUserActiveConnection } from "./db.js";
+import { getUser, upsertUser } from "./db.js";
 import { parseMemoryData, serializeMemoryData, formatMemoryForUser } from "./memory.js";
 import { t } from "./i18n/index.js";
 import { startOnboarding, getOnboardingState } from "./handlers/onboarding.js";
 import { isMaintenanceMode } from "./db/maintenance.js";
 import { getTriggerConfig, setTriggerFlag, setTriggerWords } from "./db/settings.js";
 import { getConfiguredReactions, getAllowedReactions } from "./reactions.js";
-import { showNoConnectionMessage, showSettingsMenu, showPersonalitiesForUser, showUsage } from "./menus.js";
+import { showSettingsMenu, showPersonalitiesForUser, showUsage } from "./menus.js";
 import { createBroadcast, startBroadcast, listBroadcasts } from "./broadcast.js";
-import {
-  handleRemindCommand,
-  handleRemindersCommand,
-  handleReminderDetailCommand,
-  handleEditReminderCommand,
-  handleCancelReminderCommand,
-  handleDoneReminderCommand,
-  handleTimezoneCommand
-} from "./reminders/commands.js";
-import { detectLang } from "./reminders/parse.js";
-
-function publicOrigin(env) {
-  if (env.PUBLIC_ORIGIN) return String(env.PUBLIC_ORIGIN).replace(/\/+$/, "");
-  if (env.MINIAPP_URL) return String(env.MINIAPP_URL).replace(/\/+$/, "");
-  return null;
-}
-
-function miniAppKeyboard(env, locale) {
-  if (MINIAPP_DISABLED) return undefined;
-  const origin = publicOrigin(env);
-  if (!origin) return undefined;
-  return buildInlineKeyboard([[{ text: t(locale, "commands.miniapp.open") || "Open Mini App", web_app: { url: origin + "/" } }]]);
-}
-
 async function handleStartCommand(env, chatId, userId, from, isGroup, startPayload) {
   if (isGroup) {
     const user = await getUser(env, userId);
@@ -56,14 +30,11 @@ async function handleStartCommand(env, chatId, userId, from, isGroup, startPaylo
   const locale = user.locale || "en-US";
   const name = user.preferred_name || user.first_name || "";
   let msg = name ? t(locale, "commands.start.greeting", { name }) : t(locale, "commands.start.greeting_anon");
-  try {
-    const resolved = await resolveUserActiveConnection(env, user);
-    if (resolved && resolved.connection) {
-      msg += "\n\n" + (locale.startsWith("fa")
-        ? ("مدل فعال: <b>" + escapeHtml(resolved.connection.label) + "</b>")
-        : ("Active model: <b>" + escapeHtml(resolved.connection.label) + "</b>"));
-    }
-  } catch (err) {}
+  if (env.AI_MODEL) {
+    msg += "\n\n" + (locale.startsWith("fa")
+      ? ("مدل مرکزی: <b>" + escapeHtml(env.AI_MODEL) + "</b>")
+      : ("Central model: <b>" + escapeHtml(env.AI_MODEL) + "</b>"));
+  }
 
   // Deep-link payload from /start <payload> (referral, campaign, etc.)
   const payload = String(startPayload || "").trim().slice(0, 64);
@@ -84,68 +55,30 @@ async function handleHelpCommand(env, chatId, userId, isGroup) {
   const locale = user?.locale || "en-US";
   const fa = locale.startsWith("fa");
   if (isGroup) {
-    const lines = fa ? [
-      "<b>📋 دستورات گروه</b>",
-      "",
-      "/start — معرفی کوتاه",
-      "/help — همین راهنما",
-      "",
-      "🔒 تنظیمات، شخصیت، حافظه و یادآورها فقط در گفتگوی <b>خصوصی</b> با نیرا."
-    ] : [
-      "<b>📋 Group commands</b>",
-      "",
-      "/start — short intro",
-      "/help — this guide",
-      "",
-      "🔒 Settings, personality, memory and reminders only in a <b>private</b> chat with Nyra."
-    ];
+    const lines = fa
+      ? ["<b>📋 دستورات گروه</b>", "", "/start — معرفی کوتاه", "/help — همین راهنما",
+         "", "🔒 تنظیمات، شخصیت و حافظه فقط در گفتگوی <b>خصوصی</b> با نیرا."]
+      : ["<b>📋 Group commands</b>", "", "/start — short intro", "/help — this guide",
+         "", "🔒 Settings, personality and memory only in a <b>private</b> chat with Nyra."];
     await sendMessage(env, chatId, lines.join("\n"), { parse_mode: "HTML" });
     return;
   }
-  const lines = fa ? [
-    "<b>📋 دستورات</b>",
-    "",
-    "/start — سلام و منوی سریع",
-    "/help — همین راهنما",
-    "/settings — ⚙️ تنظیمات",
-    "/personality — 🎭 انتخاب شخصیت",
-    "/memory — 🧠 مشاهده حافظه",
-    "/forget [موضوع] — پاک کردن حافظه یا یک موضوع",
-    "/remember <متن> — ذخیره در حافظه",
-    "/setname <نام> — نام نمایشی",
-    "/usage — آمار مصرف",
-    "/newpersonality — شخصیت سفارشی",
-    "",
-    "<b>⏰ یادآورها</b>",
-    "/remind — یادآور جدید",
-    "/reminders — فهرست یادآورها",
-    "/timezone — منطقه زمانی"
-  ] : [
-    "<b>📋 Commands</b>",
-    "",
-    "/start — greeting and quick menu",
-    "/help — this guide",
-    "/settings — ⚙️ Settings",
-    "/personality — 🎭 Personality",
-    "/memory — 🧠 Memory",
-    "/forget [topic] — clear memory or one topic",
-    "/remember <text> — save to memory",
-    "/setname <name> — display name",
-    "/usage — usage stats",
-    "/newpersonality — custom personality",
-    "",
-    "<b>⏰ Reminders</b>",
-    "/remind — new reminder",
-    "/reminders — list reminders",
-    "/timezone — time zone"
-  ];
+  const lines = fa
+    ? ["<b>📋 دستورات</b>", "", "/start — سلام و منوی سریع", "/help — همین راهنما",
+       "/settings — ⚙️ تنظیمات", "/personality — 🎭 انتخاب شخصیت",
+       "/memory — 🧠 مشاهده حافظه", "/forget [موضوع] — پاک کردن حافظه یا یک موضوع",
+       "/remember <متن> — ذخیره در حافظه", "/setname <نام> — نام نمایشی",
+       "/usage — آمار مصرف", "/newpersonality — شخصیت سفارشی"]
+    : ["<b>📋 Commands</b>", "", "/start — greeting and quick menu", "/help — this guide",
+       "/settings — ⚙️ Settings", "/personality — 🎭 Personality",
+       "/memory — 🧠 Memory", "/forget [topic] — clear memory or one topic",
+       "/remember <text> — save to memory", "/setname <name> — display name",
+       "/usage — usage stats", "/newpersonality — custom personality"];
   await sendMessage(env, chatId, lines.join("\n"), {
     parse_mode: "HTML",
     reply_markup: buildMainReplyKeyboard(locale)
   });
 }
-
-
 
 async function handleAdminCommand(env, chatId, userId, isGroup) {
   const user = await getUser(env, userId);
@@ -328,9 +261,7 @@ async function privateOnlyNotice(env, chatId, userId) {
 const GROUP_COMMANDS = new Set(["start", "help"]);
 const PRIVATE_ONLY_COMMANDS = new Set([
   "settings", "personality", "memory", "forget", "remember", "setname",
-  "usage", "newpersonality", "admin", "stats", "broadcast",
-  "remind", "reminders", "reminder", "editreminder", "cancelreminder",
-  "donereminder", "timezone", "tz"
+  "usage", "newpersonality", "admin", "stats", "broadcast"
 ]);
 
 export async function handleUserCommand(env, ctx, command, args, message, from, chat) {
@@ -421,31 +352,7 @@ export async function handleUserCommand(env, ctx, command, args, message, from, 
     return;
   }
 
-  // Reminders
-  const reminderCommands = new Set([
-    "remind", "reminders", "reminder",
-    "editreminder", "cancelreminder", "donereminder",
-    "timezone", "tz"
-  ]);
-  if (reminderCommands.has(cmd)) {
-    if (isGroup) {
-      const user = await getUser(env, userId);
-      const locale = user?.locale || "en-US";
-      await sendMessage(env, chatId, t(locale, "commands.reminders.private_only") ||
-        "Reminder commands work in private chat with Nyra.");
-      return;
-    }
-    const detected = detectLang(String(args || "") + " " + (message.text || ""));
-    const userRow = await getUser(env, userId);
-    const lang = detected || ((userRow?.locale || "en").startsWith("fa") ? "fa" : "en");
-    if (cmd === "remind") return await handleRemindCommand(env, chatId, userId, args, lang);
-    if (cmd === "reminders") return await handleRemindersCommand(env, chatId, userId, args, lang);
-    if (cmd === "reminder") return await handleReminderDetailCommand(env, chatId, userId, args, lang);
-    if (cmd === "editreminder") return await handleEditReminderCommand(env, chatId, userId, args, lang);
-    if (cmd === "cancelreminder") return await handleCancelReminderCommand(env, chatId, userId, args, lang);
-    if (cmd === "donereminder") return await handleDoneReminderCommand(env, chatId, userId, args, lang);
-    if (cmd === "timezone" || cmd === "tz") return await handleTimezoneCommand(env, chatId, userId, args, lang);
-  }
+
 
   if (cmd === "settriggers") {
     if (!isAdmin(env, userId)) {
@@ -485,7 +392,7 @@ export async function showAdminMenu(env, chatId, messageId) {
   const rows = [
     [{ text: fa ? "👥 کاربران" : "👥 Users", callback_data: "adm:users" }, { text: fa ? "💬 گروه‌ها" : "💬 Groups", callback_data: "adm:groups" }],
     [{ text: fa ? "🚫 مسدودها" : "🚫 Blocked", callback_data: "adm:blocked" }, { text: fa ? "📊 آمار" : "📊 Stats", callback_data: "adm:stats" }],
-    [{ text: fa ? "🤖 مدل‌ها" : "🤖 Models", callback_data: "adm:conns" }, { text: fa ? "💚 وضعیت" : "💚 Status", callback_data: "adm:status" }],
+    [{ text: fa ? "💚 وضعیت" : "💚 Status", callback_data: "adm:status" }],
     [{ text: fa ? "😀 واکنش‌ها" : "😀 Reactions", callback_data: "adm:react" }, { text: fa ? "⚠️ نگهداری" : "⚠️ Maintenance", callback_data: "adm:maint" }],
     [{ text: fa ? "🔔 تریگرها" : "🔔 Triggers", callback_data: "adm:triggers" }],
     [{ text: fa ? "بستن" : "Close", callback_data: "adm:close" }]
@@ -565,17 +472,19 @@ export async function showAdminBlocked(env, chatId, messageId) {
 }
 
 export async function showAdminStats(env, chatId, messageId) {
-  let userCount = 0, connCount = 0, enabledCount = 0, blockedCount = 0, chatCount = 0, globalCount = 0, threadCount = 0;
+  let userCount = 0, blockedCount = 0, chatCount = 0, threadCount = 0;
   try {
     const u = await env.DB.prepare("SELECT COUNT(*) AS c FROM users").first(); userCount = u ? u.c : 0;
-    const c = await env.DB.prepare("SELECT COUNT(*) AS c FROM ai_connections").first(); connCount = c ? c.c : 0;
-    const e = await env.DB.prepare("SELECT COUNT(*) AS c FROM ai_connections WHERE enabled = 1").first(); enabledCount = e ? e.c : 0;
-    const g = await env.DB.prepare("SELECT COUNT(*) AS c FROM ai_connections WHERE is_global = 1").first(); globalCount = g ? g.c : 0;
     const b = await env.DB.prepare("SELECT COUNT(*) AS c FROM blocked_users").first(); blockedCount = b ? b.c : 0;
     const ch = await env.DB.prepare("SELECT COUNT(*) AS c FROM chats").first(); chatCount = ch ? ch.c : 0;
     const tm = await env.DB.prepare("SELECT COUNT(*) AS c FROM thread_messages").first(); threadCount = tm ? tm.c : 0;
   } catch (err) {}
-  const text = "<b>Statistics</b>\n\nUsers: " + userCount + "\nChats: " + chatCount + "\nThread messages: " + threadCount + "\nTotal Connections: " + connCount + " (" + enabledCount + " enabled)\nGlobal Connections: " + globalCount + "\nBlocked users: " + blockedCount;
+  const configured = !!(env.AI_MODEL && env.AI_API_KEY);
+  const text = "<b>Statistics</b>\\n\\nUsers: " + userCount
+    + "\\nChats: " + chatCount
+    + "\\nThread messages: " + threadCount
+    + "\\nCentral AI: " + (configured ? "configured" : "not configured")
+    + "\\nBlocked users: " + blockedCount;
   await editMessage(env, chatId, messageId, text, buildInlineKeyboard([[{ text: "Back", callback_data: "adm:main" }]]), "HTML");
 }
 
@@ -583,16 +492,15 @@ export async function showAdminStatus(env, chatId, messageId) {
   let dbOk = false, kvOk = false;
   try { await env.DB.prepare("SELECT 1").first(); dbOk = true; } catch (err) {}
   try { await env.KV.get("healthcheck"); kvOk = true; } catch (err) {}
-  const encOk = !!getMasterKey(env);
-  const text = "<b>System Status</b>\n\nD1: " + (dbOk ? "OK" : "FAIL") + "\nKV: " + (kvOk ? "OK" : "FAIL") + "\nEncryption key: " + (encOk ? "OK" : "MISSING") + "\nTimestamp: " + new Date().toISOString();
+  const aiOk = !!(env.AI_MODEL && env.AI_API_KEY);
+  const model = aiOk ? escapeHtml(env.AI_MODEL) : "not configured";
+  const text = "<b>System Status</b>\\n\\nD1: " + (dbOk ? "OK" : "FAIL")
+    + "\\nKV: " + (kvOk ? "OK" : "FAIL")
+    + "\\nCentral AI: " + model
+    + "\\nTimestamp: " + new Date().toISOString();
   await editMessage(env, chatId, messageId, text, buildInlineKeyboard([[{ text: "Back", callback_data: "adm:main" }]]), "HTML");
 }
 
-/**
- * Reactions section of the admin panel: shows the emoji the bot is currently
- * allowed to react with, and which ones Telegram has refused in recent chats.
- * Responds to an emoji message from the admin by filtering the allowlist.
- */
 export async function showAdminReactions(env, chatId, messageId) {
   const configured = await getConfiguredReactions(env);
   const allowed = await getAllowedReactions(env, null);

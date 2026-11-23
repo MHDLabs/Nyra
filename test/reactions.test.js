@@ -2,9 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   shouldReact,
-  pickReaction,
-  pickLabel,
-  normalizeLabel,
   heuristicReaction,
   isTelegramReaction,
   normalizeReactionEmoji,
@@ -63,48 +60,6 @@ test("extractMessageText includes the quoted message for short replies", () => {
   assert.equal(extractMessageText({ reply_to_message: { text: "Nyra سلام" } }), "Nyra سلام");
   assert.equal(extractMessageText({}), "");
   assert.equal(extractMessageText(null), "");
-});
-
-test("normalizeLabel prefers the longest label (very_positive over positive)", () => {
-  assert.equal(normalizeLabel("very_positive"), "very_positive");
-  assert.equal(normalizeLabel("very_negative"), "very_negative");
-  assert.equal(normalizeLabel("POSITIVE"), "positive");
-  assert.equal(normalizeLabel("  Question. "), "question");
-  assert.equal(normalizeLabel("label: funny"), "funny");
-  assert.equal(normalizeLabel("banana"), null);
-  assert.equal(normalizeLabel(""), null);
-  assert.equal(normalizeLabel(null), null);
-});
-
-test("pickLabel maps instruct-model labels", () => {
-  assert.equal(pickLabel({ response: "very_positive" }), "very_positive");
-  assert.equal(pickLabel({ response: "positive" }), "positive");
-  assert.equal(pickLabel({ response: "question" }), "question");
-  assert.equal(pickLabel({ response: "angry" }), "angry");
-  assert.equal(pickLabel({ response: "no idea" }), null);
-});
-
-test("pickLabel maps sentiment scores to intensity", () => {
-  assert.equal(pickLabel([{ label: "POSITIVE", score: 0.98 }]), "positive");
-  assert.equal(pickLabel([{ label: "POSITIVE", score: 0.4 }]), "positive");
-  assert.equal(pickLabel([{ label: "NEGATIVE", score: 0.95 }]), "negative");
-  assert.equal(pickLabel([{ label: "NEGATIVE", score: 0.3 }]), "negative");
-  assert.equal(pickLabel({ label: "positive", score: 0.2 }), "positive");
-  assert.equal(pickLabel(null), null);
-  assert.equal(pickLabel({}), null);
-});
-
-test("pickReaction maps instruct-model labels to Telegram-valid emoji", () => {
-  assert.equal(pickReaction({ response: "very_positive" }, "I love it"), "❤");
-  assert.equal(pickReaction({ response: "positive" }, "thanks"), "👍");
-  assert.equal(pickReaction({ response: "question" }, "what is this"), "🤔");
-  assert.equal(pickReaction({ response: "angry" }, "shut up"), "😡");
-});
-
-test("pickReaction falls back to the narrow heuristic, otherwise nothing", () => {
-  assert.equal(pickReaction({}, "are you there?"), "🤔");
-  assert.equal(pickReaction(null, "hahaha"), "🤣");
-  assert.equal(pickReaction(null, "a plain statement"), null);
 });
 
 test("heuristicReaction handles Persian punctuation and laughter", () => {
@@ -196,45 +151,31 @@ test("getAllowedReactions never throws when KV is missing", async () => {
   assert.equal(allowed.length, REACTION_LABELS.length);
 });
 
-/** AI binding double returning a fixed instruct-model response. */
-function fakeAi(label) {
-  return { run: async () => ({ response: label }) };
-}
-
-function aiEnabledEnv(ai) {
-  return { AI: ai, KV: fakeKv(), ADMIN_IDS: "1", DB: { prepare() { return { bind() { return this; }, async first() { return { value: "all" }; } }; } } };
-}
-
-test("classifyReaction returns the labelled emoji when it is allowed", async () => {
-  const env = aiEnabledEnv(fakeAi("funny"));
-  assert.equal(await classifyReaction(env, "Nyra told a great joke", await getAllowedReactions(env, 1)), "🤣");
+test("classifyReaction uses deterministic heuristics and respects the allowlist", async () => {
+  const env = { KV: fakeKv() };
+  const allowed = await getAllowedReactions(env, 1);
+  assert.equal(await classifyReaction(env, "Nyra hahaha", allowed), "🤣");
+  assert.equal(await classifyReaction(env, "Nyra are you there?", allowed), "🤔");
+  assert.equal(await classifyReaction(env, "Nyra just a plain sentence", allowed), null);
 });
 
-test("classifyReaction returns null when the label's emoji is not allowed", async () => {
-  const env = { AI: fakeAi("very_positive"), KV: fakeKv() };
-  // ❤ is deliberately excluded from this chat's allowlist.
-  assert.equal(await classifyReaction(env, "Nyra I love you", ["👍", "👎"]), null);
+test("classifyReaction returns null when a heuristic emoji is not allowed", async () => {
+  assert.equal(await classifyReaction({ KV: fakeKv() }, "Nyra are you there?", ["👍", "👎"]), null);
 });
 
-test("classifyReaction returns null when no reaction fits", async () => {
-  const env = aiEnabledEnv({ run: async () => ({ response: "unclear" }) });
-  assert.equal(await classifyReaction(env, "Nyra just a plain sentence", await getAllowedReactions(env, 1)), null);
-});
-
-test("classifyReaction never uses a sentiment model", async () => {
-  const seen = [];
-  const env = aiEnabledEnv({ run: async (model) => { seen.push(model); return { response: "neutral" }; } });
+test("classifyReaction does not depend on Workers AI", async () => {
+  let calls = 0;
+  const env = { KV: fakeKv(), AI: { run: async () => { calls++; return { response: "neutral" }; } } };
   const emoji = await classifyReaction(env, "Nyra سلام خوبی؟", await getAllowedReactions(env, 1));
-  assert.equal(emoji, "😎");
-  assert.deepEqual(seen, ["@cf/meta/llama-3.1-8b-instruct"]);
+  assert.equal(emoji, "🤔");
+  assert.equal(calls, 0);
 });
 
 test("classifyReaction returns null when every emoji is disallowed in the chat", async () => {
-  const env = { AI: fakeAi("positive"), KV: fakeKv() };
-  assert.equal(await classifyReaction(env, "Nyra thanks", []), null);
+  assert.equal(await classifyReaction({ KV: fakeKv() }, "Nyra are you there?", []), null);
 });
 
-test("classifyReaction returns null without an AI binding", async () => {
+test("classifyReaction returns null for ordinary text without a heuristic", async () => {
   assert.equal(await classifyReaction({ KV: fakeKv() }, "Nyra hello there", ["👍"]), null);
 });
 
@@ -263,10 +204,9 @@ test("clearConfiguredReactions restores the built-in set", async () => {
   assert.deepEqual(await getAllowedReactions(env, 1), REACTION_LABELS.map((label) => DEFAULT_REACTIONS[label]));
 });
 
-test("a custom allowlist simply drops labels it does not cover", async () => {
-  const env = { AI: fakeAi("angry"), KV: fakeKv({ "react:allowed": { emoji: ["👍", "❤"] } }) };
-  // 😡 is not in the custom set, so this message gets no reaction at all.
-  assert.equal(await classifyReaction(env, "Nyra shut up", await getAllowedReactions(env, 1)), null);
+test("a custom allowlist simply drops heuristic reactions it does not cover", async () => {
+  const env = { KV: fakeKv({ "react:allowed": { emoji: ["👍", "❤"] } }) };
+  assert.equal(await classifyReaction(env, "Nyra are you there?", await getAllowedReactions(env, 1)), null);
 });
 
 test("getAllowedReactions honours the chat's own Telegram reaction set", async () => {
@@ -281,7 +221,7 @@ test("getAllowedReactions returns nothing when the chat forbids reactions", asyn
   const env = { KV: fakeKv() };
   const chat = { id: 42, type: "group", available_reactions: [] };
   assert.deepEqual(await getAllowedReactions(env, chat), []);
-  assert.equal(await classifyReaction({ AI: fakeAi("positive"), KV: fakeKv() }, "Nyra thanks", []), null);
+  assert.equal(await classifyReaction({ KV: fakeKv() }, "Nyra thanks", []), null);
 });
 
 test("a missing available_reactions field means every reaction is allowed", async () => {

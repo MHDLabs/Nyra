@@ -1,25 +1,8 @@
 /**
- * AI provider contracts: stream events, connection shape, tool calls.
+ * Central AI request and stream contracts.
+ * Provider credentials remain private to the Worker and are never part of events.
  */
-import type { ProviderErrorCategory, ProviderKind, TelegramId } from "./domain.js";
-
-export type AIConnection = {
-  connection_id: string;
-  telegram_id?: TelegramId | null;
-  label?: string | null;
-  provider?: string | null;
-  base_url?: string | null;
-  model?: string | null;
-  encrypted_key?: string | null;
-  key_iv?: string | null;
-  is_global?: number | boolean | null;
-  is_fast?: number | boolean | null;
-  supports_vision?: number | boolean | null;
-  supports_tools?: number | boolean | null;
-  enabled?: number | boolean | null;
-  consecutive_failures?: number | null;
-  [key: string]: unknown;
-};
+import type { ProviderErrorCategory } from "./domain.js";
 
 export type ChatMessage = {
   role: "system" | "user" | "assistant" | "tool" | string;
@@ -38,22 +21,14 @@ export type ProviderUsage = {
 
 export type StreamEvent =
   | { type: "text"; text: string }
-  | {
-      type: "done";
-      connection?: AIConnection | null;
-      attempts?: number;
-      fallbackUsed?: boolean;
-      usage?: ProviderUsage | null;
-    }
+  | { type: "done"; attempts?: number; usage?: ProviderUsage | null }
   | {
       type: "error";
       category: ProviderErrorCategory;
       partial?: boolean;
       error?: unknown;
       message?: string;
-      connection?: AIConnection | null;
       attempts?: number;
-      fallbackUsed?: boolean;
     }
   | { type: "tool_calls"; tool_calls: unknown[] }
   | { type: string; [key: string]: unknown };

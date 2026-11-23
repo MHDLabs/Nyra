@@ -42,11 +42,13 @@ export type TelegramMessage = {
   caption_entities?: MessageEntity[];
   reply_to_message?: TelegramMessage;
   message_thread_id?: number;
-  photo?: Array<{ file_id: string; file_unique_id?: string; width?: number; height?: number }>;
+  photo?: Array<{ file_id: string; file_unique_id?: string; width?: number; height?: number; file_size?: number }>;
+  /** Internal field added after durable Telegram album aggregation; never sent back to Telegram. */
+  album_photo_file_ids?: string[];
   voice?: { file_id: string; duration?: number; mime_type?: string };
   audio?: { file_id: string; duration?: number; mime_type?: string };
   video?: { file_id: string; duration?: number; mime_type?: string };
-  document?: { file_id: string; file_name?: string; mime_type?: string };
+  document?: { file_id: string; file_name?: string; mime_type?: string; file_size?: number };
   sticker?: { file_id: string; emoji?: string };
   animation?: { file_id: string };
   video_note?: { file_id: string };
