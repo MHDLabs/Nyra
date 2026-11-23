@@ -84,7 +84,7 @@ test("unsupported tool schema retries once on the same model without tools", asy
       });
     }
     return new Response(
-      "data: " + JSON.stringify({ choices: [{ delta: { content: "Plain answer" } }] }) + "\\n\\ndata: [DONE]\\n\\n",
+      "data: " + JSON.stringify({ choices: [{ delta: { content: "Plain answer" } }] }) + "\n\ndata: [DONE]\n\n",
       { headers: { "content-type": "text/event-stream" } }
     );
   };
@@ -112,7 +112,7 @@ test("a partial stream failure is never retried to avoid duplicated answer text"
     const body = new ReadableStream({
       start(controller) {
         controller.enqueue(new TextEncoder().encode(
-          "data: " + JSON.stringify({ choices: [{ delta: { content: "Partial answer" } }] }) + "\\n\\n"
+          "data: " + JSON.stringify({ choices: [{ delta: { content: "Partial answer" } }] }) + "\n\n"
         ));
         controller.error(failure);
       }
