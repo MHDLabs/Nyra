@@ -24,6 +24,7 @@ export type UserContentMessage = {
   caption?: string;
   sticker?: { emoji?: string };
   photo?: readonly unknown[];
+  album_photo_file_ids?: readonly string[];
   animation?: unknown;
   video?: unknown;
   voice?: unknown;
@@ -59,8 +60,15 @@ export function buildUserContent(message: UserContentMessage): string {
     return replyPrefix + (em ? "[sticker: " + em + "]" : "[sticker]");
   }
 
+  const albumCount = Array.isArray(message.album_photo_file_ids)
+    ? message.album_photo_file_ids.length
+    : 0;
   if (!text) {
-    if (hasPhoto) return replyPrefix + "[user sent a photo]";
+    if (hasPhoto) {
+      return replyPrefix + (albumCount > 1
+        ? "[user sent a photo album with " + albumCount + " images]"
+        : "[user sent a photo]");
+    }
     if (hasAnimation) return replyPrefix + "[user sent a GIF]";
     if (hasVideo) return replyPrefix + "[user sent a video]";
     if (hasVoice) return replyPrefix + "[user sent a voice message]";
@@ -72,7 +80,7 @@ export function buildUserContent(message: UserContentMessage): string {
     return replyPrefix + "[user sent emoji: " + text + "]";
   }
 
-  return replyPrefix + text;
+  return replyPrefix + text + (albumCount > 1 ? " [photo album: " + albumCount + " images]" : "");
 }
 
 function rawSplitForTelegram(inputText: string, budget: number): string[] {

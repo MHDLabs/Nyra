@@ -254,20 +254,34 @@ export function pickImageFile(message) {
   return null;
 }
 
+export function pickImageFiles(message, maxFiles = 10) {
+  if (!message || maxFiles <= 0) return [];
+  const albumIds = Array.isArray(message.album_photo_file_ids) ? message.album_photo_file_ids : [];
+  if (albumIds.length > 0) {
+    return Array.from(new Set(albumIds.filter((id) => typeof id === "string" && id.length > 0)))
+      .slice(0, Math.min(10, maxFiles))
+      .map((fileId) => ({ fileId, mediaType: "image/jpeg" }));
+  }
+  const single = pickImageFile(message);
+  return single ? [single] : [];
+}
+
 const TELEGRAM_FILE_MAX_BYTES = 10 * 1024 * 1024;
 
 /** Download a Telegram file by file_id and return base64 plus its media type. */
-export async function downloadTelegramFile(env: NyraEnv, fileId) {
+export async function downloadTelegramFile(env: NyraEnv, fileId, maxBytes = TELEGRAM_FILE_MAX_BYTES) {
   if (!env.TELEGRAM_BOT_TOKEN || !fileId) return null;
+  const limit = Math.max(1, Math.min(Number(maxBytes) || TELEGRAM_FILE_MAX_BYTES, TELEGRAM_FILE_MAX_BYTES));
   try {
     const info = await tg(env, "getFile", { file_id: fileId });
     if (!info || !info.ok || !info.result || !info.result.file_path) return null;
+    if (Number(info.result.file_size) > limit) return null;
     const filePath = info.result.file_path;
     const url = TELEGRAM_API + "/file/bot" + env.TELEGRAM_BOT_TOKEN + "/" + filePath;
     const resp = await fetchWithTimeout(url, { method: "GET", cache: "no-store" }, TELEGRAM_TIMEOUT_MS);
     if (!resp.ok) return null;
     const buf = await resp.arrayBuffer();
-    if (!buf || buf.byteLength === 0 || buf.byteLength > TELEGRAM_FILE_MAX_BYTES) return null;
+    if (!buf || buf.byteLength === 0 || buf.byteLength > limit) return null;
     const bytes = new Uint8Array(buf);
     let binary = "";
     const CHUNK = 0x8000;
