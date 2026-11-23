@@ -127,7 +127,7 @@ export default {
   },
   // Queue consumer: runs the full AI pipeline outside the webhook request lifecycle.
   // Consumer invocations allow long wall time (vs. the 30s post-response waitUntil cap),
-  // so streaming, fallbacks, consolidation and heartbeats are no longer cut off at 30s.
+  // so streaming, bounded same-model tool retries, consolidation and heartbeats are no longer cut off at 30s.
   async queue(batch: MessageBatch, env: NyraEnv, ctx: ExecutionContext): Promise<void> {
     const missing = validateSecrets(env);
     if (missing) {
