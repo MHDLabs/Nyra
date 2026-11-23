@@ -36,6 +36,7 @@ async function* streamCentralAgent(env: NyraEnv, user, messages, options) {
   const deadline = Date.now() + Math.max(1000, Math.min((options && options.totalBudgetMs) || 70000, 120000));
   let usage = { in: 0, out: 0, source: "unavailable" };
   let toolsDisabled = definitions.length === 0;
+  let requestAttempts = 0;
 
   if (reasoningModel && conversation[0]) {
     conversation[0] = {
@@ -74,6 +75,7 @@ async function* streamCentralAgent(env: NyraEnv, user, messages, options) {
         ...options,
         tools: toolsDisabled ? [] : definitions
       };
+      requestAttempts++;
       const stream = streamOpenAICompatible(
         config,
         config.api_key,
@@ -102,7 +104,7 @@ async function* streamCentralAgent(env: NyraEnv, user, messages, options) {
     if (streamFailed) {
       // Some OpenAI-compatible servers reject tools. Retry once against the
       // exact same endpoint and model, with tools disabled for this request.
-      if (iteration === 0 && !toolsDisabled && streamFailed.status === 400) {
+      if (iteration === 0 && !toolsDisabled && streamFailed.status === 400 && roundText.length === 0 && calls.length === 0) {
         toolsDisabled = true;
         if (conversation[0]) {
           conversation[0] = {
@@ -112,11 +114,13 @@ async function* streamCentralAgent(env: NyraEnv, user, messages, options) {
         }
         continue;
       }
-      throw streamFailed;
+      const failure = streamFailed instanceof Error ? streamFailed : new Error(String(streamFailed));
+      (failure as any).requestAttempts = requestAttempts;
+      throw failure;
     }
 
     if (!calls.length) {
-      yield { type: "done", usage, attempts: 1 };
+      yield { type: "done", usage, attempts: requestAttempts };
       return;
     }
 
@@ -183,7 +187,7 @@ export async function* streamCentralAI(env: NyraEnv, user, messages, options) {
       type: "error",
       category: normalizeError(error, error && error.status),
       error,
-      attempts: 1,
+      attempts: Number.isInteger(error && error.requestAttempts) ? error.requestAttempts : 1,
       partial: false
     };
   }
