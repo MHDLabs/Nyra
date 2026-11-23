@@ -78,6 +78,9 @@ export async function ensureSchema(env: NyraEnv) {
     "CREATE INDEX IF NOT EXISTS idx_voice_transcripts_created ON voice_transcripts(created_at)",
     "CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)"
   ];
+  // These definitions exist only to bring older databases to a known legacy
+  // shape before migrations 1–23 run. Migration 23 removes the retired tables;
+  // once it is recorded, the bootstrap below deliberately skips recreating them.
   const retiredSchemaPrefixes = [
     "CREATE TABLE IF NOT EXISTS ai_connections",
     "CREATE INDEX IF NOT EXISTS idx_conn_",
@@ -120,10 +123,8 @@ export async function ensureSchema(env: NyraEnv) {
     // OpenAI-style image_url data URLs; otherwise images are described as text.
     ["ai_connections", "supports_vision", "INTEGER DEFAULT 0"],
     ["ai_connections", "supports_tools", "INTEGER DEFAULT 1"],
-    // IANA timezone of the user (e.g. "Asia/Tehran"). Reminder instants are
-    // always stored as UTC seconds; this column only preserves the user's
-    // wall-clock context so recurrences and confirmations can be rendered and
-    // recomputed in their own zone instead of the worker's.
+    // IANA timezone of the user (e.g. "Asia/Tehran"). Keep it for accurate
+    // wall-clock context in model prompts and locale-aware admin timestamps.
     ["users", "timezone", "TEXT"],
     // Locale + persistent onboarding state. Existing rows get their locale
     // backfilled from Telegram's language_code by migration 10; new rows start
@@ -133,8 +134,8 @@ export async function ensureSchema(env: NyraEnv) {
     ["users", "onboarding_completed", "INTEGER DEFAULT 0"],
     ["users", "onboarding_version", "INTEGER DEFAULT 0"],
     ["users", "onboarding_started_at", "INTEGER"],
-    // Selected routing profile (routing profiles are defined by the routing
-    // layer; this column only stores the user's choice).
+    // Retired user-selected routing profile. Kept in the legacy bootstrap
+    // shape only so migration 23 can remove it from existing installations.
     ["users", "active_profile_id", "TEXT"],
     // Reliable inbound activity (not throttled) and proactive check-in settings.
     // Proactive is opt-in; all defaults keep the feature off until the user enables it.
