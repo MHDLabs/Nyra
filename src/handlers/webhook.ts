@@ -10,6 +10,7 @@ import { handleCallbackQuery } from "./callback.js";
 import { processMessage } from "./message.js";
 import { enqueueTelegramPhotoAlbum, isTelegramPhotoAlbumMessage } from "../media-groups.js";
 import { tg } from "../telegram.js";
+import { setProcessingReaction } from "../reactions.js";
 
 type WorkerCtx = { waitUntil?(promise: Promise<unknown>): void };
 
@@ -203,13 +204,17 @@ export async function handleWebhook(request: Request, env: NyraEnv, ctx: WorkerC
     // Kick off the visible typing indicator as soon as the durable queue accepts
     // the update; the consumer continues it with its heartbeat.
     if (msgUpdate && msgUpdate.from && !msgUpdate.from.is_bot && msgUpdate.chat
+      && msgUpdate.chat.type === "private"
       && !(typeof msgUpdate.text === "string" && msgUpdate.text.trim().startsWith("/"))
       && typeof ctx.waitUntil === "function") {
+      // Private chats get an immediate indicator on queue acceptance. Group
+      // typing starts only after the message actually addresses Nyra.
       ctx.waitUntil(tg(env, "sendChatAction", { chat_id: msgUpdate.chat.id, action: "typing" })
         .then((result) => {
           if (!result || !result.ok) console.warn("Initial typing indicator failed:", result && result.description || "Telegram API error");
         })
         .catch((error) => console.warn("Initial typing indicator failed:", errorMessage(error))));
+      ctx.waitUntil(setProcessingReaction(env, msgUpdate.chat.id, msgUpdate.message_id));
     }
   } catch (err) {
     console.error("update enqueue failed:", errorMessage(err));

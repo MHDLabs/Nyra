@@ -220,6 +220,52 @@ export async function fetchChatReactionSet(env, chatId) {
   }
 }
 
+
+const PROCESSING_REACTION_MARKER = "react:processing:";
+
+/** Add a temporary hourglass reaction to a private-chat message while queued. */
+export async function setProcessingReaction(env, chatId, messageId): Promise<void> {
+  if (chatId === undefined || chatId === null || !messageId) return;
+  try {
+    const available = await fetchChatReactionSet(env, chatId);
+    if (Array.isArray(available) && !available.includes("⏳")) return;
+    const rejected = await readRejectedReactions(env, chatId);
+    if (rejected.includes("⏳")) return;
+    if (!(await checkRateLimit(env, "processing-reaction:" + chatId, REACTION_RATE_LIMIT_PER_MIN, 60))) return;
+    const result = await tg(env, "setMessageReaction", {
+      chat_id: chatId, message_id: messageId,
+      reaction: [{ type: "emoji", emoji: "⏳" }], is_big: false
+    });
+    if (!result || !result.ok) {
+      const description = String(result && result.description || "unknown");
+      if (description.includes("REACTION_INVALID")) await rememberRejectedReaction(env, chatId, "⏳");
+      return;
+    }
+    if (env.KV && typeof env.KV.put === "function") {
+      await env.KV.put(PROCESSING_REACTION_MARKER + chatId + ":" + messageId, "1", { expirationTtl: 900 });
+    }
+  } catch (error) {
+    console.warn("Processing reaction unavailable:", error instanceof Error ? error.message : String(error));
+  }
+}
+
+/** Remove only the temporary hourglass reaction created by Nyra. */
+export async function clearProcessingReaction(env, chatId, messageId): Promise<void> {
+  if (chatId === undefined || chatId === null || !messageId || !env.KV) return;
+  const marker = PROCESSING_REACTION_MARKER + chatId + ":" + messageId;
+  try {
+    const active = await env.KV.get(marker);
+    if (!active) return;
+    const result = await tg(env, "setMessageReaction", {
+      chat_id: chatId, message_id: messageId, reaction: [], is_big: false
+    });
+    if (result && result.ok) await env.KV.delete(marker);
+    else console.warn("Processing reaction cleanup failed:", result && result.description || "Telegram API error");
+  } catch (error) {
+    console.warn("Processing reaction cleanup failed:", error instanceof Error ? error.message : String(error));
+  }
+}
+
 /**
  * The emoji this chat permits, most specific source first: an admin-configured
  * global allowlist, else the built-in defaults — minus any emoji Telegram has

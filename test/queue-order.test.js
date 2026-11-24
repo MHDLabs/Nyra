@@ -34,6 +34,8 @@ describe("queue ordering and telegram retries", () => {
     assert.match(src, /safeProcessMessage\(env, ctx, msgUpdate\)/);
     assert.match(src, /await safeCallback/);
     assert.match(src, /sendChatAction/);
+    assert.match(src, /setProcessingReaction/);
+    assert.match(src, /msgUpdate.chat.type === "private"/);
     assert.doesNotMatch(src, /fastlock:|isFastMessage/);
   });;
 });

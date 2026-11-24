@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   shouldReact,
+  setProcessingReaction,
+  clearProcessingReaction,
   heuristicReaction,
   isTelegramReaction,
   normalizeReactionEmoji,
@@ -16,6 +18,50 @@ import {
   DEFAULT_REACTIONS,
   REACTION_LABELS
 } from "../src/reactions.js";
+
+
+test("processing reaction adds a temporary hourglass and removes it after completion", async () => {
+  const calls = [];
+  const kv = fakeKv();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    const method = String(url).split("/").pop();
+    const body = JSON.parse(init.body);
+    calls.push({ method, body });
+    if (method === "getChat") {
+      return new Response(JSON.stringify({ ok: true, result: { available_reactions: [{ type: "emoji", emoji: "⏳" }] } }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ ok: true, result: true }), { status: 200 });
+  };
+  try {
+    const env = { TELEGRAM_BOT_TOKEN: "1:test", KV: kv };
+    await setProcessingReaction(env, 123, 45);
+    await clearProcessingReaction(env, 123, 45);
+    const set = calls.find((call) => call.method === "setMessageReaction" && call.body.reaction.length === 1);
+    const clear = calls.find((call) => call.method === "setMessageReaction" && call.body.reaction.length === 0);
+    assert.deepEqual(set.body.reaction, [{ type: "emoji", emoji: "⏳" }]);
+    assert.equal(clear.body.chat_id, 123);
+    assert.equal(clear.body.message_id, 45);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("processing reaction skips chats that explicitly disallow the hourglass", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    const method = String(url).split("/").pop();
+    calls.push(method);
+    return new Response(JSON.stringify({ ok: true, result: { available_reactions: [] } }), { status: 200 });
+  };
+  try {
+    await setProcessingReaction({ TELEGRAM_BOT_TOKEN: "1:test", KV: fakeKv() }, 456, 78);
+    assert.deepEqual(calls, ["getChat"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 test("shouldReact never reacts in private chats", () => {
   assert.equal(shouldReact({ text: "hey Nyra how are you" }, { id: 1, type: "private" }), false);

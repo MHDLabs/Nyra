@@ -116,7 +116,7 @@ Administrators can toggle Maintenance from the web panel's Models section or fro
 - Ordinary messages and slash commands are placed in the durable queue. The sensitive `/modelkey` command is the exception.
 - Messages in the same chat are serialized in Telegram update order using D1 conversation locks and pending-update records.
 - Different chats can be processed concurrently, so one slow conversation does not hold up other users.
-- A typing indicator is requested as soon as a message is accepted by the queue; the queue worker maintains it while generating a reply.
+- Private chats receive a typing indicator and a temporary hourglass reaction as soon as a message is accepted by the queue; the hourglass is removed after processing. Group typing is started only after the message actually addresses Nyra, so unrelated group messages do not make the bot appear busy.
 - Telegram 429 responses respect `retry_after` up to the configured retry ceiling. Send and edit errors are logged separately; duplicate no-op edits are treated as successful.
 - Streaming edits are throttled to avoid flooding Telegram while keeping replies visibly incremental.
 

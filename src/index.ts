@@ -12,6 +12,7 @@ import { ensureWebhook, restoreDefaultMenuButton, ensureBotCommands } from "./te
 import { routeAdminPanel } from "./admin-panel/router.js";
 import { logFailedUpdate, cleanupOldFailedUpdates } from "./dlq.js";
 import { processTelegramPhotoAlbum } from "./media-groups.js";
+import { clearProcessingReaction } from "./reactions.js";
 import { handleWebhook, handleSetup, handleStatus, processMessage, handleCallbackQuery } from "./handlers/index.js";
 
 // A queue message's ordering group. Two updates only need to stay serialized
@@ -137,6 +138,10 @@ async function processChain(env: NyraEnv, ctx, messages) {
         await markHandled(env, update.update_id);
         await env.DB.prepare("UPDATE queue_pending_updates SET status=1, completed_at=? WHERE update_id=? AND status=0")
           .bind(Math.floor(Date.now() / 1000), update.update_id).run();
+        const inbound = update.message || update.edited_message;
+        if (inbound && inbound.chat && inbound.chat.type === "private" && ctx.waitUntil) {
+          ctx.waitUntil(clearProcessingReaction(env, inbound.chat.id, inbound.message_id));
+        }
         safeAck(msg);
       } catch (err) {
         console.error("Queued update processing failed:", err.message);
@@ -241,6 +246,10 @@ export default {
           if (failedUpdate && failedUpdate.update_id !== undefined) {
             await env.DB.prepare("UPDATE queue_pending_updates SET status=2, completed_at=? WHERE update_id=? AND status=0")
               .bind(Math.floor(Date.now() / 1000), failedUpdate.update_id).run();
+            const inbound = failedUpdate.message || failedUpdate.edited_message;
+            if (inbound && inbound.chat && inbound.chat.type === "private" && ctx.waitUntil) {
+              ctx.waitUntil(clearProcessingReaction(env, inbound.chat.id, inbound.message_id));
+            }
           }
           msg.ack();
         } catch (err) {
