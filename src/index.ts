@@ -115,7 +115,14 @@ async function processChain(env: NyraEnv, ctx, messages) {
       const update = body && body.update;
       if (!update) { safeAck(msg); continue; }
       const orderRow = await env.DB.prepare("SELECT status FROM queue_pending_updates WHERE update_id=?").bind(update.update_id).first();
-      if (orderRow && Number(orderRow.status) !== 0) { safeAck(msg); continue; }
+      if (orderRow && Number(orderRow.status) !== 0) {
+        const inbound = update.message || update.edited_message;
+        if (inbound && inbound.chat && inbound.chat.type === "private" && ctx.waitUntil) {
+          ctx.waitUntil(clearProcessingReaction(env, inbound.chat.id, inbound.message_id));
+        }
+        safeAck(msg);
+        continue;
+      }
       const nextPending = await env.DB.prepare(
         "SELECT update_id FROM queue_pending_updates WHERE conversation_key=? AND status=0 ORDER BY update_id ASC LIMIT 1"
       ).bind(key).first();
@@ -128,6 +135,10 @@ async function processChain(env: NyraEnv, ctx, messages) {
       if (msg.attempts > 1 && (await alreadyHandled(env, update.update_id))) {
         await env.DB.prepare("UPDATE queue_pending_updates SET status=1, completed_at=? WHERE update_id=? AND status=0")
           .bind(Math.floor(Date.now() / 1000), update.update_id).run();
+        const inbound = update.message || update.edited_message;
+        if (inbound && inbound.chat && inbound.chat.type === "private" && ctx.waitUntil) {
+          ctx.waitUntil(clearProcessingReaction(env, inbound.chat.id, inbound.message_id));
+        }
         safeAck(msg);
         continue;
       }

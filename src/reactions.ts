@@ -19,7 +19,7 @@ export const TELEGRAM_ALLOWED_REACTIONS = [
   "🌚", "🌭", "💯", "🤣", "⚡", "🍌", "🏆", "💔", "🤨", "😐", "🍓", "🍾", "💋",
   "🖕", "😈", "😴", "😭", "🤓", "👻", "👨‍💻", "👀", "🎃", "🙈", "😇", "😨", "🤝",
   "✍", "🤗", "🫡", "🎅", "🎄", "☃", "💅", "🤪", "🗿", "🆒", "💘", "🙉", "🦄",
-  "😘", "💊", "🙊", "😎", "👾", "🤷", "🤷‍♂", "🤷‍♀", "😡"
+  "😘", "💊", "🙊", "😎", "👾", "🤷", "🤷‍♂", "🤷‍♀", "😡", "⏳"
 ];
 
 /**
@@ -232,17 +232,20 @@ export async function setProcessingReaction(env, chatId, messageId): Promise<voi
     const rejected = await readRejectedReactions(env, chatId);
     if (rejected.includes("⏳")) return;
     if (!(await checkRateLimit(env, "processing-reaction:" + chatId, REACTION_RATE_LIMIT_PER_MIN, 60))) return;
+    if (!env.KV || typeof env.KV.put !== "function") return;
+    const marker = PROCESSING_REACTION_MARKER + chatId + ":" + messageId;
+    // Persist the cleanup marker before calling Telegram. If this request is
+    // interrupted after Telegram applies the reaction, the queue can still clear it.
+    await env.KV.put(marker, "1", { expirationTtl: 900 });
     const result = await tg(env, "setMessageReaction", {
       chat_id: chatId, message_id: messageId,
       reaction: [{ type: "emoji", emoji: "⏳" }], is_big: false
     });
     if (!result || !result.ok) {
       const description = String(result && result.description || "unknown");
+      if (env.KV && typeof env.KV.delete === "function") await env.KV.delete(marker);
       if (description.includes("REACTION_INVALID")) await rememberRejectedReaction(env, chatId, "⏳");
       return;
-    }
-    if (env.KV && typeof env.KV.put === "function") {
-      await env.KV.put(PROCESSING_REACTION_MARKER + chatId + ":" + messageId, "1", { expirationTtl: 900 });
     }
   } catch (error) {
     console.warn("Processing reaction unavailable:", error instanceof Error ? error.message : String(error));
@@ -259,8 +262,9 @@ export async function clearProcessingReaction(env, chatId, messageId): Promise<v
     const result = await tg(env, "setMessageReaction", {
       chat_id: chatId, message_id: messageId, reaction: [], is_big: false
     });
-    if (result && result.ok) await env.KV.delete(marker);
-    else console.warn("Processing reaction cleanup failed:", result && result.description || "Telegram API error");
+    if (result && result.ok || /message reaction is not modified/i.test(String(result && result.description || ""))) {
+      await env.KV.delete(marker);
+    } else console.warn("Processing reaction cleanup failed:", result && result.description || "Telegram API error");
   } catch (error) {
     console.warn("Processing reaction cleanup failed:", error instanceof Error ? error.message : String(error));
   }

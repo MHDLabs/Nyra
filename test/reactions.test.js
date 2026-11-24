@@ -131,6 +131,10 @@ test("the previously-invalid default emoji are gone", () => {
   assert.equal(isTelegramReaction(null), false);
 });
 
+test("hourglass is accepted only as a processing reaction emoji", () => {
+  assert.equal(isTelegramReaction("⏳"), true);
+});
+
 test("normalizeReactionEmoji strips the variation selector", () => {
   assert.equal(normalizeReactionEmoji("❤️"), "❤");
   assert.equal(normalizeReactionEmoji("👍"), "👍");
