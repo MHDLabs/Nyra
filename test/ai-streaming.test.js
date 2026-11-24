@@ -8,9 +8,11 @@ test("stream previews do not block model token consumption on Telegram edits", (
   const end = src.indexOf("} catch (e) {", start);
   assert.ok(start >= 0 && end > start);
   const streamLoop = src.slice(start, end);
-  assert.doesNotMatch(streamLoop, /await editMessage\(/);
   assert.match(streamLoop, /previewEditPromise = previewEditPromise/);
+  assert.match(streamLoop, /\.then\(async \(\) => \{/);
+  assert.match(streamLoop, /await editMessage\(env, chatId, placeholderMsgId, preview/);
   assert.match(streamLoop, /ctx\.waitUntil\?\.\(previewEditPromise\)/);
+  assert.doesNotMatch(streamLoop, /await previewEditPromise;/);
   assert.match(src, /await previewEditPromise;/);
 });
 
