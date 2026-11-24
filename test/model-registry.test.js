@@ -50,7 +50,12 @@ function registryEnv(rows, adminIds = "123") {
         let args = [];
         return {
           bind(...values) { args = values; return this; },
-          async all() { return { results: rows }; },
+          async all() {
+            if (sql.includes("FROM ai_models WHERE enabled=1")) {
+              return { results: rows.filter(row => row.enabled === 1) };
+            }
+            return { results: rows };
+          },
           async first() {
             if (sql.includes("SELECT selected_model_id FROM users")) return { selected_model_id: null };
             if (sql.includes("SELECT * FROM ai_models WHERE id=?")) return rows.find(row => row.id === args[0]) || null;
