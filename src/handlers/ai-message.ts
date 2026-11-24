@@ -501,9 +501,10 @@ export async function retryWithCloudflare(env: NyraEnv, ctx: WorkerCtx, snapshot
     return { ok: false };
   }
   let accumulated = "", usage: any = null, completed = false, category = "unknown";
-  for await (const event of streamCentralAI(env, user, snapshot.messages, {
+  for await (const rawEvent of streamCentralAI(env, user, snapshot.messages, {
     max_tokens: 2048, temperature: 0.7, totalBudgetMs: AI_STREAM_TOTAL_BUDGET_MS, stallTimeoutMs: AI_STREAM_STALL_TIMEOUT_MS
   })) {
+    const event: any = rawEvent;
     if (event.type === "text") accumulated += String(event.text || "");
     else if (event.type === "usage") usage = event.usage || usage;
     else if (event.type === "done") { completed = true; usage = event.usage || usage; }

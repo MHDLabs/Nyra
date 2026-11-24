@@ -23,7 +23,7 @@ function fromBase64(value: string): Uint8Array {
   const binary = atob(value); const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i); return bytes;
 }
-async function cryptoKey(env: NyraEnv, usage: KeyUsage[]): Promise<CryptoKey> {
+async function cryptoKey(env: NyraEnv, usage: ("encrypt" | "decrypt")[]): Promise<CryptoKey> {
   const material = new TextEncoder().encode("nyra-model-registry-v1:" + encryptionSecret(env));
   const digest = await crypto.subtle.digest("SHA-256", material);
   return crypto.subtle.importKey("raw", digest, { name: "AES-GCM" }, false, usage);
@@ -71,7 +71,7 @@ export async function getSelectableModels(env: NyraEnv, userId: number | string)
 }
 export async function setUserSelectedModel(env: NyraEnv, userId: number | string, modelId: string): Promise<boolean> {
   const admin = isAdmin(env, userId);
-  const row = await env.DB.prepare("SELECT id FROM ai_models WHERE id=? AND enabled=1 AND fallback_only=0 AND encrypted_api_key IS NOT NULL AND key_iv IS NOT NULL AND base_url<>'' AND (?=1 OR user_selectable=1)")
+  const row = await env.DB.prepare("SELECT id FROM ai_models WHERE id=? AND enabled=1 AND fallback_only=0 AND encrypted_api_key IS NOT NULL AND key_iv IS NOT NULL AND base_url<>'' AND base_url NOT LIKE '%ACCOUNT_ID%' AND base_url NOT LIKE '%{%' AND base_url NOT LIKE '%}%' AND (?=1 OR user_selectable=1)")
     .bind(modelId, admin ? 1 : 0).first();
   if (!row) return false;
   await env.DB.prepare("UPDATE users SET selected_model_id=?,updated_at=? WHERE telegram_id=?").bind(modelId, now(), userId).run();
@@ -97,6 +97,12 @@ export async function updateModelAdmin(env: NyraEnv, modelId: string, patch: Rec
   if (patch.user_selectable !== undefined && !Number(current.fallback_only)) add("user_selectable",patch.user_selectable===true||patch.user_selectable===1?1:0);
   if (patch.supports_vision !== undefined) add("supports_vision",patch.supports_vision===true||patch.supports_vision===1?1:0);
   if (sets.length) { sets.push("updated_at=?"); values.push(now(),modelId); await env.DB.prepare("UPDATE ai_models SET "+sets.join(",")+" WHERE id=?").bind(...values).run(); }
+}
+export async function setModelEnabled(env: NyraEnv, modelId: string, enabled: boolean): Promise<void> {
+  await updateModelAdmin(env, modelId, { enabled });
+}
+export async function setModelVisibility(env: NyraEnv, modelId: string, userSelectable: boolean): Promise<void> {
+  await updateModelAdmin(env, modelId, { user_selectable: userSelectable });
 }
 export async function setDefaultModel(env: NyraEnv, modelId: string): Promise<void> {
   const row = await env.DB.prepare("SELECT * FROM ai_models WHERE id=? AND enabled=1 AND fallback_only=0 AND encrypted_api_key IS NOT NULL AND key_iv IS NOT NULL").bind(modelId).first();
@@ -169,7 +175,7 @@ export async function redactConfiguredModelKeys(env: NyraEnv, input: unknown): P
   let value=String(input||"");
   try {
     const result=await env.DB.prepare("SELECT encrypted_api_key,key_iv FROM ai_models WHERE encrypted_api_key IS NOT NULL AND key_iv IS NOT NULL").all();
-    for(const row of result.results||[]){try{const key=await decryptKey(env,row.encrypted_api_key,row.key_iv);if(key)value=value.split(key).join("[REDACTED]");}catch{}}
+    for(const row of (result.results || []) as any[]){try{const key=await decryptKey(env,row.encrypted_api_key,row.key_iv);if(key)value=value.split(key).join("[REDACTED]");}catch{}}
   } catch {}
   return value.replace(/Bearer\s+[^\s"'<>]+/gi,"Bearer [REDACTED]");
 }
