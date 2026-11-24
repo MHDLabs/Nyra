@@ -134,9 +134,10 @@ export async function createCustomModel(env: NyraEnv, input: Record<string, unkn
   return id;
 }
 export async function deleteCustomModel(env: NyraEnv, modelId: string): Promise<void> {
-  const row=await env.DB.prepare("SELECT builtin FROM ai_models WHERE id=?").bind(modelId).first();
+  const row=await env.DB.prepare("SELECT builtin,is_default FROM ai_models WHERE id=?").bind(modelId).first();
   if(!row)throw configError("Model not found.");
   if(Number(row.builtin))throw configError("Built-in models cannot be deleted.");
+  if(Number(row.is_default))throw configError("Choose a different default model before deleting this one.");
   await env.DB.batch([
     env.DB.prepare("UPDATE users SET selected_model_id=NULL,updated_at=? WHERE selected_model_id=?").bind(now(),modelId),
     env.DB.prepare("DELETE FROM ai_models WHERE id=?").bind(modelId)

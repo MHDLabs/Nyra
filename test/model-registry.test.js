@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   validateModelBaseUrl, getAIConfigForUser, getSelectableModels,
-  setUserSelectedModel, setModelApiKey, getAdminModelList, updateModelAdmin
+  setUserSelectedModel, setModelApiKey, getAdminModelList, updateModelAdmin, deleteCustomModel
 } from "../src/providers/registry.js";
 import { webcrypto } from "node:crypto";
 
@@ -58,7 +58,7 @@ function registryEnv(rows, adminIds = "123") {
           },
           async first() {
             if (sql.includes("SELECT selected_model_id FROM users")) return { selected_model_id: null };
-            if (sql.includes("SELECT * FROM ai_models WHERE id=?")) return rows.find(row => row.id === args[0]) || null;
+            if (sql.includes("SELECT * FROM ai_models WHERE id=?") || sql.includes("SELECT builtin,is_default FROM ai_models WHERE id=?")) return rows.find(row => row.id === args[0]) || null;
             if (sql.includes("SELECT id FROM ai_models")) {
               const row = rows.find(item => item.id === args[0] && item.enabled === 1
                 && item.encrypted_api_key && item.key_iv && item.base_url
@@ -142,4 +142,11 @@ test("the global default cannot be disabled or hidden from users", async () => {
   const env = registryEnv(rows);
   await assert.rejects(updateModelAdmin(env, "groq_qwen38", { enabled: false }), /different default model/);
   await assert.rejects(updateModelAdmin(env, "groq_qwen38", { user_selectable: false }), /different default model/);
+});
+
+test("the current global default cannot be deleted while it is active", async () => {
+  const rows = [configuredModel({ builtin: 0 })];
+  const env = registryEnv(rows);
+  await assert.rejects(deleteCustomModel(env, "groq_qwen38"), /different default model/);
+  assert.equal(rows.length, 1);
 });
