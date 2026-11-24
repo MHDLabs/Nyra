@@ -9,6 +9,7 @@ import { ensureSchema } from "../db.js";
 import { processMessage } from "./message.js";
 import { handleCallbackQuery } from "./callback.js";
 import { enqueueTelegramPhotoAlbum, isTelegramPhotoAlbumMessage } from "../media-groups.js";
+import { tg } from "../telegram.js";
 
 type WorkerCtx = { waitUntil?(promise: Promise<unknown>): void };
 
@@ -20,23 +21,6 @@ function errorMessage(err: unknown): string {
 function errorStack(err: unknown): string {
   if (err instanceof Error && err.stack) return err.stack;
   return errorMessage(err);
-}
-
-async function safeProcessMessage(env: NyraEnv, ctx: WorkerCtx, message: TelegramMessage): Promise<void> {
-  try {
-    await processMessage(env, ctx, message);
-  } catch (err) {
-    console.error("processMessage failed:", errorStack(err));
-    try {
-      const chatId = message && message.chat && message.chat.id;
-      if (chatId != null) {
-        const { sendMessage } = await import("../telegram.js");
-        await sendMessage(env, chatId, "Sorry — something went wrong handling that message. Please try again.", {});
-      }
-    } catch (e2) {
-      console.error("processMessage failure notify failed:", errorMessage(e2));
-    }
-  }
 }
 
 async function safeCallback(env: NyraEnv, ctx: WorkerCtx, cb: CallbackQuery): Promise<void> {
@@ -146,20 +130,14 @@ export async function handleWebhook(request: Request, env: NyraEnv, ctx: WorkerC
     }
     if (!firstDelivery) return okResponse();
   }
-  // Commands and button taps run inline; every AI message is sent through
-  // the durable queue so processing order and retry semantics stay consistent.
+  // Callback taps remain inline for fast Telegram acknowledgement. All user
+  // messages, including slash commands, go through the durable queue so a
+  // command cannot overtake an earlier AI turn in the same chat.
   const msgUpdate = update.message;
   const cbUpdate = update.callback_query;
   if (cbUpdate && cbUpdate.from && !cbUpdate.from.is_bot) {
     await safeCallback(env, ctx, cbUpdate);
     return okResponse();
-  }
-  if (msgUpdate && msgUpdate.from && !msgUpdate.from.is_bot && msgUpdate.chat) {
-    const isCommand = typeof msgUpdate.text === "string" && msgUpdate.text.trim().startsWith("/");
-    if (isCommand) {
-      await safeProcessMessage(env, ctx, msgUpdate);
-      return okResponse();
-    }
   }
   if (msgUpdate && msgUpdate.from && !msgUpdate.from.is_bot && isTelegramPhotoAlbumMessage(msgUpdate)) {
     try {
@@ -192,6 +170,17 @@ export async function handleWebhook(request: Request, env: NyraEnv, ctx: WorkerC
   }
   try {
     await env.NYRA_QUEUE.send({ update: update });
+    // Kick off the visible typing indicator as soon as the durable queue accepts
+    // the update; the consumer continues it with its heartbeat.
+    if (msgUpdate && msgUpdate.from && !msgUpdate.from.is_bot && msgUpdate.chat
+      && !(typeof msgUpdate.text === "string" && msgUpdate.text.trim().startsWith("/"))
+      && typeof ctx.waitUntil === "function") {
+      ctx.waitUntil(tg(env, "sendChatAction", { chat_id: msgUpdate.chat.id, action: "typing" })
+        .then((result) => {
+          if (!result || !result.ok) console.warn("Initial typing indicator failed:", result && result.description || "Telegram API error");
+        })
+        .catch((error) => console.warn("Initial typing indicator failed:", errorMessage(error))));
+    }
   } catch (err) {
     console.error("update enqueue failed:", errorMessage(err));
     if (updateId !== null) {

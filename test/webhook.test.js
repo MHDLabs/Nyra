@@ -136,6 +136,24 @@ test("handleWebhook enqueues valid non-command message", async () => {
   assert.equal(env.inserts.length, 1);
 });
 
+test("handleWebhook queues slash commands to preserve chat order", async () => {
+  const env = baseEnv();
+  const body = {
+    update_id: 98,
+    message: {
+      message_id: 8,
+      chat: { id: 100, type: "private" },
+      from: { id: 200, is_bot: false },
+      text: "/models"
+    }
+  };
+  const res = await handleWebhook(await authedRequest(env, body), env, {});
+  assert.equal(res.status, 200);
+  assert.equal(env.sent.length, 1);
+  assert.equal(env.sent[0].update.update_id, 98);
+  assert.equal(env.inserts.length, 1);
+});
+
 test("handleWebhook acks duplicate update without re-enqueue", async () => {
   const env = baseEnv({ duplicate: true });
   const body = {

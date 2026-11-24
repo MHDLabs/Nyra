@@ -26,11 +26,12 @@ describe("queue ordering and telegram retries", () => {
     assert.match(wrangler, /max_concurrency = 3/);
   });
 
-  it("queues every non-command AI message and keeps command/callback handling inline", () => {
+  it("queues all messages while acknowledging callbacks inline and starts typing after acceptance", () => {
     const src = readFileSync(new URL("../src/handlers/webhook.ts", import.meta.url), "utf8");
     assert.match(src, /env\.NYRA_QUEUE\.send/);
-    assert.match(src, /if \(isCommand\)/);
+    assert.doesNotMatch(src, /safeProcessMessage|if \(isCommand\)/);
     assert.match(src, /await safeCallback/);
+    assert.match(src, /sendChatAction/);
     assert.doesNotMatch(src, /fastlock:|isFastMessage/);
   });;
 });
