@@ -93,6 +93,16 @@ function asTelegramUpdate(value: unknown): TelegramUpdate | null {
   return value as TelegramUpdate;
 }
 
+
+function queueConversationKey(update: TelegramUpdate): string {
+  const message = update.message || update.edited_message;
+  if (message && message.chat && message.chat.id !== undefined) return "c:" + message.chat.id;
+  const query = update.callback_query;
+  if (query && query.message && query.message.chat && query.message.chat.id !== undefined) return "c:" + query.message.chat.id;
+  if (query && query.from && query.from.id !== undefined) return "u:" + query.from.id;
+  return "u:" + String(update.update_id);
+}
+
 export async function handleWebhook(request: Request, env: NyraEnv, ctx: WorkerCtx): Promise<Response> {
   const secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "";
   const expectedSecret = await getWebhookSecret(env);
@@ -167,15 +177,31 @@ export async function handleWebhook(request: Request, env: NyraEnv, ctx: WorkerC
     }
     return okResponse();
   }
+  const conversation = queueConversationKey(update);
+  try {
+    if (updateId === null) throw new Error("A durable queue update requires update_id.");
+    await env.DB.prepare(
+      "INSERT OR IGNORE INTO queue_pending_updates (update_id, conversation_key, status, received_at) VALUES (?, ?, 0, ?)"
+    ).bind(updateId, conversation, Math.floor(Date.now() / 1000)).run();
+  } catch (err) {
+    console.error("queue ordering record failed:", errorMessage(err));
+    if (updateId !== null) {
+      try { await env.DB.prepare("DELETE FROM processed_updates WHERE update_id = ?").bind(updateId).run(); } catch {}
+    }
+    return new Response("Service Unavailable", { status: 503 });
+  }
   try {
     await env.NYRA_QUEUE.send({ update: update });
   } catch (err) {
     console.error("update enqueue failed:", errorMessage(err));
     if (updateId !== null) {
       try {
-        await env.DB.prepare("DELETE FROM processed_updates WHERE update_id = ?").bind(updateId).run();
+        await env.DB.batch([
+          env.DB.prepare("DELETE FROM queue_pending_updates WHERE update_id = ?").bind(updateId),
+          env.DB.prepare("DELETE FROM processed_updates WHERE update_id = ?").bind(updateId)
+        ]);
       } catch (e) {
-        console.error("dedup rollback failed:", errorMessage(e));
+        console.error("queue/dedup rollback failed:", errorMessage(e));
       }
     }
     return new Response("Service Unavailable", { status: 503 });

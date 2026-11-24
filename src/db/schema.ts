@@ -438,6 +438,14 @@ const SIMPLIFICATION_MIGRATIONS = [
       "CREATE TABLE IF NOT EXISTS queue_conversation_locks (conversation_key TEXT PRIMARY KEY, lock_token TEXT NOT NULL, lease_until INTEGER NOT NULL)",
       "CREATE INDEX IF NOT EXISTS idx_queue_conversation_locks_lease ON queue_conversation_locks(lease_until)"
     ]
+  },
+  {
+    id: 27,
+    label: "track per-conversation queue sequence across concurrent batches",
+    statements: [
+      "CREATE TABLE IF NOT EXISTS queue_pending_updates (update_id INTEGER PRIMARY KEY, conversation_key TEXT NOT NULL, status INTEGER NOT NULL DEFAULT 0, received_at INTEGER NOT NULL, completed_at INTEGER)",
+      "CREATE INDEX IF NOT EXISTS idx_queue_pending_updates_order ON queue_pending_updates(conversation_key, status, update_id)"
+    ]
   }
 ];
 
