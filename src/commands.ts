@@ -459,10 +459,11 @@ export async function showAdminModels(env, chatId, messageId) {
       + " · " + (model.has_api_key ? "کلید ذخیره شده" : "بدون کلید")
       + " · " + (model.fallback_only ? "جایگزین خودکار" : (model.user_selectable ? "قابل انتخاب برای همه" : "فقط مدیر"))
       + (model.is_default ? " · پیش‌فرض" : ""));
-    rows.push([
-      { text: (model.enabled ? "خاموش" : "روشن") + " · " + model.id.slice(0, 14), callback_data: "adm:model:toggle:" + model.id },
-      { text: model.is_default ? "✓ پیش‌فرض" : "انتخاب پیش‌فرض", callback_data: "adm:model:default:" + model.id }
-    ]);
+    const controls: any[] = [
+      { text: (model.enabled ? "خاموش" : "روشن") + " · " + model.id.slice(0, 14), callback_data: "adm:model:toggle:" + model.id }
+    ];
+    if (!model.fallback_only) controls.push({ text: model.is_default ? "✓ پیش‌فرض" : "انتخاب پیش‌فرض", callback_data: "adm:model:default:" + model.id });
+    rows.push(controls);
     if (!model.fallback_only) rows.push([{ text: model.user_selectable ? "فقط مدیر" : "قابل انتخاب برای همه", callback_data: "adm:model:visibility:" + model.id }]);
   }
   lines.push("", "تنظیم کلید: <code>/modelkey MODEL_ID API_KEY</code>");

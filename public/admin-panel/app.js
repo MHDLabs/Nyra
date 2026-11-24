@@ -217,7 +217,7 @@
           (m.fallback_only ? "<span class='muted'>فقط جایگزین خودکار در 429</span>" :
             "<label><input data-field='user_selectable' type='checkbox' " + (m.user_selectable ? "checked" : "") + " /> قابل انتخاب برای همه</label>") +
           "<label><input data-field='supports_vision' type='checkbox' " + (m.supports_vision ? "checked" : "") + " /> تصویر</label>" +
-          "<label><input data-field='is_default' type='checkbox' " + (m.is_default ? "checked" : "") + " /> مدل پیش‌فرض</label>" +
+          (m.fallback_only ? "" : "<label><input data-field='is_default' type='checkbox' " + (m.is_default ? "checked" : "") + " /> مدل پیش‌فرض</label>") +
           "</div><div class='model-actions'><button type='button' class='btn primary' data-save>ذخیره</button>" +
           (!m.builtin ? "<button type='button' class='btn danger' data-delete>حذف</button>" : "") +
           "<span class='muted' data-result>" + (m.has_api_key ? "کلید تنظیم شده" : "کلید تنظیم نشده") + "</span></div>";
@@ -228,7 +228,7 @@
             base_url: field("base_url").value,
             enabled: field("enabled").checked,
             supports_vision: field("supports_vision").checked,
-            is_default: field("is_default").checked
+            is_default: !!(field("is_default") && field("is_default").checked)
           };
           const visibility = field("user_selectable");
           if (visibility) body.user_selectable = visibility.checked;

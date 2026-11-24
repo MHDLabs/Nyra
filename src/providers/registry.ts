@@ -93,7 +93,11 @@ export async function updateModelAdmin(env: NyraEnv, modelId: string, patch: Rec
   if (patch.label !== undefined) { const v=String(patch.label || "").trim(); if(!v||v.length>80)throw configError("Model label must be 1–80 characters."); add("label",v); }
   if (patch.base_url !== undefined) add("base_url",validateModelBaseUrl(patch.base_url));
   if (patch.model !== undefined) { if(Number(current.builtin))throw configError("Built-in model IDs cannot be changed."); const v=String(patch.model||"").trim(); if(!v||v.length>160)throw configError("Model ID must be 1–160 characters."); add("model",v); }
-  if (patch.enabled !== undefined) add("enabled",patch.enabled===true||patch.enabled===1?1:0);
+  if (patch.enabled !== undefined) {
+    const enable = patch.enabled===true || patch.enabled===1;
+    if (!enable && Number(current.is_default) === 1) throw configError("Choose a different default model before disabling this one.");
+    add("enabled",enable?1:0);
+  }
   if (patch.user_selectable !== undefined && !Number(current.fallback_only)) add("user_selectable",patch.user_selectable===true||patch.user_selectable===1?1:0);
   if (patch.supports_vision !== undefined) add("supports_vision",patch.supports_vision===true||patch.supports_vision===1?1:0);
   if (sets.length) { sets.push("updated_at=?"); values.push(now(),modelId); await env.DB.prepare("UPDATE ai_models SET "+sets.join(",")+" WHERE id=?").bind(...values).run(); }

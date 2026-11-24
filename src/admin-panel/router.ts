@@ -141,7 +141,10 @@ export async function routeAdminPanel(env, ctx, request, pathname) {
       }
       if (Object.keys(patch).length) await updateModelAdmin(env, modelMatch[1], patch);
       if (typeof body.api_key === "string" && body.api_key.trim()) await setModelApiKey(env, modelMatch[1], body.api_key);
-      if (body.is_default === true) await setDefaultModel(env, modelMatch[1]);
+      if (body.is_default === true) {
+        const current = (await getAdminModelList(env)).find((item) => item.id === modelMatch[1]);
+        if (current && !current.is_default) await setDefaultModel(env, modelMatch[1]);
+      }
       const models = await getAdminModelList(env);
       return json(200, { ok: true, model: models.find((item) => item.id === modelMatch[1]) || null });
     } catch (error) {
