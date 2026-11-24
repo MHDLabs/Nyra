@@ -493,6 +493,7 @@ export async function retryWithCloudflare(env: NyraEnv, ctx: WorkerCtx, snapshot
   if (!user) return { ok: false };
   user.is_group = !!snapshot.is_group; user._toolChatId = snapshot.chat_id; user._toolMessageId = snapshot.placeholder_message_id;
   user._forceModelId = "cloudflare_qwen38";
+  const threadOptions: any = snapshot.thread_id != null ? { message_thread_id: snapshot.thread_id } : {};
   try {
     const resolved = await getAIConfigForUser(env, requesterId, "cloudflare_qwen38");
     user._aiConfig = resolved.config; user._fallbackAIConfig = null;
@@ -500,7 +501,6 @@ export async function retryWithCloudflare(env: NyraEnv, ctx: WorkerCtx, snapshot
     await editMessage(env, snapshot.chat_id, snapshot.placeholder_message_id, "⚠ Cloudflare Qwen پیکربندی نشده است. مدیر باید کلید و Base URL را بررسی کند.", undefined, undefined, threadOptions);
     return { ok: false };
   }
-  const threadOptions: any = snapshot.thread_id != null ? { message_thread_id: snapshot.thread_id } : {};
   let accumulated = "", usage: any = null, completed = false, category = "unknown";
   for await (const rawEvent of streamCentralAI(env, user, snapshot.messages, {
     max_tokens: 2048, temperature: 0.7, totalBudgetMs: AI_STREAM_TOTAL_BUDGET_MS, stallTimeoutMs: AI_STREAM_STALL_TIMEOUT_MS
