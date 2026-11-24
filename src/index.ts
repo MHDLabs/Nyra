@@ -53,36 +53,79 @@ async function markHandled(env: NyraEnv, updateId) {
 // re-queue the rest of the same-chat batch without processing them — otherwise
 // msg2 can finish before a retried msg1 and the user sees answers out of order.
 async function processChain(env: NyraEnv, ctx, messages) {
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
-    const body = msg.body && (msg.body as any);
-    const albumFlush = body && body.media_group_flush;
-    if (albumFlush) {
+  if (!messages.length) return;
+  const firstBody = messages[0].body && (messages[0].body as any);
+  // Cloudflare Queues can run multiple batches at once. A short D1 lease keeps
+  // each conversation serialized across batches without blocking unrelated chats.
+  const key = conversationKey(firstBody);
+  const tokenBytes = crypto.getRandomValues(new Uint8Array(16));
+  const lockToken = Array.from(tokenBytes).map((value) => value.toString(16).padStart(2, "0")).join("");
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  let acquired: any = null;
+  try {
+    acquired = await env.DB.prepare(
+      "INSERT INTO queue_conversation_locks (conversation_key, lock_token, lease_until) VALUES (?, ?, ?) " +
+      "ON CONFLICT(conversation_key) DO UPDATE SET lock_token=excluded.lock_token, lease_until=excluded.lease_until " +
+      "WHERE queue_conversation_locks.lease_until < ? RETURNING lock_token"
+    ).bind(key, lockToken, nowSeconds + 300, nowSeconds).first();
+  } catch (error) {
+    console.error("Conversation lock acquisition failed:", error instanceof Error ? error.message : String(error));
+    for (const msg of messages) safeRetry(msg);
+    return;
+  }
+  if (!acquired || acquired.lock_token !== lockToken) {
+    for (const msg of messages) safeRetry(msg);
+    return;
+  }
+
+  try {
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+      // Refresh the lease between turns. AI streams are bounded; a crashed
+      // consumer releases naturally after the 5-minute lease expires.
+      const renewed = await env.DB.prepare(
+        "UPDATE queue_conversation_locks SET lease_until=? WHERE conversation_key=? AND lock_token=? RETURNING lock_token"
+      ).bind(Math.floor(Date.now() / 1000) + 300, key, lockToken).first();
+      if (!renewed) {
+        for (let j = i; j < messages.length; j++) safeRetry(messages[j]);
+        return;
+      }
+      const body = msg.body && (msg.body as any);
+      const albumFlush = body && body.media_group_flush;
+      if (albumFlush) {
+        try {
+          await processTelegramPhotoAlbum(env, ctx, albumFlush);
+          safeAck(msg);
+        } catch (err) {
+          console.error("Queued photo-album processing failed:", err.message);
+          safeRetry(msg);
+          for (let j = i + 1; j < messages.length; j++) safeRetry(messages[j]);
+          return;
+        }
+        continue;
+      }
+
+      const update = body && body.update;
+      if (!update) { safeAck(msg); continue; }
+      if (msg.attempts > 1 && (await alreadyHandled(env, update.update_id))) { safeAck(msg); continue; }
       try {
-        await processTelegramPhotoAlbum(env, ctx, albumFlush);
+        if (update.message) await processMessage(env, ctx, update.message);
+        else if (update.callback_query) await handleCallbackQuery(env, ctx, update.callback_query);
+        await markHandled(env, update.update_id);
         safeAck(msg);
       } catch (err) {
-        console.error("Queued photo-album processing failed:", err.message);
+        console.error("Queued update processing failed:", err.message);
         safeRetry(msg);
         for (let j = i + 1; j < messages.length; j++) safeRetry(messages[j]);
         return;
       }
-      continue;
     }
-
-    const update = body && body.update;
-    if (!update) { safeAck(msg); continue; }
-    if (msg.attempts > 1 && (await alreadyHandled(env, update.update_id))) { safeAck(msg); continue; }
+  } finally {
     try {
-      if (update.message) await processMessage(env, ctx, update.message);
-      else if (update.callback_query) await handleCallbackQuery(env, ctx, update.callback_query);
-      await markHandled(env, update.update_id);
-      safeAck(msg);
-    } catch (err) {
-      console.error("Queued update processing failed:", err.message);
-      safeRetry(msg);
-      for (let j = i + 1; j < messages.length; j++) safeRetry(messages[j]);
-      return;
+      await env.DB.prepare("DELETE FROM queue_conversation_locks WHERE conversation_key=? AND lock_token=?")
+        .bind(key, lockToken).run();
+    } catch (error) {
+      console.error("Conversation lock release failed:", error instanceof Error ? error.message : String(error));
     }
   }
 }

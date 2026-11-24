@@ -430,6 +430,14 @@ const SIMPLIFICATION_MIGRATIONS = [
       "INSERT OR IGNORE INTO ai_models (id, label, provider, model, base_url, enabled, user_selectable, fallback_only, is_default, supports_vision, builtin, display_order, created_at, updated_at) VALUES ('cloudflare_glm47', 'Cloudflare · GLM 4.7 Flash', 'cloudflare', '@cf/zai-org/glm-4.7-flash', 'https://api.cloudflare.com/client/v4/accounts/ACCOUNT_ID/ai/v1', 0, 1, 0, 0, 0, 1, 30, CAST(strftime('%s','now') AS INTEGER), CAST(strftime('%s','now') AS INTEGER))",
       "UPDATE app_settings SET value=(SELECT value FROM app_settings WHERE key='emergency_maintenance'), updated_at=CAST(strftime('%s','now') AS INTEGER), updated_by=(SELECT updated_by FROM app_settings WHERE key='emergency_maintenance') WHERE key='maintenance_enabled' AND EXISTS (SELECT 1 FROM app_settings WHERE key='emergency_maintenance')"
     ]
+  },
+  {
+    id: 26,
+    label: "serialize concurrent queue batches per conversation",
+    statements: [
+      "CREATE TABLE IF NOT EXISTS queue_conversation_locks (conversation_key TEXT PRIMARY KEY, lock_token TEXT NOT NULL, lease_until INTEGER NOT NULL)",
+      "CREATE INDEX IF NOT EXISTS idx_queue_conversation_locks_lease ON queue_conversation_locks(lease_until)"
+    ]
   }
 ];
 
