@@ -9,6 +9,7 @@ declare namespace Cloudflare {
     TELEGRAM_BOT_TOKEN?: string;
     TELEGRAM_SECRET?: string;
     ADMIN_PANEL_PASSWORD?: string;
+    NYRA_MODEL_ENCRYPTION_KEY?: string;
     NYRA_BUILD_SHA?: string;
     NYRA_BUILD_REF?: string;
     NYRA_BUILD_TIME?: string;

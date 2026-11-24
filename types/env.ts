@@ -11,6 +11,7 @@ export type NyraEnv = {
   AI_MODEL?: string;
   AI_API_KEY?: string;
   AI_SUPPORTS_VISION?: string;
+  NYRA_MODEL_ENCRYPTION_KEY?: string;
   ASSETS: Fetcher;
   ADMIN_IDS?: string;
   TELEGRAM_BOT_TOKEN?: string;

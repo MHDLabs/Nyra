@@ -417,6 +417,19 @@ const SIMPLIFICATION_MIGRATIONS = [
       "CREATE TABLE IF NOT EXISTS telegram_media_group_items (chat_id INTEGER NOT NULL, media_group_id TEXT NOT NULL, message_id INTEGER NOT NULL, message_json TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(chat_id, media_group_id, message_id))",
       "CREATE INDEX IF NOT EXISTS idx_telegram_media_group_items_created ON telegram_media_group_items(created_at)"
     ]
+  },
+  {
+    id: 25,
+    label: "add encrypted shared AI model catalog and per-user model selection",
+    statements: [
+      "CREATE TABLE IF NOT EXISTS ai_models (id TEXT PRIMARY KEY, label TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, base_url TEXT NOT NULL, encrypted_api_key TEXT, key_iv TEXT, encryption_version INTEGER NOT NULL DEFAULT 1, enabled INTEGER NOT NULL DEFAULT 1, user_selectable INTEGER NOT NULL DEFAULT 1, fallback_only INTEGER NOT NULL DEFAULT 0, is_default INTEGER NOT NULL DEFAULT 0, supports_vision INTEGER NOT NULL DEFAULT 0, builtin INTEGER NOT NULL DEFAULT 0, display_order INTEGER NOT NULL DEFAULT 100, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
+      "CREATE INDEX IF NOT EXISTS idx_ai_models_available ON ai_models(enabled, user_selectable, display_order)",
+      "ALTER TABLE users ADD COLUMN selected_model_id TEXT",
+      "INSERT OR IGNORE INTO ai_models (id, label, provider, model, base_url, enabled, user_selectable, fallback_only, is_default, supports_vision, builtin, display_order, created_at, updated_at) VALUES ('groq_qwen38', 'Groq · Qwen 3.8 27B', 'groq', 'qwen/qwen3.8-27b', 'https://api.groq.com/openai/v1', 1, 1, 0, 1, 1, 1, 10, CAST(strftime('%s','now') AS INTEGER), CAST(strftime('%s','now') AS INTEGER))",
+      "INSERT OR IGNORE INTO ai_models (id, label, provider, model, base_url, enabled, user_selectable, fallback_only, is_default, supports_vision, builtin, display_order, created_at, updated_at) VALUES ('cloudflare_qwen38', 'Cloudflare · Qwen 3.8 27B (fallback)', 'cloudflare', '@cf/qwen/qwen3.8-27b', 'https://api.cloudflare.com/client/v4/accounts/ACCOUNT_ID/ai/v1', 1, 0, 1, 0, 1, 1, 20, CAST(strftime('%s','now') AS INTEGER), CAST(strftime('%s','now') AS INTEGER))",
+      "INSERT OR IGNORE INTO ai_models (id, label, provider, model, base_url, enabled, user_selectable, fallback_only, is_default, supports_vision, builtin, display_order, created_at, updated_at) VALUES ('cloudflare_glm47', 'Cloudflare · GLM 4.7 Flash', 'cloudflare', '@cf/zai-org/glm-4.7-flash', 'https://api.cloudflare.com/client/v4/accounts/ACCOUNT_ID/ai/v1', 0, 1, 0, 0, 0, 1, 30, CAST(strftime('%s','now') AS INTEGER), CAST(strftime('%s','now') AS INTEGER))",
+      "INSERT OR IGNORE INTO app_settings (key, value, updated_at, updated_by) SELECT 'maintenance_enabled', value, CAST(strftime('%s','now') AS INTEGER), updated_by FROM app_settings WHERE key = 'emergency_maintenance'"
+    ]
   }
 ];
 
