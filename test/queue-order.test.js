@@ -29,7 +29,9 @@ describe("queue ordering and telegram retries", () => {
   it("queues all messages while acknowledging callbacks inline and starts typing after acceptance", () => {
     const src = readFileSync(new URL("../src/handlers/webhook.ts", import.meta.url), "utf8");
     assert.match(src, /env\.NYRA_QUEUE\.send/);
-    assert.doesNotMatch(src, /safeProcessMessage|if \(isCommand\)/);
+    assert.doesNotMatch(src, /if \(isCommand\)/);
+    assert.match(src, /modelkey/);
+    assert.match(src, /safeProcessMessage\(env, ctx, msgUpdate\)/);
     assert.match(src, /await safeCallback/);
     assert.match(src, /sendChatAction/);
     assert.doesNotMatch(src, /fastlock:|isFastMessage/);

@@ -352,7 +352,11 @@ export async function handleUserCommand(env, ctx, command, args, message, from, 
     return;
   }
   if (cmd === "modelkey") {
-    if (!isAdmin(env, userId) || isGroup) { await sendMessage(env, chatId, "Admin-only command in private chat."); return; }
+    if (!isAdmin(env, userId) || isGroup) {
+      if (message && message.message_id) await deleteMessage(env, chatId, message.message_id);
+      await sendMessage(env, chatId, "Admin-only command in private chat.");
+      return;
+    }
     const match = String(args || "").trim().match(/^(\S+)\s+([\s\S]{8,4096})$/);
     try {
       if (!match) throw new Error("Usage: /modelkey MODEL_ID API_KEY");

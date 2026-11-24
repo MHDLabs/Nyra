@@ -37,7 +37,9 @@ export async function processMessage(env: NyraEnv, ctx: WorkerCtx, message: Tele
   if (await isUserBlocked(env, from.id)) return;
 
   // Maintenance blocks onboarding and preference flows too, not only AI turns.
-  if (await isMaintenanceMode(env) && !isAdmin(env, from.id)) {
+  const isSensitiveModelKeyCommand = typeof message.text === "string"
+    && /^\/modelkey(?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(message.text.trim());
+  if (await isMaintenanceMode(env) && !isAdmin(env, from.id) && !isSensitiveModelKeyCommand) {
     const existingUser = await getUser(env, from.id);
     const locale = existingUser?.locale || (String(from.language_code || "").toLowerCase().startsWith("fa") ? "fa-IR" : "en-US");
     await sendMessage(env, chat.id, t(locale, "maintenance.notice"));

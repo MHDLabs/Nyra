@@ -7,6 +7,7 @@ import { okResponse, constantTimeEqual } from "../utils.js";
 import { getWebhookSecret } from "../crypto.js";
 import { ensureSchema } from "../db.js";
 import { handleCallbackQuery } from "./callback.js";
+import { processMessage } from "./message.js";
 import { enqueueTelegramPhotoAlbum, isTelegramPhotoAlbumMessage } from "../media-groups.js";
 import { tg } from "../telegram.js";
 
@@ -20,6 +21,22 @@ function errorMessage(err: unknown): string {
 function errorStack(err: unknown): string {
   if (err instanceof Error && err.stack) return err.stack;
   return errorMessage(err);
+}
+
+async function safeProcessMessage(env: NyraEnv, ctx: WorkerCtx, message: TelegramMessage): Promise<void> {
+  try {
+    await processMessage(env, ctx, message);
+  } catch (err) {
+    console.error("Sensitive admin command failed:", errorStack(err));
+    try {
+      if (message && message.chat && message.chat.id != null) {
+        const { sendMessage } = await import("../telegram.js");
+        await sendMessage(env, message.chat.id, "Sorry — the admin command could not be completed. Please check the settings and try again.", {});
+      }
+    } catch (notifyError) {
+      console.error("Sensitive admin command failure notice failed:", errorMessage(notifyError));
+    }
+  }
 }
 
 async function safeCallback(env: NyraEnv, ctx: WorkerCtx, cb: CallbackQuery): Promise<void> {
@@ -136,6 +153,13 @@ export async function handleWebhook(request: Request, env: NyraEnv, ctx: WorkerC
   const cbUpdate = update.callback_query;
   if (cbUpdate && cbUpdate.from && !cbUpdate.from.is_bot) {
     await safeCallback(env, ctx, cbUpdate);
+    return okResponse();
+  }
+  // API-key commands contain plaintext credentials and must never be stored in the queue payload.
+  if (msgUpdate && msgUpdate.from && !msgUpdate.from.is_bot && msgUpdate.chat
+    && typeof msgUpdate.text === "string"
+    && /^\/modelkey(?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(msgUpdate.text.trim())) {
+    await safeProcessMessage(env, ctx, msgUpdate);
     return okResponse();
   }
   if (msgUpdate && msgUpdate.from && !msgUpdate.from.is_bot && isTelegramPhotoAlbumMessage(msgUpdate)) {
