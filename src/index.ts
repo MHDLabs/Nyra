@@ -54,6 +54,12 @@ async function markHandled(env: NyraEnv, updateId) {
 // msg2 can finish before a retried msg1 and the user sees answers out of order.
 async function processChain(env: NyraEnv, ctx, messages) {
   if (!messages.length) return;
+  // Telegram update_id is globally increasing; sort this chat's batch before taking its lease.
+  messages = [...messages].sort((left: any, right: any) => {
+    const leftId = left.body && left.body.update && Number(left.body.update.update_id);
+    const rightId = right.body && right.body.update && Number(right.body.update.update_id);
+    return (Number.isFinite(leftId) ? leftId : Number.MAX_SAFE_INTEGER) - (Number.isFinite(rightId) ? rightId : Number.MAX_SAFE_INTEGER);
+  });
   const firstBody = messages[0].body && (messages[0].body as any);
   // Cloudflare Queues can run multiple batches at once. A short D1 lease keeps
   // each conversation serialized across batches without blocking unrelated chats.
@@ -107,11 +113,30 @@ async function processChain(env: NyraEnv, ctx, messages) {
 
       const update = body && body.update;
       if (!update) { safeAck(msg); continue; }
-      if (msg.attempts > 1 && (await alreadyHandled(env, update.update_id))) { safeAck(msg); continue; }
+      const orderRow = await env.DB.prepare("SELECT status FROM queue_pending_updates WHERE update_id=?").bind(update.update_id).first();
+      if (orderRow && Number(orderRow.status) !== 0) { safeAck(msg); continue; }
+      const nextPending = await env.DB.prepare(
+        "SELECT update_id FROM queue_pending_updates WHERE conversation_key=? AND status=0 ORDER BY update_id ASC LIMIT 1"
+      ).bind(key).first();
+      if (nextPending && Number(nextPending.update_id) !== Number(update.update_id)) {
+        // Another batch may contain an earlier message from this chat. Do not
+        // allow a later update to overtake it, even if that batch starts later.
+        for (let j = i; j < messages.length; j++) safeRetry(messages[j]);
+        return;
+      }
+      if (msg.attempts > 1 && (await alreadyHandled(env, update.update_id))) {
+        await env.DB.prepare("UPDATE queue_pending_updates SET status=1, completed_at=? WHERE update_id=? AND status=0")
+          .bind(Math.floor(Date.now() / 1000), update.update_id).run();
+        safeAck(msg);
+        continue;
+      }
       try {
         if (update.message) await processMessage(env, ctx, update.message);
+        else if (update.edited_message) await processMessage(env, ctx, update.edited_message);
         else if (update.callback_query) await handleCallbackQuery(env, ctx, update.callback_query);
         await markHandled(env, update.update_id);
+        await env.DB.prepare("UPDATE queue_pending_updates SET status=1, completed_at=? WHERE update_id=? AND status=0")
+          .bind(Math.floor(Date.now() / 1000), update.update_id).run();
         safeAck(msg);
       } catch (err) {
         console.error("Queued update processing failed:", err.message);
@@ -184,8 +209,10 @@ export default {
     }
     await restoreDefaultMenuButton(env);
     ctx.waitUntil(ensureBotCommands(env));
-    // Clean up old failed updates (30 day retention)
+    // Clean up old failed updates (30 day retention) and completed queue cursors (1 day).
     ctx.waitUntil(cleanupOldFailedUpdates(env, 30));
+    ctx.waitUntil(env.DB.prepare("DELETE FROM queue_pending_updates WHERE status<>0 AND completed_at<?")
+      .bind(Math.floor(Date.now() / 1000) - 86400).run());
   },
   // Queue consumer: runs the full AI pipeline outside the webhook request lifecycle.
   // Consumer invocations allow long wall time (vs. the 30s post-response waitUntil cap),
@@ -210,6 +237,11 @@ export default {
         const msg = batch.messages[i];
         try {
           await logFailedUpdate(env, msg);
+          const failedUpdate = msg.body && (msg.body as any).update;
+          if (failedUpdate && failedUpdate.update_id !== undefined) {
+            await env.DB.prepare("UPDATE queue_pending_updates SET status=2, completed_at=? WHERE update_id=? AND status=0")
+              .bind(Math.floor(Date.now() / 1000), failedUpdate.update_id).run();
+          }
           msg.ack();
         } catch (err) {
           console.error("DLQ logging failed:", err.message);

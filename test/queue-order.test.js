@@ -16,6 +16,16 @@ describe("queue ordering and telegram retries", () => {
     assert.match(src, /return await tg\(env, method, payload, currentAttempt \+ 1\)/);
   });
 
+  it("serializes concurrent batches per conversation and honors the earliest pending Telegram update", () => {
+    const src = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
+    const wrangler = readFileSync(new URL("../wrangler.toml", import.meta.url), "utf8");
+    assert.match(src, /queue_conversation_locks/);
+    assert.match(src, /ORDER BY update_id ASC LIMIT 1/);
+    assert.match(src, /status=1, completed_at/);
+    assert.match(src, /status=2, completed_at/);
+    assert.match(wrangler, /max_concurrency = 3/);
+  });
+
   it("queues every non-command AI message and keeps command/callback handling inline", () => {
     const src = readFileSync(new URL("../src/handlers/webhook.ts", import.meta.url), "utf8");
     assert.match(src, /env\.NYRA_QUEUE\.send/);
