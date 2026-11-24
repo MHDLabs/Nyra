@@ -12,6 +12,8 @@ import { getTriggerConfig, setTriggerFlag, setTriggerWords } from "./db/settings
 import { getConfiguredReactions, getAllowedReactions } from "./reactions.js";
 import { showSettingsMenu, showPersonalitiesForUser, showUsage } from "./menus.js";
 import { createBroadcast, startBroadcast, listBroadcasts } from "./broadcast.js";
+import { getAdminModelList, getSelectableModels, setModelApiKey, updateModelAdmin } from "./providers/registry.js";
+import { deleteMessage } from "./telegram.js";
 async function handleStartCommand(env, chatId, userId, from, isGroup, startPayload) {
   if (isGroup) {
     const user = await getUser(env, userId);
@@ -261,7 +263,7 @@ async function privateOnlyNotice(env, chatId, userId) {
 const GROUP_COMMANDS = new Set(["start", "help"]);
 const PRIVATE_ONLY_COMMANDS = new Set([
   "settings", "personality", "memory", "forget", "remember", "setname",
-  "usage", "newpersonality", "admin", "stats", "broadcast"
+  "usage", "newpersonality", "admin", "stats", "broadcast", "models", "modelkey", "modelbase", "modeladd"
 ]);
 
 export async function handleUserCommand(env, ctx, command, args, message, from, chat) {
@@ -343,6 +345,52 @@ export async function handleUserCommand(env, ctx, command, args, message, from, 
     await handleNewPersonalityCommand(env, chatId, userId, args);
     return;
   }
+  if (cmd === "models") {
+    if (isGroup) { await privateOnlyNotice(env, chatId, userId); return; }
+    await upsertUser(env, from);
+    await showUserModelMenu(env, chatId, null, userId);
+    return;
+  }
+  if (cmd === "modelkey") {
+    if (!isAdmin(env, userId) || isGroup) { await sendMessage(env, chatId, "Admin-only command in private chat."); return; }
+    const match = String(args || "").trim().match(/^(\S+)\s+([\s\S]{8,4096})$/);
+    try {
+      if (!match) throw new Error("Usage: /modelkey MODEL_ID API_KEY");
+      await setModelApiKey(env, match[1], match[2]);
+      await sendMessage(env, chatId, "✅ کلید API به‌صورت رمزنگاری‌شده ذخیره شد. پیام حاوی کلید حذف می‌شود.");
+    } catch (error) {
+      await sendMessage(env, chatId, "خطا در ذخیرهٔ کلید: " + escapeHtml(error instanceof Error ? error.message : String(error)), { parse_mode: "HTML" });
+    } finally {
+      if (message && message.message_id) await deleteMessage(env, chatId, message.message_id);
+    }
+    return;
+  }
+  if (cmd === "modelbase") {
+    if (!isAdmin(env, userId) || isGroup) { await sendMessage(env, chatId, "Admin-only command in private chat."); return; }
+    const match = String(args || "").trim().match(/^(\S+)\s+([\s\S]+)$/);
+    if (!match) { await sendMessage(env, chatId, "Usage: /modelbase MODEL_ID https://provider.example/v1"); return; }
+    try {
+      await updateModelAdmin(env, match[1], { base_url: match[2].trim() });
+      await sendMessage(env, chatId, "✅ نشانی سرویس ذخیره شد.");
+    } catch (error) {
+      await sendMessage(env, chatId, "خطا: " + escapeHtml(error instanceof Error ? error.message : String(error)), { parse_mode: "HTML" });
+    }
+    return;
+  }
+  if (cmd === "modeladd") {
+    if (!isAdmin(env, userId) || isGroup) { await sendMessage(env, chatId, "Admin-only command in private chat."); return; }
+    const parts = String(args || "").split("|").map(value => value.trim());
+    if (parts.length !== 3) { await sendMessage(env, chatId, "Usage: /modeladd Name | model-id | https://gateway.example/v1"); return; }
+    try {
+      const { createCustomModel } = await import("./providers/registry.js");
+      const id = await createCustomModel(env, { label: parts[0], model: parts[1], base_url: parts[2] });
+      await sendMessage(env, chatId, "✅ مدل ساخته شد. شناسه: <code>" + escapeHtml(id) + "</code>\nکلید را با /modelkey " + escapeHtml(id) + " YOUR_API_KEY تنظیم کنید.", { parse_mode: "HTML" });
+    } catch (error) {
+      await sendMessage(env, chatId, "خطا: " + escapeHtml(error instanceof Error ? error.message : String(error)), { parse_mode: "HTML" });
+    }
+    return;
+  }
+
   if (cmd === "stats") {
     await handleStatsCommand(env, chatId, userId);
     return;
@@ -381,6 +429,51 @@ export async function handleUserCommand(env, ctx, command, args, message, from, 
 }
 
 
+
+export async function showUserModelMenu(env, chatId, messageId, userId) {
+  const user = await getUser(env, userId);
+  const models = await getSelectableModels(env, userId);
+  const active = user && user.selected_model_id ? String(user.selected_model_id) : "";
+  const lines = ["<b>🤖 انتخاب مدل گفتگو</b>", ""];
+  const rows: any[] = [];
+  if (!models.length) lines.push("فعلاً مدلی برای حساب شما آماده نیست. مدیر باید مدل را فعال و کلید API آن را تنظیم کند.");
+  for (const model of models) {
+    const selected = active ? model.id === active : model.is_default;
+    lines.push((selected ? "✅ " : "▫️ ") + escapeHtml(model.label));
+    rows.push([{ text: (selected ? "✓ " : "") + model.label.slice(0, 48), callback_data: "mdl:set:" + model.id }]);
+  }
+  rows.push([{ text: "بازگشت به تنظیمات", callback_data: "set:menu" }]);
+  const text = lines.join("\n");
+  if (messageId) await editMessage(env, chatId, messageId, text, buildInlineKeyboard(rows), "HTML");
+  else await sendMessage(env, chatId, text, { parse_mode: "HTML", reply_markup: buildInlineKeyboard(rows) });
+}
+
+export async function showAdminModels(env, chatId, messageId) {
+  const models = await getAdminModelList(env);
+  const lines = ["<b>🤖 مدیریت مدل‌های هوش مصنوعی</b>", ""];
+  const rows: any[] = [];
+  if (!models.length) lines.push("فهرست مدل‌ها خالی است.");
+  for (const model of models) {
+    lines.push("<b>" + escapeHtml(model.label) + "</b>");
+    lines.push("وضعیت: " + (model.enabled ? "فعال" : "خاموش")
+      + " · " + (model.has_api_key ? "کلید ذخیره شده" : "بدون کلید")
+      + " · " + (model.fallback_only ? "جایگزین خودکار" : (model.user_selectable ? "قابل انتخاب برای همه" : "فقط مدیر"))
+      + (model.is_default ? " · پیش‌فرض" : ""));
+    rows.push([
+      { text: (model.enabled ? "خاموش" : "روشن") + " · " + model.id.slice(0, 14), callback_data: "adm:model:toggle:" + model.id },
+      { text: model.is_default ? "✓ پیش‌فرض" : "انتخاب پیش‌فرض", callback_data: "adm:model:default:" + model.id }
+    ]);
+    if (!model.fallback_only) rows.push([{ text: model.user_selectable ? "فقط مدیر" : "قابل انتخاب برای همه", callback_data: "adm:model:visibility:" + model.id }]);
+  }
+  lines.push("", "تنظیم کلید: <code>/modelkey MODEL_ID API_KEY</code>");
+  lines.push("تنظیم نشانی: <code>/modelbase MODEL_ID https://.../v1</code>");
+  lines.push("افزودن: <code>/modeladd Name | model-id | https://.../v1</code>");
+  rows.push([{ text: "بازگشت", callback_data: "adm:main" }]);
+  const text = lines.join("\n");
+  if (messageId) await editMessage(env, chatId, messageId, text, buildInlineKeyboard(rows), "HTML");
+  else await sendMessage(env, chatId, text, { parse_mode: "HTML", reply_markup: buildInlineKeyboard(rows) });
+}
+
 export async function showAdminMenu(env, chatId, messageId) {
   const user = chatId ? await getUser(env, chatId).catch(function () { return null; }) : null;
   // Admin panel is always opened in private chat where chatId === admin telegram id.
@@ -394,6 +487,7 @@ export async function showAdminMenu(env, chatId, messageId) {
     [{ text: fa ? "🚫 مسدودها" : "🚫 Blocked", callback_data: "adm:blocked" }, { text: fa ? "📊 آمار" : "📊 Stats", callback_data: "adm:stats" }],
     [{ text: fa ? "💚 وضعیت" : "💚 Status", callback_data: "adm:status" }],
     [{ text: fa ? "😀 واکنش‌ها" : "😀 Reactions", callback_data: "adm:react" }, { text: fa ? "⚠️ نگهداری" : "⚠️ Maintenance", callback_data: "adm:maint" }],
+    [{ text: fa ? "🤖 مدل‌های هوش مصنوعی" : "🤖 AI Models", callback_data: "adm:models" }],
     [{ text: fa ? "🔔 تریگرها" : "🔔 Triggers", callback_data: "adm:triggers" }],
     [{ text: fa ? "بستن" : "Close", callback_data: "adm:close" }]
   ];
