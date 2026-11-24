@@ -4,6 +4,7 @@ import { truncate, escapeHtml, isAdmin } from "./utils.js";
 import { sendMessage, editMessage, buildInlineKeyboard } from "./telegram.js";
 import { getUser, parseUsageStats } from "./db.js";
 import { formatMemoryForUser, listAvailablePersonalities } from "./memory.js";
+import { getSelectableModels } from "./providers/registry.js";
 
 export async function showNoConnectionMessage(env, chatId, isGroup) {
   if (isGroup) return;
@@ -19,9 +20,13 @@ export async function showSettingsMenu(env, chatId, messageId, userId) {
   const hasCI = !!(user && user.custom_instructions && user.custom_instructions.length > 0);
   const loc = (user && user.locale) || "en-US";
   const fa = String(loc).startsWith("fa");
-  const model = typeof env.AI_MODEL === "string" && env.AI_MODEL.trim() ? env.AI_MODEL.trim() : "";
+  let selectableModels: any[] = [];
+  try { selectableModels = await getSelectableModels(env, userId); } catch (error) {}
+  const chosenModel = selectableModels.find(model => user && user.selected_model_id === model.id)
+    || selectableModels.find(model => model.is_default);
+  const model = chosenModel ? chosenModel.label : "";
   const memoryMode = (user && user.memory_mode) || "normal";
-  const configured = !!(model && env.AI_API_KEY);
+  const configured = !!model;
   const lines = fa
     ? ["<b>⚙️ تنظیمات</b>", "",
        "مدل مرکزی: " + (configured ? "<code>" + escapeHtml(model) + "</code>" : "<i>پیکربندی نشده</i>"),

@@ -361,13 +361,17 @@ export async function routeAdminPanel(env, ctx, request, pathname) {
   // GET /admin-api/stats
   if (path === "/admin-api/stats" && request.method === "GET") {
     try {
+      await ensureSchema(env);
       const users = await env.DB.prepare("SELECT COUNT(*) AS c FROM users").first();
       const logs = await env.DB.prepare("SELECT COUNT(*) AS c FROM chat_logs").first();
+      const models = await getAdminModelList(env);
+      const defaultModel = models.find((item) => item.enabled && item.is_default && item.has_api_key);
       return json(200, {
         users: users && users.c || 0,
         chat_logs: logs && logs.c || 0,
-        ai_model: env.AI_MODEL || null,
-        ai_configured: !!(env.AI_MODEL && env.AI_API_KEY)
+        ai_model: defaultModel ? defaultModel.label : null,
+        ai_configured: !!defaultModel,
+        configured_models: models.filter((item) => item.enabled && item.has_api_key).length
       });
     } catch (e) {
       return json(500, { error: e.message });

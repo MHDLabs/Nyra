@@ -65,6 +65,7 @@ export async function getSelectableModels(env: NyraEnv, userId: number | string)
   const admin = isAdmin(env, userId);
   const result = await env.DB.prepare("SELECT id,label,model,enabled,user_selectable,fallback_only,is_default,encrypted_api_key,key_iv,base_url FROM ai_models WHERE enabled=1 ORDER BY is_default DESC,display_order,created_at").all();
   return (result.results || []).filter((row: any) => row.encrypted_api_key && row.key_iv && row.base_url
+    && !/[{}]|ACCOUNT_ID/i.test(String(row.base_url))
     && !Number(row.fallback_only) && (admin || Number(row.user_selectable) === 1))
     .map((row: any) => ({ id: String(row.id), label: String(row.label), model: String(row.model), is_default: Number(row.is_default) === 1 }));
 }

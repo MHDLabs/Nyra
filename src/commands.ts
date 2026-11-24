@@ -573,11 +573,15 @@ export async function showAdminStats(env, chatId, messageId) {
     const ch = await env.DB.prepare("SELECT COUNT(*) AS c FROM chats").first(); chatCount = ch ? ch.c : 0;
     const tm = await env.DB.prepare("SELECT COUNT(*) AS c FROM thread_messages").first(); threadCount = tm ? tm.c : 0;
   } catch (err) {}
-  const configured = !!(env.AI_MODEL && env.AI_API_KEY);
+  let availableModels: any[] = [];
+  try { availableModels = await getAdminModelList(env); } catch (err) {}
+  const defaultModel = availableModels.find(model => model.is_default && model.enabled && model.has_api_key);
+  const configured = !!defaultModel;
   const text = "<b>Statistics</b>\\n\\nUsers: " + userCount
     + "\\nChats: " + chatCount
     + "\\nThread messages: " + threadCount
-    + "\\nCentral AI: " + (configured ? "configured" : "not configured")
+    + "\\nAI models configured: " + availableModels.filter(model => model.enabled && model.has_api_key).length
+    + "\\nDefault model: " + (defaultModel ? escapeHtml(defaultModel.label) : "not configured")
     + "\\nBlocked users: " + blockedCount;
   await editMessage(env, chatId, messageId, text, buildInlineKeyboard([[{ text: "Back", callback_data: "adm:main" }]]), "HTML");
 }
@@ -586,8 +590,10 @@ export async function showAdminStatus(env, chatId, messageId) {
   let dbOk = false, kvOk = false;
   try { await env.DB.prepare("SELECT 1").first(); dbOk = true; } catch (err) {}
   try { await env.KV.get("healthcheck"); kvOk = true; } catch (err) {}
-  const aiOk = !!(env.AI_MODEL && env.AI_API_KEY);
-  const model = aiOk ? escapeHtml(env.AI_MODEL) : "not configured";
+  let availableModels: any[] = [];
+  try { availableModels = await getAdminModelList(env); } catch (err) {}
+  const defaultModel = availableModels.find(item => item.is_default && item.enabled && item.has_api_key);
+  const model = defaultModel ? escapeHtml(defaultModel.label) : "not configured";
   const text = "<b>System Status</b>\\n\\nD1: " + (dbOk ? "OK" : "FAIL")
     + "\\nKV: " + (kvOk ? "OK" : "FAIL")
     + "\\nCentral AI: " + model
