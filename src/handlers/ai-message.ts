@@ -271,6 +271,8 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
   let accumulated = "";
   let lastEditAt = 0;
   let lastEditedText = "";
+  let previewEditInFlight = false;
+  let previewEditPromise: Promise<unknown> = Promise.resolve();
   let heartbeatStopped = false;
   let finalUsage: { in?: number; out?: number } | null = null;
   let finalAttempts = 0;
@@ -289,17 +291,30 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
         }
         accumulated += event.text;
         const nowMs = Date.now();
-        if (nowMs - lastEditAt >= STREAM_EDIT_THROTTLE_MS) {
-          lastEditAt = nowMs;
-          // The preview is sent as plain text with no parse_mode, so it must be
-          // Markdown-stripped or the raw `**`/backticks show up while streaming.
+        if (!previewEditInFlight && nowMs - lastEditAt >= STREAM_EDIT_THROTTLE_MS) {
+          // The preview is plain text (no parse_mode), so Markdown markers are
+          // stripped. Telegram edits run in the background: a slow edit must
+          // never pause token consumption from the model stream.
           let preview = plainText(accumulated);
           if (preview.length > MAX_TELEGRAM_LENGTH - 20) {
             preview = preview.slice(0, MAX_TELEGRAM_LENGTH - 30) + "\n...";
           }
           if (preview !== lastEditedText && preview.length > 0) {
+            lastEditAt = nowMs;
             lastEditedText = preview;
-            await editMessage(env, chatId, placeholderMsgId, preview, undefined, undefined);
+            previewEditInFlight = true;
+            previewEditPromise = previewEditPromise
+              .then(async () => {
+                const result = await editMessage(env, chatId, placeholderMsgId, preview, undefined, undefined);
+                if (!result || !result.ok) {
+                  console.warn("Streaming preview edit failed:", result && result.description || "Telegram API error");
+                }
+              })
+              .catch((error) => {
+                console.warn("Streaming preview edit failed:", error instanceof Error ? error.message : String(error));
+              })
+              .finally(() => { previewEditInFlight = false; });
+            ctx.waitUntil?.(previewEditPromise);
           }
         }
       } else if (event.type === "usage") {
@@ -324,6 +339,9 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
     // request by a full heartbeat interval.
     if (!heartbeatStopped) { heartbeat.stop(); heartbeatStopped = true; }
   }
+
+  // Ensure an older background preview cannot overwrite the terminal answer.
+  await previewEditPromise;
 
   if (!streamCompleted || streamError) {
     // A failed central request is recorded in the user's ordinary usage stats.
