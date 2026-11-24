@@ -32,6 +32,7 @@ export async function showSettingsMenu(env, chatId, messageId, userId) {
        "Memory: " + escapeHtml(memoryMode),
        "Language: " + escapeHtml(loc)];
   const rows = [
+    [{ text: fa ? "🤖 انتخاب مدل" : "🤖 Choose Model", callback_data: "set:model" }],
     [{ text: fa ? "🎭 شخصیت‌ها" : "🎭 Personalities", callback_data: "set:pers" }],
     [
       { text: fa ? "🧠 حافظه" : "🧠 Memory", callback_data: "set:mem" },

@@ -13,6 +13,8 @@ import { showSettingsMenu, showPersonalitiesForUser, showMyPersonalities, showPe
 import { showAdminMenu, showAdminUsers, showAdminGroups, showAdminBlocked, showAdminStats, showAdminStatus, showAdminReactions } from "../commands.js";
 import { setConfiguredReactions, clearConfiguredReactions } from "../reactions.js";
 import { handleOnboardingCallback } from "./onboarding.js";
+import { setUserSelectedModel } from "../providers/registry.js";
+import { retryWithCloudflare } from "./ai-message.js";
 
 type WorkerCtx = { waitUntil?(promise: Promise<unknown>): void };
 
@@ -34,6 +36,37 @@ export async function handleCallbackQuery(
   const messageId = query.message.message_id;
   const parts = data.split(":");
   const namespace = parts[0];
+
+  if (namespace === "ai" && parts[1] === "retry") {
+    const token = String(parts[2] || "");
+    await answerCallback(env, query.id, "در حال تلاش با Cloudflare…");
+    try {
+      const raw = token ? await env.KV.get("ai-retry:" + token) : null;
+      if (!raw) { await editMessage(env, chatId, messageId, "این درخواست منقضی شده است. پیام را دوباره ارسال کنید."); return; }
+      const snapshot = JSON.parse(raw);
+      if (String(snapshot.user_id) !== String(userId)) { await editMessage(env, chatId, messageId, "این دکمه برای فرستندهٔ درخواست است."); return; }
+      await env.KV.delete("ai-retry:" + token);
+      await retryWithCloudflare(env, ctx, snapshot, userId);
+    } catch (error) {
+      console.error("Cloudflare retry callback failed:", error instanceof Error ? error.message : String(error));
+      await editMessage(env, chatId, messageId, "⚠ تلاش مجدد با Cloudflare انجام نشد.");
+    }
+    return;
+  }
+
+  if (namespace === "mdl") {
+    await answerCallback(env, query.id, "");
+    if (parts[1] === "set" && parts[2]) {
+      const saved = await setUserSelectedModel(env, userId, parts[2]);
+      if (saved) {
+        const { showUserModelMenu } = await import("../commands.js");
+        await showUserModelMenu(env, chatId, messageId, userId);
+      } else {
+        await editMessage(env, chatId, messageId, "این مدل دیگر فعال یا برای حساب شما مجاز نیست.");
+      }
+    }
+    return;
+  }
 
   if (namespace === "onboard") {
     const action = parts[1];
@@ -195,6 +228,20 @@ export async function handleCallbackQuery(
         if (action === "on") { await setMaintenanceMode(env, true, userId); }
         else if (action === "off") { await setMaintenanceMode(env, false, userId); }
         await showAdminMaintenance(env, chatId, messageId);
+      }
+      else if (section === "models") {
+        const { showAdminModels } = await import("../commands.js");
+        await showAdminModels(env, chatId, messageId);
+      }
+      else if (section === "model") {
+        const { getAdminModelList, setModelEnabled, setModelVisibility, setDefaultModel } = await import("../providers/registry.js");
+        const models = await getAdminModelList(env);
+        const model = models.find(item => item.id === target);
+        if (model && action === "toggle") await setModelEnabled(env, target, !model.enabled);
+        else if (model && action === "visibility" && !model.fallback_only) await setModelVisibility(env, target, !model.user_selectable);
+        else if (model && action === "default") await setDefaultModel(env, target);
+        const { showAdminModels } = await import("../commands.js");
+        await showAdminModels(env, chatId, messageId);
       }
       else if (section === "users") { await showAdminUsers(env, chatId, messageId); }
       else if (section === "groups") { await showAdminGroups(env, chatId, messageId); }
