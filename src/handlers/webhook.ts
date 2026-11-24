@@ -6,7 +6,6 @@ import type { CallbackQuery, TelegramMessage, TelegramUpdate } from "../../types
 import { okResponse, constantTimeEqual } from "../utils.js";
 import { getWebhookSecret } from "../crypto.js";
 import { ensureSchema } from "../db.js";
-import { processMessage } from "./message.js";
 import { handleCallbackQuery } from "./callback.js";
 import { enqueueTelegramPhotoAlbum, isTelegramPhotoAlbumMessage } from "../media-groups.js";
 import { tg } from "../telegram.js";
@@ -142,6 +141,13 @@ export async function handleWebhook(request: Request, env: NyraEnv, ctx: WorkerC
   if (msgUpdate && msgUpdate.from && !msgUpdate.from.is_bot && isTelegramPhotoAlbumMessage(msgUpdate)) {
     try {
       await enqueueTelegramPhotoAlbum(env, msgUpdate);
+      if (typeof ctx.waitUntil === "function" && msgUpdate.chat) {
+        ctx.waitUntil(tg(env, "sendChatAction", { chat_id: msgUpdate.chat.id, action: "typing" })
+          .then((result) => {
+            if (!result || !result.ok) console.warn("Initial album typing indicator failed:", result && result.description || "Telegram API error");
+          })
+          .catch((error) => console.warn("Initial album typing indicator failed:", errorMessage(error))));
+      }
     } catch (err) {
       console.error("photo-album enqueue failed:", errorMessage(err));
       if (updateId !== null) {
