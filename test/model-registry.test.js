@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { validateModelBaseUrl, getAIConfigForUser } from "../src/providers/registry.js";
+import {
+  validateModelBaseUrl, getAIConfigForUser, getSelectableModels,
+  setUserSelectedModel, setModelApiKey, getAdminModelList, updateModelAdmin
+} from "../src/providers/registry.js";
+import { webcrypto } from "node:crypto";
+
+if (!globalThis.crypto) Object.defineProperty(globalThis, "crypto", { value: webcrypto });
 
 test("model registry accepts secure OpenAI-compatible endpoints", () => {
   assert.equal(validateModelBaseUrl("https://api.groq.com/openai/v1/"), "https://api.groq.com/openai/v1");
@@ -30,4 +36,105 @@ test("a forced Cloudflare retry never silently runs the default Groq model", asy
     } }
   };
   await assert.rejects(getAIConfigForUser(env, 123, "cloudflare_qwen38"), /retry model is not configured/);
+});
+
+
+function registryEnv(rows, adminIds = "123") {
+  const writes = [];
+  return {
+    ADMIN_IDS: adminIds,
+    NYRA_MODEL_ENCRYPTION_KEY: "test-encryption-key-that-is-at-least-32-characters-long",
+    writes,
+    DB: {
+      prepare(sql) {
+        let args = [];
+        return {
+          bind(...values) { args = values; return this; },
+          async all() { return { results: rows }; },
+          async first() {
+            if (sql.includes("SELECT selected_model_id FROM users")) return { selected_model_id: null };
+            if (sql.includes("SELECT * FROM ai_models WHERE id=?")) return rows.find(row => row.id === args[0]) || null;
+            if (sql.includes("SELECT id FROM ai_models")) {
+              const row = rows.find(item => item.id === args[0] && item.enabled === 1
+                && item.encrypted_api_key && item.key_iv && item.base_url
+                && !item.fallback_only && (args[1] === 1 || item.user_selectable === 1));
+              return row ? { id: row.id } : null;
+            }
+            return null;
+          },
+          async run() {
+            writes.push({ sql, args });
+            if (sql.includes("UPDATE ai_models SET encrypted_api_key")) {
+              const row = rows.find(item => item.id === args[3]);
+              if (row) {
+                row.encrypted_api_key = args[0];
+                row.key_iv = args[1];
+                return { meta: { changes: 1 } };
+              }
+              return { meta: { changes: 0 } };
+            }
+            return { meta: { changes: 1 } };
+          }
+        };
+      }
+    }
+  };
+}
+
+const configuredModel = (overrides = {}) => ({
+  id: "groq_qwen38", label: "Groq Qwen", provider: "groq",
+  model: "qwen/qwen3.8-27b", base_url: "https://api.groq.com/openai/v1",
+  encrypted_api_key: "ciphertext", key_iv: "iv", enabled: 1,
+  user_selectable: 1, fallback_only: 0, is_default: 1,
+  supports_vision: 1, builtin: 1, ...overrides
+});
+
+test("model picker exposes only configured, enabled and permitted models", async () => {
+  const rows = [
+    configuredModel(),
+    configuredModel({ id: "admin_only", label: "Admin only", user_selectable: 0, is_default: 0 }),
+    configuredModel({ id: "fallback", fallback_only: 1, user_selectable: 0, is_default: 0 }),
+    configuredModel({ id: "no_key", encrypted_api_key: null, key_iv: null, is_default: 0 }),
+    configuredModel({ id: "disabled", enabled: 0, is_default: 0 })
+  ];
+  const env = registryEnv(rows);
+  const userModels = await getSelectableModels(env, 456);
+  const adminModels = await getSelectableModels(env, 123);
+  assert.deepEqual(userModels.map(model => model.id), ["groq_qwen38"]);
+  assert.deepEqual(adminModels.map(model => model.id), ["groq_qwen38", "admin_only"]);
+});
+
+test("users cannot select admin-only models, but administrators can", async () => {
+  const rows = [
+    configuredModel(),
+    configuredModel({ id: "admin_only", user_selectable: 0, is_default: 0 })
+  ];
+  const env = registryEnv(rows);
+  assert.equal(await setUserSelectedModel(env, 456, "admin_only"), false);
+  assert.equal(env.writes.length, 0);
+  assert.equal(await setUserSelectedModel(env, 123, "admin_only"), true);
+  assert.equal(env.writes.length, 1);
+  assert.match(env.writes[0].sql, /UPDATE users SET selected_model_id/);
+});
+
+test("provider API keys are encrypted at rest and never appear in admin model output", async () => {
+  const rows = [configuredModel({ encrypted_api_key: null, key_iv: null })];
+  const env = registryEnv(rows);
+  const apiKey = "groq-secret-api-key-value";
+  await setModelApiKey(env, "groq_qwen38", apiKey);
+  assert.notEqual(rows[0].encrypted_api_key, apiKey);
+  assert.ok(rows[0].key_iv);
+  const publicRows = await getAdminModelList(env);
+  assert.equal(publicRows[0].has_api_key, true);
+  assert.equal("encrypted_api_key" in publicRows[0], false);
+  assert.equal("key_iv" in publicRows[0], false);
+  const resolved = await getAIConfigForUser(env, 456);
+  assert.equal(resolved.config.api_key, apiKey);
+});
+
+test("the global default cannot be disabled or hidden from users", async () => {
+  const rows = [configuredModel()];
+  const env = registryEnv(rows);
+  await assert.rejects(updateModelAdmin(env, "groq_qwen38", { enabled: false }), /different default model/);
+  await assert.rejects(updateModelAdmin(env, "groq_qwen38", { user_selectable: false }), /different default model/);
 });

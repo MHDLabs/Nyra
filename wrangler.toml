@@ -3,9 +3,9 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
-# One-click deploy: press the "Deploy to Cloudflare" button in the README.
-# The Cloudflare deploy flow prompts for Telegram credentials, the central AI
-# API key/model, and admin IDs, and provisions D1, KV and the queue automatically.
+# One-click deploy provisions the Worker bindings and Telegram runtime.
+# Configure the shared model catalog after deployment from the admin panel.
+# Provider API keys are encrypted in D1 using NYRA_MODEL_ENCRYPTION_KEY.
 
 # Expose the Worker on https://nyra.<your-subdomain>.workers.dev so it works
 # without any custom domain.
