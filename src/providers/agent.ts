@@ -5,6 +5,7 @@ import { sendMessage } from "../telegram.js";
 import { normalizeError, humanizeError } from "./errors.js";
 import { generateOpenAICompatible, streamOpenAICompatible } from "./openai.js";
 import { getCentralAIConfig } from "./config.js";
+import { getAIConfigForUser, redactConfiguredModelKeys } from "./registry.js";
 import { executeAgentTool, configuredToolDefinitions, isWebSearchConfigured } from "../tools.js";
 
 /** All requests use the same operator-owned OpenAI-compatible endpoint and key. */
@@ -26,7 +27,12 @@ function isExplicitMemoryIntent(messages) {
 }
 
 async function* streamCentralAgent(env: NyraEnv, user, messages, options) {
-  const config = getCentralAIConfig(env);
+  const resolved = user && user._aiConfig
+    ? { config: user._aiConfig, fallbackConfig: user._fallbackAIConfig || null }
+    : await getAIConfigForUser(env, user && user.telegram_id, user && user._forceModelId);
+  let config = resolved.config;
+  const fallbackConfig = resolved.fallbackConfig;
+  let fallbackAttempted = false;
   const reasoningModel = /(^|[-/])(o[1-9]|gpt-5)/i.test(config.model);
   const definitions = reasoningModel ? [] : configuredToolDefinitions("openai-compatible", env, {
     allowReact: !!(user && user.is_group)
@@ -101,6 +107,40 @@ async function* streamCentralAgent(env: NyraEnv, user, messages, options) {
       if (stallTimer) clearTimeout(stallTimer);
     }
 
+    if (streamFailed && Number(streamFailed.status) === 429 && config.id === "groq_qwen38"
+      && fallbackConfig && !fallbackAttempted && !(user && user._forceModelId)
+      && roundText.length === 0 && calls.length === 0) {
+      config = fallbackConfig;
+      fallbackAttempted = true;
+      yield { type: "fallback", from: "Groq · Qwen 3.8 27B", to: config.label };
+      const remainingFallback = deadline - Date.now();
+      const fallbackController = new AbortController();
+      const fallbackTimeout = Math.max(1000, Math.min((options && options.stallTimeoutMs) || AI_STREAM_STALL_TIMEOUT_MS, remainingFallback));
+      const fallbackTimer = setTimeout(() => fallbackController.abort(), fallbackTimeout);
+      streamFailed = null;
+      try {
+        requestAttempts++;
+        const fallbackStream = streamOpenAICompatible(config, config.api_key, conversation, {
+          ...options, tools: toolsDisabled ? [] : definitions
+        }, fallbackController.signal);
+        for await (const event of fallbackStream) {
+          if (event.type === "text" && typeof event.text === "string") {
+            roundText += event.text;
+            yield { type: "text", text: event.text };
+          } else if (event.type === "tool_calls" && Array.isArray(event.toolCalls)) {
+            calls = event.toolCalls;
+          } else if (event.type === "usage" && event.usage) {
+            usage = event.usage;
+            yield { type: "usage", usage };
+          }
+        }
+      } catch (fallbackError) {
+        streamFailed = fallbackError instanceof Error ? fallbackError : new Error(String(fallbackError));
+        (streamFailed as any).fallbackAttempted = true;
+        (streamFailed as any).originalRateLimit = true;
+      } finally { clearTimeout(fallbackTimer); }
+    }
+
     if (streamFailed) {
       // Some OpenAI-compatible servers reject tools. Retry once against the
       // exact same endpoint and model, with tools disabled for this request.
@@ -116,6 +156,10 @@ async function* streamCentralAgent(env: NyraEnv, user, messages, options) {
       }
       const failure = streamFailed instanceof Error ? streamFailed : new Error(String(streamFailed));
       (failure as any).requestAttempts = requestAttempts;
+      if (fallbackAttempted || (failure as any).fallbackAttempted) {
+        (failure as any).fallbackAttempted = true;
+        (failure as any).originalRateLimit = true;
+      }
       throw failure;
     }
 
@@ -188,6 +232,8 @@ export async function* streamCentralAI(env: NyraEnv, user, messages, options) {
       category: normalizeError(error, error && error.status),
       error,
       attempts: Number.isInteger(error && error.requestAttempts) ? error.requestAttempts : 1,
+      fallbackAttempted: error && error.fallbackAttempted === true,
+      originalRateLimit: error && error.originalRateLimit === true,
       partial: false
     };
   }
@@ -221,7 +267,10 @@ export async function notifyAdminOnError(env: NyraEnv, opts) {
       "<b>Message:</b> " + escapeHtml(humanizeError(category)),
       "<b>Attempts:</b> " + (opts.attempts || 1)
     ];
-    if (opts.raw_error) lines.push("<b>Last error:</b> <code>" + escapeHtml(truncate(redactCentralSecret(env, opts.raw_error), 300)) + "</code>");
+    if (opts.raw_error) {
+      const raw = await redactConfiguredModelKeys(env, redactCentralSecret(env, opts.raw_error));
+      lines.push("<b>Last error:</b> <code>" + escapeHtml(truncate(raw, 300)) + "</code>");
+    }
     if (opts.user_id) lines.push("<b>User:</b> <code>" + opts.user_id + "</code>");
     if (opts.chat_id) lines.push("<b>Chat:</b> <code>" + opts.chat_id + "</code>");
     lines.push("<b>Time:</b> " + new Date().toISOString());

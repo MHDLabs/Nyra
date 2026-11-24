@@ -7,7 +7,7 @@ import { detectGuestContext } from "../db/settings.js";
 // it runs inside the queue consumer, never inside the webhook request.
 import { MAX_TELEGRAM_LENGTH, MEMORY_UPDATE_INTERVAL, RATE_LIMIT_USER_PER_MIN, RATE_LIMIT_USER_PER_HOUR, RATE_LIMIT_CHAT_PER_HOUR, STREAM_EDIT_THROTTLE_MS, STREAM_PLACEHOLDER, AI_STREAM_TOTAL_BUDGET_MS, AI_STREAM_STALL_TIMEOUT_MS } from "../config.js";
 import { now, buildUserContent, checkRateLimit, base64ToBytes } from "../utils.js";
-import { sendMessageReturn, sendMessage, sendMessageSafeResult, editMessage, deleteMessage, startTypingHeartbeat, pickImageFiles, downloadTelegramFile, sendRichMessageSafe } from "../telegram.js";
+import { sendMessageReturn, sendMessage, sendMessageSafeResult, editMessage, deleteMessage, startTypingHeartbeat, pickImageFiles, downloadTelegramFile, sendRichMessageSafe, buildInlineKeyboard } from "../telegram.js";
 import { inspectTextDocument, isImageDocument, buildTextDocumentPrompt, MAX_TEXT_DOCUMENT_BYTES, MAX_TEXT_DOCUMENT_CHARS, MAX_AI_ALBUM_IMAGES, MAX_AI_ALBUM_TOTAL_BYTES, MAX_AI_IMAGE_FILE_BYTES } from "../file-input.js";
 import { getUser, upsertUser, getChat, saveThreadMessage, getThreadContext, updateUsageStatsAsync } from "../db.js";
 import { logChatMessage, detectMediaType } from "../db/chat-logs.js";
@@ -15,7 +15,7 @@ import { normalizeError, humanizeError, shouldNotifyAdmin, streamCentralAI, noti
 import { buildContextMessages, getUserPersonality, consolidateMemory, consolidateChatSummary, incrementMessageCount } from "../memory.js";
 import { safeFormatChunks, plainText, plainTextChunks } from "../formatter.js";
 import { handleExplicitMemoryIntent } from "../tools.js";
-import { getCentralAIConfig } from "../providers/config.js";
+import { getAIConfigForUser } from "../providers/registry.js";
 
 function applyGuestPrefix(text: string, guestMode: boolean, parseMode?: string | null): string {
   if (!guestMode) return text;
@@ -43,7 +43,8 @@ export async function handleAIMessage(
   from: TelegramUser,
   chat: TelegramChat,
   isGroup: boolean,
-  threadId: string | number | null | undefined
+  threadId: string | number | null | undefined,
+  forcedModelId?: string | null
 ): Promise<void> {
   // The typing indicator is owned by this wrapper, not by the stream loop, so
   // it covers *every* slow phase (profile load, configuration checks, context
@@ -52,13 +53,13 @@ export async function handleAIMessage(
   // as soon as real text starts arriving.
   const heartbeat = startTypingHeartbeat(env, ctx, chat.id);
   try {
-    return await runAIMessage(env, ctx, message, from, chat, isGroup, threadId, heartbeat);
+    return await runAIMessage(env, ctx, message, from, chat, isGroup, threadId, heartbeat, forcedModelId);
   } finally {
     heartbeat.stop();
   }
 }
 
-async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, heartbeat) {
+async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, heartbeat, forcedModelId) {
   let guestMode = false;
   if (isGroup) {
     try {
@@ -112,7 +113,11 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
 
   let aiConfig;
   try {
-    aiConfig = getCentralAIConfig(env);
+    const resolvedModel = await getAIConfigForUser(env, userId, forcedModelId);
+    aiConfig = resolvedModel.config;
+    user._aiConfig = resolvedModel.config;
+    user._fallbackAIConfig = resolvedModel.fallbackConfig;
+    user._forceModelId = forcedModelId || null;
   } catch (error) {
     const isPersian = String(user.locale || "").toLowerCase().startsWith("fa");
     await sendMessage(env, chatId, isPersian
@@ -269,8 +274,9 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
   let heartbeatStopped = false;
   let finalUsage: { in?: number; out?: number } | null = null;
   let finalAttempts = 0;
-  let streamError: { message?: string } | null = null;
+  let streamError: { message?: string; fallbackAttempted?: boolean; originalRateLimit?: boolean } | null = null;
   let streamErrorCategory: string | null = null;
+  let fallbackRetryAvailable = false;
   let streamCompleted = false;
 
   try {
@@ -305,6 +311,7 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
       } else if (event.type === "error") {
         streamError = event.error;
         streamErrorCategory = event.category || null;
+        fallbackRetryAvailable = event.fallbackAttempted === true && event.originalRateLimit === true;
         finalAttempts = event.attempts || 0;
       }
     }
@@ -339,10 +346,23 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
     } else {
       finalText = "⚠ " + humanizeError(category);
     }
-    const replaced = await editMessage(env, chatId, placeholderMsgId, applyGuestPrefix(finalText, guestMode), undefined, undefined);
+    let retryMarkup: any = undefined;
+    if (fallbackRetryAvailable && accumulated.length === 0 && !forcedModelId && env.KV && typeof env.KV.put === "function") {
+      try {
+        const snapshot = { user_id: userId, chat_id: chatId, placeholder_message_id: placeholderMsgId, thread_id: threadId, is_group: isGroup, messages };
+        const encoded = JSON.stringify(snapshot);
+        if (encoded.length <= 80000 && encoded.indexOf("data:image/") === -1) {
+          const random = crypto.getRandomValues(new Uint8Array(9));
+          const token = Array.from(random).map((n) => n.toString(16).padStart(2, "0")).join("");
+          await env.KV.put("ai-retry:" + token, encoded, { expirationTtl: 900 });
+          retryMarkup = buildInlineKeyboard([[{ text: "🔁 تلاش دوباره با Cloudflare Qwen", callback_data: "ai:retry:" + token }]]);
+        }
+      } catch (retryError) { console.error("AI retry snapshot storage failed:", retryError instanceof Error ? retryError.message : String(retryError)); }
+    }
+    const replaced = await editMessage(env, chatId, placeholderMsgId, applyGuestPrefix(finalText, guestMode), retryMarkup, undefined);
     if (!replaced || !replaced.ok) {
       await deleteMessage(env, chatId, placeholderMsgId);
-      await sendMessage(env, chatId, applyGuestPrefix(finalText, guestMode, "HTML"), { parse_mode: "HTML" });
+      await sendMessage(env, chatId, applyGuestPrefix(finalText, guestMode, "HTML"), { parse_mode: "HTML", reply_markup: retryMarkup });
     }
     if (shouldNotifyAdmin(category)) {
       ctx.waitUntil?.(notifyAdminOnError(env, {
@@ -464,4 +484,50 @@ async function runAIMessage(env, ctx, message, from, chat, isGroup, threadId, he
       }
     })());
   }
+}
+
+/** One-shot manual retry for a failed Groq rate-limit request on Cloudflare Qwen. */
+export async function retryWithCloudflare(env: NyraEnv, ctx: WorkerCtx, snapshot: any, requesterId: number | string) {
+  if (!snapshot || String(snapshot.user_id) !== String(requesterId) || !Array.isArray(snapshot.messages)) return { ok: false };
+  const user = await getUser(env, requesterId);
+  if (!user) return { ok: false };
+  user.is_group = !!snapshot.is_group; user._toolChatId = snapshot.chat_id; user._toolMessageId = snapshot.placeholder_message_id;
+  user._forceModelId = "cloudflare_qwen38";
+  try {
+    const resolved = await getAIConfigForUser(env, requesterId, "cloudflare_qwen38");
+    user._aiConfig = resolved.config; user._fallbackAIConfig = null;
+  } catch {
+    await editMessage(env, snapshot.chat_id, snapshot.placeholder_message_id, "⚠ Cloudflare Qwen پیکربندی نشده است. مدیر باید کلید و Base URL را بررسی کند.");
+    return { ok: false };
+  }
+  let accumulated = "", usage: any = null, completed = false, category = "unknown";
+  for await (const event of streamCentralAI(env, user, snapshot.messages, {
+    max_tokens: 2048, temperature: 0.7, totalBudgetMs: AI_STREAM_TOTAL_BUDGET_MS, stallTimeoutMs: AI_STREAM_STALL_TIMEOUT_MS
+  })) {
+    if (event.type === "text") accumulated += String(event.text || "");
+    else if (event.type === "usage") usage = event.usage || usage;
+    else if (event.type === "done") { completed = true; usage = event.usage || usage; }
+    else if (event.type === "error") category = event.category || category;
+  }
+  if (!completed) {
+    updateUsageStatsAsync(env, ctx, requesterId, false, category, null);
+    await editMessage(env, snapshot.chat_id, snapshot.placeholder_message_id, "⚠ " + humanizeError(category));
+    return { ok: false };
+  }
+  const reply = accumulated || "(empty response)";
+  updateUsageStatsAsync(env, ctx, requesterId, true, null, usage);
+  const chunks = safeFormatChunks(reply, "MarkdownV2");
+  const first = chunks[0];
+  const edited = await editMessage(env, snapshot.chat_id, snapshot.placeholder_message_id, first.text, undefined, first.parseMode);
+  let finalId = snapshot.placeholder_message_id;
+  if (!edited || !edited.ok) {
+    await deleteMessage(env, snapshot.chat_id, snapshot.placeholder_message_id);
+    const sent = await sendMessageReturn(env, snapshot.chat_id, first.text, first.parseMode ? { parse_mode: first.parseMode } : {});
+    if (sent?.ok && typeof sent.result?.message_id === "number") finalId = sent.result.message_id;
+  }
+  for (let i = 1; i < chunks.length; i++) await sendMessageReturn(env, snapshot.chat_id, chunks[i].text, chunks[i].parseMode ? { parse_mode: chunks[i].parseMode } : {});
+  await saveThreadMessage(env, snapshot.chat_id, snapshot.thread_id, finalId, null, "assistant", reply);
+  ctx.waitUntil?.(logChatMessage(env, { chat_id: snapshot.chat_id, chat_type: snapshot.is_group ? "group" : "private",
+    message_id: finalId, user_id: null, role: "assistant", content: reply, created_at: now() }));
+  return { ok: true };
 }
