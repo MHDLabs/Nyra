@@ -358,14 +358,24 @@ export async function handleUserCommand(env, ctx, command, args, message, from, 
       return;
     }
     const match = String(args || "").trim().match(/^(\S+)\s+([\s\S]{8,4096})$/);
+    let keyStored = false;
     try {
       if (!match) throw new Error("Usage: /modelkey MODEL_ID API_KEY");
       await setModelApiKey(env, match[1], match[2]);
-      await sendMessage(env, chatId, "✅ کلید API به‌صورت رمزنگاری‌شده ذخیره شد. پیام حاوی کلید حذف می‌شود.");
+      keyStored = true;
+      await sendMessage(env, chatId, "✅ کلید API به‌صورت رمزنگاری‌شده ذخیره شد.");
     } catch (error) {
       await sendMessage(env, chatId, "خطا در ذخیرهٔ کلید: " + escapeHtml(error instanceof Error ? error.message : String(error)), { parse_mode: "HTML" });
     } finally {
-      if (message && message.message_id) await deleteMessage(env, chatId, message.message_id);
+      if (message && message.message_id) {
+        const removed = await deleteMessage(env, chatId, message.message_id);
+        if (!removed || !removed.ok) {
+          const warning = keyStored
+            ? "⚠️ کلید ذخیره شد، اما حذف پیام حاوی آن از تلگرام ناموفق بود. پیام را دستی حذف کن و اگر احتمال می‌دهی کسی آن را دیده، کلید را از ارائه‌دهنده تعویض کن."
+            : "⚠️ حذف پیام فرمان ناموفق بود. اگر پیام حاوی کلید است، آن را دستی حذف و در صورت احتمال مشاهده، کلید را تعویض کن.";
+          await sendMessage(env, chatId, warning);
+        }
+      }
     }
     return;
   }

@@ -36,8 +36,11 @@ export async function processMessage(env: NyraEnv, ctx: WorkerCtx, message: Tele
   // their message can be deleted by the command handler. Captions are covered too.
   const isSensitiveModelKeyCommand = /^\/modelkey(?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(String(message.text || message.caption || "").trim());
   if (isSensitiveModelKeyCommand && isGroup) {
-    await deleteMessage(env, chat.id, message.message_id);
-    await sendMessage(env, chat.id, "برای امنیت، کلید API را فقط در گفتگوی خصوصی با نیرا ثبت کن. پیام حذف شد.");
+    const removed = await deleteMessage(env, chat.id, message.message_id);
+    const notice = removed && removed.ok
+      ? "برای امنیت، کلید API را فقط در گفتگوی خصوصی با نیرا ثبت کن. پیام حذف شد."
+      : "این فرمان برای ثبت کلید در گروه امن نیست. حذف پیام ناموفق بود؛ آن را دستی حذف کن و اگر کلید در معرض دید بوده، از پنل ارائه‌دهنده تعویضش کن.";
+    await sendMessage(env, chat.id, notice);
     return;
   }
 

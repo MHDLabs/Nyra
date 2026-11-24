@@ -35,6 +35,7 @@ describe("queue ordering and telegram retries", () => {
     const messagePipeline = readFileSync(new URL("../src/handlers/message.ts", import.meta.url), "utf8");
     assert.match(messagePipeline, /isSensitiveModelKeyCommand && isGroup/);
     assert.match(messagePipeline, /deleteMessage\(env, chat\.id, message\.message_id\)/);
+    assert.match(messagePipeline, /حذف پیام ناموفق بود/);
     assert.match(src, /safeProcessMessage\(env, ctx, msgUpdate\)/);
     assert.match(src, /await safeCallback/);
     assert.match(src, /sendChatAction/);
