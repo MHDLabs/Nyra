@@ -469,6 +469,13 @@ export async function showAdminModels(env, chatId, messageId) {
   if (!models.length) lines.push("فهرست مدل‌ها خالی است.");
   for (const model of models) {
     lines.push("<b>" + escapeHtml(model.label) + "</b>");
+    if (model.provider === "cloudflare") {
+      lines.push("وضعیت: " + (model.enabled ? "فعال" : "خاموش")
+        + " · Workers AI binding: " + (model.binding_available ? "متصل" : "در دسترس نیست")
+        + (model.fallback_only ? " · جایگزین خودکار در خطای 429" : " · قابل انتخاب توسط کاربران"));
+      rows.push([{ text: (model.enabled ? "خاموش کردن" : "روشن کردن") + " · " + model.id.slice(0, 14), callback_data: "adm:model:toggle:" + model.id }]);
+      continue;
+    }
     lines.push("وضعیت: " + (model.enabled ? "فعال" : "خاموش")
       + " · " + (model.has_api_key ? "کلید ذخیره شده" : "بدون کلید")
       + " · " + (model.fallback_only ? "جایگزین خودکار" : (model.user_selectable ? "قابل انتخاب برای همه" : "فقط مدیر"))
@@ -480,9 +487,11 @@ export async function showAdminModels(env, chatId, messageId) {
     rows.push(controls);
     if (!model.fallback_only) rows.push([{ text: model.user_selectable ? "فقط مدیر" : "قابل انتخاب برای همه", callback_data: "adm:model:visibility:" + model.id }]);
   }
-  lines.push("", "تنظیم کلید: <code>/modelkey MODEL_ID API_KEY</code>");
-  lines.push("تنظیم نشانی: <code>/modelbase MODEL_ID https://.../v1</code>");
-  lines.push("افزودن: <code>/modeladd Name | model-id | https://.../v1</code>");
+  lines.push("", "برای Groq و مدل‌های سفارشی از فرمان‌های API استفاده کنید:");
+  lines.push("<code>/modelkey MODEL_ID API_KEY</code>");
+  lines.push("<code>/modelbase MODEL_ID https://.../v1</code>");
+  lines.push("<code>/modeladd Name | model-id | https://.../v1</code>");
+  lines.push("مدل‌های Cloudflare با Workers AI binding اجرا می‌شوند و فقط روشن/خاموش دارند.");
   rows.push([{ text: "بازگشت", callback_data: "adm:main" }]);
   const text = lines.join("\n");
   if (messageId) await editMessage(env, chatId, messageId, text, buildInlineKeyboard(rows), "HTML");

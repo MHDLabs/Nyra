@@ -48,36 +48,52 @@ export function validateModelBaseUrl(input: unknown): string {
   if (/[{}]|ACCOUNT_ID/i.test(parsed.pathname)) throw configError("Replace the Cloudflare ACCOUNT_ID placeholder with the real account ID.");
   return raw;
 }
-function publicModel(row: any) {
+function isWorkersAIBindingAvailable(env: NyraEnv): boolean {
+  return !!(env.AI && typeof env.AI.run === "function");
+}
+function isCloudflareModel(row: any): boolean {
+  return String(row && row.provider || "") === "cloudflare";
+}
+function isModelConfigured(row: any, env: NyraEnv): boolean {
+  if (isCloudflareModel(row)) return isWorkersAIBindingAvailable(env);
+  return !!(row && row.encrypted_api_key && row.key_iv && row.base_url
+    && !/[{}]|ACCOUNT_ID/i.test(String(row.base_url)));
+}
+function publicModel(row: any, env: NyraEnv) {
+  const cloudflare = isCloudflareModel(row);
   return {
     id: String(row.id), label: String(row.label || row.id), provider: String(row.provider || "openai-compatible"),
-    model: String(row.model || ""), base_url: String(row.base_url || ""), enabled: Number(row.enabled) === 1,
+    model: String(row.model || ""), base_url: cloudflare ? "" : String(row.base_url || ""), enabled: Number(row.enabled) === 1,
     user_selectable: Number(row.user_selectable) === 1, fallback_only: Number(row.fallback_only) === 1,
     is_default: Number(row.is_default) === 1, supports_vision: Number(row.supports_vision) === 1,
-    builtin: Number(row.builtin) === 1, has_api_key: !!(row.encrypted_api_key && row.key_iv)
+    builtin: Number(row.builtin) === 1, has_api_key: !cloudflare && !!(row.encrypted_api_key && row.key_iv),
+    requires_api_key: !cloudflare, binding_available: cloudflare && isWorkersAIBindingAvailable(env),
+    ready: isModelConfigured(row, env)
   };
 }
 export async function getAdminModelList(env: NyraEnv) {
   const result = await env.DB.prepare("SELECT * FROM ai_models ORDER BY builtin DESC, display_order, created_at, id").all();
-  return (result.results || []).map(publicModel);
+  return (result.results || []).map((row: any) => publicModel(row, env));
 }
 export async function getSelectableModels(env: NyraEnv, userId: number | string) {
   const admin = isAdmin(env, userId);
-  const result = await env.DB.prepare("SELECT id,label,model,enabled,user_selectable,fallback_only,is_default,encrypted_api_key,key_iv,base_url FROM ai_models WHERE enabled=1 ORDER BY is_default DESC,display_order,created_at").all();
-  return (result.results || []).filter((row: any) => row.encrypted_api_key && row.key_iv && row.base_url
-    && !/[{}]|ACCOUNT_ID/i.test(String(row.base_url))
+  const result = await env.DB.prepare("SELECT id,label,provider,model,enabled,user_selectable,fallback_only,is_default,encrypted_api_key,key_iv,base_url FROM ai_models WHERE enabled=1 ORDER BY is_default DESC,display_order,created_at").all();
+  return (result.results || []).filter((row: any) => isModelConfigured(row, env)
     && !Number(row.fallback_only) && (admin || Number(row.user_selectable) === 1))
     .map((row: any) => ({ id: String(row.id), label: String(row.label), model: String(row.model), is_default: Number(row.is_default) === 1 }));
 }
 export async function setUserSelectedModel(env: NyraEnv, userId: number | string, modelId: string): Promise<boolean> {
   const admin = isAdmin(env, userId);
-  const row = await env.DB.prepare("SELECT id FROM ai_models WHERE id=? AND enabled=1 AND fallback_only=0 AND encrypted_api_key IS NOT NULL AND key_iv IS NOT NULL AND base_url<>'' AND base_url NOT LIKE '%ACCOUNT_ID%' AND base_url NOT LIKE '%{%' AND base_url NOT LIKE '%}%' AND (?=1 OR user_selectable=1)")
-    .bind(modelId, admin ? 1 : 0).first();
-  if (!row) return false;
+  const row: any = await env.DB.prepare("SELECT * FROM ai_models WHERE id=?").bind(modelId).first();
+  if (!row || Number(row.enabled) !== 1 || Number(row.fallback_only) === 1
+    || (!admin && Number(row.user_selectable) !== 1) || !isModelConfigured(row, env)) return false;
   await env.DB.prepare("UPDATE users SET selected_model_id=?,updated_at=? WHERE telegram_id=?").bind(modelId, now(), userId).run();
   return true;
 }
 export async function setModelApiKey(env: NyraEnv, modelId: string, apiKey: string): Promise<void> {
+  const model: any = await env.DB.prepare("SELECT provider FROM ai_models WHERE id=?").bind(modelId).first();
+  if (!model) throw configError("Model not found.");
+  if (String(model.provider) === "cloudflare") throw configError("Cloudflare Workers AI uses the built-in AI binding. No API key is needed.");
   const value = String(apiKey || "").trim();
   if (value.length < 8 || value.length > 4096) throw configError("API key length is invalid.");
   const encrypted = await encryptKey(env, value);
@@ -88,6 +104,12 @@ export async function setModelApiKey(env: NyraEnv, modelId: string, apiKey: stri
 export async function updateModelAdmin(env: NyraEnv, modelId: string, patch: Record<string, unknown>): Promise<void> {
   const current = await env.DB.prepare("SELECT * FROM ai_models WHERE id=?").bind(modelId).first();
   if (!current) throw configError("Model not found.");
+  if (String((current as any).provider) === "cloudflare") {
+    const unsupported = ["label", "base_url", "model", "user_selectable", "supports_vision"];
+    if (unsupported.some((field) => patch[field] !== undefined)) {
+      throw configError("Cloudflare Workers AI models are built in. Only enabled/disabled state can be changed.");
+    }
+  }
   const sets: string[] = []; const values: unknown[] = [];
   const add = (column: string, value: unknown) => { sets.push(column + "=?"); values.push(value); };
   if (patch.label !== undefined) { const v=String(patch.label || "").trim(); if(!v||v.length>80)throw configError("Model label must be 1–80 characters."); add("label",v); }
@@ -113,9 +135,9 @@ export async function setModelVisibility(env: NyraEnv, modelId: string, userSele
   await updateModelAdmin(env, modelId, { user_selectable: userSelectable });
 }
 export async function setDefaultModel(env: NyraEnv, modelId: string): Promise<void> {
-  const row = await env.DB.prepare("SELECT * FROM ai_models WHERE id=? AND enabled=1 AND fallback_only=0 AND user_selectable=1 AND encrypted_api_key IS NOT NULL AND key_iv IS NOT NULL").bind(modelId).first();
-  if (!row) throw configError("The default model must be enabled and have an API key configured.");
-  validateModelBaseUrl(row.base_url);
+  const row: any = await env.DB.prepare("SELECT * FROM ai_models WHERE id=? AND enabled=1 AND fallback_only=0 AND user_selectable=1").bind(modelId).first();
+  if (!row || !isModelConfigured(row, env)) throw configError("The default model must be enabled and configured.");
+  if (!isCloudflareModel(row)) validateModelBaseUrl(row.base_url);
   await env.DB.batch([
     env.DB.prepare("UPDATE ai_models SET is_default=0,updated_at=?").bind(now()),
     env.DB.prepare("UPDATE ai_models SET is_default=1,updated_at=? WHERE id=?").bind(now(),modelId)
@@ -144,9 +166,11 @@ export async function deleteCustomModel(env: NyraEnv, modelId: string): Promise<
   ]);
 }
 async function buildConfig(row: any, env: NyraEnv): Promise<ModelConfig> {
+  const cloudflare = isCloudflareModel(row);
   return {
     id:String(row.id),label:String(row.label||row.id),provider:String(row.provider||"openai-compatible"),
-    base_url:validateModelBaseUrl(row.base_url),model:String(row.model),api_key:await decryptKey(env,row.encrypted_api_key,row.key_iv),
+    base_url:cloudflare ? "" : validateModelBaseUrl(row.base_url),model:String(row.model),
+    api_key:cloudflare ? "" : await decryptKey(env,row.encrypted_api_key,row.key_iv),
     supports_vision:Number(row.supports_vision)===1?1:0
   };
 }
@@ -159,8 +183,7 @@ export async function getAIConfigForUser(env: NyraEnv, userId: number|string|nul
   try { const result=await env.DB.prepare("SELECT * FROM ai_models ORDER BY is_default DESC,display_order,created_at").all(); rows=result.results||[]; }
   catch { return legacyFallback(); }
   const admin=userId!=null&&isAdmin(env,userId);
-  const usable=(row:any,allowFallback:boolean)=>!!row&&Number(row.enabled)===1&&!!row.encrypted_api_key&&!!row.key_iv&&!!row.base_url
-    && !/[{}]|ACCOUNT_ID/i.test(String(row.base_url))
+  const usable=(row:any,allowFallback:boolean)=>!!row&&Number(row.enabled)===1&&isModelConfigured(row,env)
     && (Number(row.fallback_only)!==1||allowFallback)
     && (admin||Number(row.user_selectable)===1||allowFallback);
   let selected:any=null;
@@ -176,7 +199,7 @@ export async function getAIConfigForUser(env: NyraEnv, userId: number|string|nul
   let fallbackConfig:ModelConfig|null=null;
   if(!forcedModelId&&config.id==="groq_qwen38"&&config.provider==="groq"){
     const fallback=rows.find(row=>row.id===FALLBACK_ID&&usable(row,true));
-    if(fallback){try{fallbackConfig=await buildConfig(fallback,env);}catch(error){console.error("Cloudflare fallback config unavailable:",error instanceof Error?error.message:String(error));}}
+    if(fallback){try{fallbackConfig=await buildConfig(fallback,env);}catch(error){console.error("Workers AI fallback config unavailable:",error instanceof Error?error.message:String(error));}}
   }
   return {config,fallbackConfig};
 }

@@ -446,6 +446,13 @@ const SIMPLIFICATION_MIGRATIONS = [
       "CREATE TABLE IF NOT EXISTS queue_pending_updates (update_id INTEGER PRIMARY KEY, conversation_key TEXT NOT NULL, status INTEGER NOT NULL DEFAULT 0, received_at INTEGER NOT NULL, completed_at INTEGER)",
       "CREATE INDEX IF NOT EXISTS idx_queue_pending_updates_order ON queue_pending_updates(conversation_key, status, update_id)"
     ]
+  },
+  {
+    id: 28,
+    label: "switch built-in Cloudflare models to the native Workers AI binding",
+    statements: [
+      "UPDATE ai_models SET base_url='', updated_at=CAST(strftime('%s','now') AS INTEGER) WHERE provider='cloudflare' AND builtin=1"
+    ]
   }
 ];
 

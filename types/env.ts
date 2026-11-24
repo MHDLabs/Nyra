@@ -7,6 +7,7 @@ export type NyraEnv = {
   KV: KVNamespace;
   NYRA_QUEUE: Queue;
   NYRA_DLQ: Queue;
+  AI?: { run(model: string, inputs: Record<string, unknown>): Promise<any> };
   AI_BASE_URL?: string;
   AI_MODEL?: string;
   AI_API_KEY?: string;

@@ -4,6 +4,7 @@ import { truncate, escapeHtml, getAdminIds } from "../utils.js";
 import { sendMessage } from "../telegram.js";
 import { normalizeError, humanizeError } from "./errors.js";
 import { generateOpenAICompatible, streamOpenAICompatible } from "./openai.js";
+import { streamCloudflareAI } from "./cloudflare.js";
 import { getCentralAIConfig } from "./config.js";
 import { getAIConfigForUser, redactConfiguredModelKeys } from "./registry.js";
 import { executeAgentTool, configuredToolDefinitions, isWebSearchConfigured } from "../tools.js";
@@ -82,13 +83,9 @@ async function* streamCentralAgent(env: NyraEnv, user, messages, options) {
         tools: toolsDisabled ? [] : definitions
       };
       requestAttempts++;
-      const stream = streamOpenAICompatible(
-        config,
-        config.api_key,
-        conversation,
-        streamOptions,
-        controller.signal
-      );
+      const stream = config.provider === "cloudflare"
+        ? streamCloudflareAI(env, config, conversation, streamOptions, controller.signal)
+        : streamOpenAICompatible(config, config.api_key, conversation, streamOptions, controller.signal);
       for await (const event of stream) {
         armStallTimer();
         if (event.type === "text" && typeof event.text === "string") {
@@ -126,9 +123,13 @@ async function* streamCentralAgent(env: NyraEnv, user, messages, options) {
       streamFailed = null;
       try {
         requestAttempts++;
-        const fallbackStream = streamOpenAICompatible(config, config.api_key, conversation, {
-          ...options, tools: toolsDisabled ? [] : definitions
-        }, fallbackController.signal);
+        const fallbackStream = config.provider === "cloudflare"
+          ? streamCloudflareAI(env, config, conversation, {
+            ...options, tools: toolsDisabled ? [] : definitions
+          }, fallbackController.signal)
+          : streamOpenAICompatible(config, config.api_key, conversation, {
+            ...options, tools: toolsDisabled ? [] : definitions
+          }, fallbackController.signal);
         for await (const event of fallbackStream) {
           armFallbackTimer();
           if (event.type === "text" && typeof event.text === "string") {

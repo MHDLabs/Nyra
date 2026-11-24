@@ -29,6 +29,10 @@ binding = "ASSETS"
 not_found_handling = "none"
 run_worker_first = ["/", "/webhook", "/setup", "/status", "/admin-panel", "/admin-panel/*", "/admin-api/*"]
 
+[ai]
+# Native Workers AI binding. Cloudflare models use env.AI.run() directly.
+binding = "AI"
+
 [triggers]
 # Self-healing (part of the zero-manual-setup flow): the scheduled handler
 # re-verifies the Telegram webhook registration and runs the KV-gated

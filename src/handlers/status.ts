@@ -127,10 +127,12 @@ export async function handleStatus(
   let modelsLine = "not available";
   try {
     const modelResult = await env.DB.prepare(
-      "SELECT id,label,is_default,fallback_only,base_url FROM ai_models WHERE enabled=1 AND encrypted_api_key IS NOT NULL AND key_iv IS NOT NULL"
+      "SELECT id,label,provider,is_default,fallback_only,base_url,encrypted_api_key,key_iv FROM ai_models WHERE enabled=1"
     ).all();
     const models = (modelResult.results || []) as any[];
-    const usable = models.filter((model) => !!model.base_url && !/[{}]|ACCOUNT_ID/i.test(String(model.base_url)));
+    const usable = models.filter((model) => String(model.provider) === "cloudflare"
+      ? !!(env.AI && typeof env.AI.run === "function")
+      : !!(model.encrypted_api_key && model.key_iv && model.base_url && !/[{}]|ACCOUNT_ID/i.test(String(model.base_url))));
     const selectable = usable.filter((model) => Number(model.fallback_only) !== 1);
     const fallback = usable.filter((model) => Number(model.fallback_only) === 1);
     const defaultModel = selectable.find((model) => Number(model.is_default) === 1);
@@ -142,7 +144,7 @@ export async function handleStatus(
   }
   const modelEncryptionLine = String(env.NYRA_MODEL_ENCRYPTION_KEY || "").length >= 32
     ? "configured"
-    : "MISSING — set NYRA_MODEL_ENCRYPTION_KEY before saving provider keys";
+    : "MISSING — required for Groq/custom API keys; Workers AI binding does not need it";
 
   const body = [
     "Nyra is running.",

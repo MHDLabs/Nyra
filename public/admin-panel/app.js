@@ -206,6 +206,33 @@
       (data.models || []).forEach((m) => {
         const card = document.createElement("div");
         card.className = "model-card";
+        if (m.provider === "cloudflare") {
+          card.innerHTML =
+            "<div class='model-head'><strong>" + escapeHtml(m.label) + "</strong><span class='muted'>Workers AI · بایندینگ داخلی</span></div>" +
+            "<div class='model-fields'>" +
+            "<label><input data-field='enabled' type='checkbox' " + (m.enabled ? "checked" : "") + " /> " + (m.enabled ? "روشن" : "خاموش") + "</label>" +
+            "<span class='muted'>" + (m.fallback_only ? "فقط جایگزین خودکار هنگام 429 از Groq" : "قابل انتخاب توسط کاربران پس از فعال‌سازی") + "</span>" +
+            "</div><div class='model-actions'><span class='muted' data-result>" +
+            (m.binding_available ? "بایندینگ متصل است؛ نیازی به API Key یا Base URL نیست." : "بایندینگ AI هنوز در Worker در دسترس نیست.") +
+            "</span></div>";
+          const toggle = card.querySelector("[data-field='enabled']");
+          toggle.addEventListener("change", async () => {
+            const desired = toggle.checked;
+            toggle.disabled = true;
+            card.querySelector("[data-result]").textContent = "در حال ذخیره...";
+            try {
+              await api("/admin-api/models/" + encodeURIComponent(m.id), { method: "PATCH", body: { enabled: desired } });
+              await loadModels();
+            } catch (err) {
+              toggle.checked = !desired;
+              card.querySelector("[data-result]").textContent = "خطا: " + err.message;
+            } finally {
+              toggle.disabled = false;
+            }
+          });
+          host.appendChild(card);
+          return;
+        }
         card.innerHTML =
           "<div class='model-head'><strong>" + escapeHtml(m.label) + "</strong><span class='muted'>" +
           escapeHtml(m.provider) + " · " + escapeHtml(m.model) + "</span></div>" +

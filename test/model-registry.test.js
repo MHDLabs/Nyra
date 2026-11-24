@@ -58,7 +58,7 @@ function registryEnv(rows, adminIds = "123") {
           },
           async first() {
             if (sql.includes("SELECT selected_model_id FROM users")) return { selected_model_id: null };
-            if (sql.includes("SELECT * FROM ai_models WHERE id=?") || sql.includes("SELECT builtin,is_default FROM ai_models WHERE id=?")) return rows.find(row => row.id === args[0]) || null;
+            if (sql.includes("SELECT * FROM ai_models WHERE id=?") || sql.includes("SELECT provider FROM ai_models WHERE id=?") || sql.includes("SELECT builtin,is_default FROM ai_models WHERE id=?")) return rows.find(row => row.id === args[0]) || null;
             if (sql.includes("SELECT id FROM ai_models")) {
               const row = rows.find(item => item.id === args[0] && item.enabled === 1
                 && item.encrypted_api_key && item.key_iv && item.base_url
@@ -142,6 +142,41 @@ test("the global default cannot be disabled or hidden from users", async () => {
   const env = registryEnv(rows);
   await assert.rejects(updateModelAdmin(env, "groq_qwen38", { enabled: false }), /different default model/);
   await assert.rejects(updateModelAdmin(env, "groq_qwen38", { user_selectable: false }), /different default model/);
+});
+
+test("Cloudflare built-ins need only the native AI binding and can be selected", async () => {
+  const cloudflare = configuredModel({
+    id: "cloudflare_glm47", label: "Cloudflare GLM", provider: "cloudflare",
+    model: "@cf/zai-org/glm-4.7-flash", base_url: "", encrypted_api_key: null,
+    key_iv: null, enabled: 1, fallback_only: 0, is_default: 0, supports_vision: 0
+  });
+  const env = registryEnv([configuredModel(), cloudflare]);
+  env.AI = { run: async () => null };
+  const selectable = await getSelectableModels(env, 456);
+  assert.ok(selectable.some(model => model.id === "cloudflare_glm47"));
+  assert.equal(await setUserSelectedModel(env, 456, "cloudflare_glm47"), true);
+  const glm = (await getAdminModelList(env)).find(model => model.id === "cloudflare_glm47");
+  assert.equal(glm.binding_available, true);
+  assert.equal(glm.requires_api_key, false);
+  assert.equal(glm.ready, true);
+  await assert.rejects(setModelApiKey(env, "cloudflare_glm47", "not-needed-token"), /no API key is needed/i);
+  await assert.rejects(updateModelAdmin(env, "cloudflare_glm47", { base_url: "https://example.com/v1" }), /only enabled\/disabled state/i);
+});
+
+test("Cloudflare Qwen is the automatic fallback only while enabled and bound", async () => {
+  const cloudflare = configuredModel({
+    id: "cloudflare_qwen38", label: "Cloudflare Qwen", provider: "cloudflare",
+    model: "@cf/qwen/qwen3.8-27b", base_url: "", encrypted_api_key: null,
+    key_iv: null, enabled: 1, user_selectable: 0, fallback_only: 1, is_default: 0
+  });
+  const env = registryEnv([configuredModel(), cloudflare]);
+  env.AI = { run: async () => null };
+  const resolved = await getAIConfigForUser(env, 456);
+  assert.equal(resolved.config.id, "groq_qwen38");
+  assert.equal(resolved.fallbackConfig.id, "cloudflare_qwen38");
+  cloudflare.enabled = 0;
+  const disabled = await getAIConfigForUser(env, 456);
+  assert.equal(disabled.fallbackConfig, null);
 });
 
 test("the current global default cannot be deleted while it is active", async () => {

@@ -23,7 +23,7 @@ wrangler secret put NYRA_MODEL_ENCRYPTION_KEY
 
 Paste the generated value into the Wrangler prompt. Keep this secret backed up in a password manager and do not rotate it casually: changing it makes existing encrypted provider keys unreadable. If it is lost or changed, re-enter the affected provider API keys through the admin panel.
 
-The model registry requires `NYRA_MODEL_ENCRYPTION_KEY` to contain at least 32 characters. The key is never returned by the admin API and is never written to a source file.
+The model registry requires `NYRA_MODEL_ENCRYPTION_KEY` to contain at least 32 characters before saving Groq or custom-provider API keys. Cloudflare Workers AI models use the native `AI` binding and do not need this encryption key or a separate provider token.
 
 ## 2. Worker variables
 
@@ -62,23 +62,22 @@ Add the Groq API key in the model card's password field and save. The key is enc
 
 ### Cloudflare · Qwen 3.8 27B fallback
 
-Replace the `ACCOUNT_ID` placeholder in its Base URL with your Cloudflare account ID:
+This model is pre-registered and runs through the native Workers AI binding configured in `wrangler.toml`:
 
-```text
-https://api.cloudflare.com/client/v4/accounts/YOUR_ACCOUNT_ID/ai/v1
+```toml
+[ai]
+binding = "AI"
 ```
 
-Add a Cloudflare API token that has permission to use Workers AI. Then save the Base URL and key. Keep this model enabled. It is intentionally hidden from the user model picker and is only used as the one defined automatic fallback.
-
-Nyra attempts this model automatically only when the primary Groq Qwen request returns HTTP 429 and no partial response has already been sent. If that fallback attempt also fails, the original message may show a one-time **Retry with Cloudflare Qwen** button. Other Groq errors do not trigger this automatic fallback.
+No Account ID, Base URL, API token, or per-model key is needed. The administrator only turns this model on or off. It is hidden from the user model picker and is used only as the automatic fallback when Groq Qwen returns HTTP 429 before sending any partial response. If the fallback also fails, the original message may show a one-time **Retry with Cloudflare Qwen** button. Other Groq errors do not trigger this automatic fallback.
 
 ### Cloudflare · GLM 4.7 Flash
 
-Set its Cloudflare Base URL and API token the same way. Enable the model when ready. To make it selectable by everyone, enable **Selectable for all users**. To make it available only to the administrator, turn that option off. An admin-only model cannot be the global default.
+GLM is also pre-registered and uses the same native binding. No endpoint or API credential is required. Turn it on to make it available in the user model picker, or turn it off to remove it from selection. The model ID, endpoint and provider configuration are fixed in the built-in catalog.
 
 ## 4. User model selection
 
-Users can open `/models` or choose **Settings → Choose Model**. They see only models that are enabled, have a configured API key and valid Base URL, and are marked as selectable for users.
+Users can open `/models` or choose **Settings → Choose Model**. They see only models that are enabled, available through their provider (API key and Base URL for external providers, or the Workers AI binding for Cloudflare), and marked as selectable for users.
 
 The selected model is stored per user. An administrator can also select an admin-only model for their own account.
 
@@ -133,4 +132,4 @@ Run `/status` after deployment to confirm the Worker build, model-key encryption
 
 ## 9. Migration note
 
-The model catalog and per-user model selection are added by D1 migration 25. Queue conversation locks and durable per-chat ordering are added by migrations 26 and 27. These migrations add model/queue tables and the user-selected-model column; they do not store provider keys in plaintext.
+The model catalog and per-user model selection are added by D1 migration 25. Queue conversation locks and durable per-chat ordering are added by migrations 26 and 27. Migration 28 switches the built-in Cloudflare models to the native Workers AI binding and clears their obsolete REST Base URL placeholders. These migrations add model/queue tables and the user-selected-model column; they do not store provider keys in plaintext.
