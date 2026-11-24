@@ -2,7 +2,7 @@
 import type { TelegramMessage } from "../../types/telegram.js";
 import type { NyraEnv } from "../../types/env.js";
 import { now, escapeHtml, isAdmin } from "../utils.js";
-import { tg, sendMessage, buildInlineKeyboard } from "../telegram.js";
+import { tg, sendMessage, deleteMessage, buildInlineKeyboard } from "../telegram.js";
 import {
   getBotIdentity,
   recordGroupChatAndCheckAccess,
@@ -32,13 +32,19 @@ export async function processMessage(env: NyraEnv, ctx: WorkerCtx, message: Tele
 
   const text = String(message.text || message.caption || "").trim();
   const isGroup = chat.type === "group" || chat.type === "supergroup";
+  // API-key commands must never remain visible in groups or get rejected before
+  // their message can be deleted by the command handler. Captions are covered too.
+  const isSensitiveModelKeyCommand = /^\/modelkey(?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(String(message.text || message.caption || "").trim());
+  if (isSensitiveModelKeyCommand && isGroup) {
+    await deleteMessage(env, chat.id, message.message_id);
+    await sendMessage(env, chat.id, "برای امنیت، کلید API را فقط در گفتگوی خصوصی با نیرا ثبت کن. پیام حذف شد.");
+    return;
+  }
 
   if (isGroup && !(await recordGroupChatAndCheckAccess(env, chat, from.id))) return;
-  if (await isUserBlocked(env, from.id)) return;
+  if (await isUserBlocked(env, from.id) && !isSensitiveModelKeyCommand) return;
 
   // Maintenance blocks onboarding and preference flows too, not only AI turns.
-  const isSensitiveModelKeyCommand = typeof message.text === "string"
-    && /^\/modelkey(?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(message.text.trim());
   if (await isMaintenanceMode(env) && !isAdmin(env, from.id) && !isSensitiveModelKeyCommand) {
     const existingUser = await getUser(env, from.id);
     const locale = existingUser?.locale || (String(from.language_code || "").toLowerCase().startsWith("fa") ? "fa-IR" : "en-US");

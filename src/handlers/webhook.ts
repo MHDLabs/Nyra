@@ -158,8 +158,7 @@ export async function handleWebhook(request: Request, env: NyraEnv, ctx: WorkerC
   }
   // API-key commands contain plaintext credentials and must never be stored in the queue payload.
   if (msgUpdate && msgUpdate.from && !msgUpdate.from.is_bot && msgUpdate.chat
-    && typeof msgUpdate.text === "string"
-    && /^\/modelkey(?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(msgUpdate.text.trim())) {
+    && /^\/modelkey(?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(String(msgUpdate.text || msgUpdate.caption || "").trim())) {
     await safeProcessMessage(env, ctx, msgUpdate);
     return okResponse();
   }

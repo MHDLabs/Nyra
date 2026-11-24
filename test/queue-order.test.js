@@ -31,6 +31,10 @@ describe("queue ordering and telegram retries", () => {
     assert.match(src, /env\.NYRA_QUEUE\.send/);
     assert.doesNotMatch(src, /if \(isCommand\)/);
     assert.match(src, /modelkey/);
+    assert.match(src, /msgUpdate\.text \|\| msgUpdate\.caption/);
+    const messagePipeline = readFileSync(new URL("../src/handlers/message.ts", import.meta.url), "utf8");
+    assert.match(messagePipeline, /isSensitiveModelKeyCommand && isGroup/);
+    assert.match(messagePipeline, /deleteMessage\(env, chat\.id, message\.message_id\)/);
     assert.match(src, /safeProcessMessage\(env, ctx, msgUpdate\)/);
     assert.match(src, /await safeCallback/);
     assert.match(src, /sendChatAction/);
