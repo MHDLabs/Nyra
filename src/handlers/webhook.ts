@@ -196,10 +196,8 @@ export async function handleWebhook(request: Request, env: NyraEnv, ctx: WorkerC
     console.error("update enqueue failed:", errorMessage(err));
     if (updateId !== null) {
       try {
-        await env.DB.batch([
-          env.DB.prepare("DELETE FROM queue_pending_updates WHERE update_id = ?").bind(updateId),
-          env.DB.prepare("DELETE FROM processed_updates WHERE update_id = ?").bind(updateId)
-        ]);
+        await env.DB.prepare("DELETE FROM queue_pending_updates WHERE update_id = ?").bind(updateId).run();
+        await env.DB.prepare("DELETE FROM processed_updates WHERE update_id = ?").bind(updateId).run();
       } catch (e) {
         console.error("queue/dedup rollback failed:", errorMessage(e));
       }
