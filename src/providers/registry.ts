@@ -98,7 +98,11 @@ export async function updateModelAdmin(env: NyraEnv, modelId: string, patch: Rec
     if (!enable && Number(current.is_default) === 1) throw configError("Choose a different default model before disabling this one.");
     add("enabled",enable?1:0);
   }
-  if (patch.user_selectable !== undefined && !Number(current.fallback_only)) add("user_selectable",patch.user_selectable===true||patch.user_selectable===1?1:0);
+  if (patch.user_selectable !== undefined && !Number(current.fallback_only)) {
+    const selectable = patch.user_selectable === true || patch.user_selectable === 1;
+    if (!selectable && Number(current.is_default) === 1) throw configError("Choose a different default model before restricting this one to admins.");
+    add("user_selectable",selectable?1:0);
+  }
   if (patch.supports_vision !== undefined) add("supports_vision",patch.supports_vision===true||patch.supports_vision===1?1:0);
   if (sets.length) { sets.push("updated_at=?"); values.push(now(),modelId); await env.DB.prepare("UPDATE ai_models SET "+sets.join(",")+" WHERE id=?").bind(...values).run(); }
 }
@@ -109,7 +113,7 @@ export async function setModelVisibility(env: NyraEnv, modelId: string, userSele
   await updateModelAdmin(env, modelId, { user_selectable: userSelectable });
 }
 export async function setDefaultModel(env: NyraEnv, modelId: string): Promise<void> {
-  const row = await env.DB.prepare("SELECT * FROM ai_models WHERE id=? AND enabled=1 AND fallback_only=0 AND encrypted_api_key IS NOT NULL AND key_iv IS NOT NULL").bind(modelId).first();
+  const row = await env.DB.prepare("SELECT * FROM ai_models WHERE id=? AND enabled=1 AND fallback_only=0 AND user_selectable=1 AND encrypted_api_key IS NOT NULL AND key_iv IS NOT NULL").bind(modelId).first();
   if (!row) throw configError("The default model must be enabled and have an API key configured.");
   validateModelBaseUrl(row.base_url);
   await env.DB.batch([

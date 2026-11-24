@@ -113,10 +113,16 @@ async function* streamCentralAgent(env: NyraEnv, user, messages, options) {
       config = fallbackConfig;
       fallbackAttempted = true;
       yield { type: "fallback", from: "Groq · Qwen 3.8 27B", to: config.label };
-      const remainingFallback = deadline - Date.now();
       const fallbackController = new AbortController();
-      const fallbackTimeout = Math.max(1000, Math.min((options && options.stallTimeoutMs) || AI_STREAM_STALL_TIMEOUT_MS, remainingFallback));
-      const fallbackTimer = setTimeout(() => fallbackController.abort(), fallbackTimeout);
+      const fallbackStallLimit = Math.max(1000, (options && options.stallTimeoutMs) || AI_STREAM_STALL_TIMEOUT_MS);
+      let fallbackTimer: any = null;
+      const armFallbackTimer = () => {
+        if (fallbackTimer) clearTimeout(fallbackTimer);
+        const budgetLeft = deadline - Date.now();
+        if (budgetLeft <= 0) { fallbackController.abort(); return; }
+        fallbackTimer = setTimeout(() => fallbackController.abort(), Math.max(1, Math.min(fallbackStallLimit, budgetLeft)));
+      };
+      armFallbackTimer();
       streamFailed = null;
       try {
         requestAttempts++;
@@ -124,6 +130,7 @@ async function* streamCentralAgent(env: NyraEnv, user, messages, options) {
           ...options, tools: toolsDisabled ? [] : definitions
         }, fallbackController.signal);
         for await (const event of fallbackStream) {
+          armFallbackTimer();
           if (event.type === "text" && typeof event.text === "string") {
             roundText += event.text;
             yield { type: "text", text: event.text };
@@ -138,7 +145,7 @@ async function* streamCentralAgent(env: NyraEnv, user, messages, options) {
         streamFailed = fallbackError instanceof Error ? fallbackError : new Error(String(fallbackError));
         (streamFailed as any).fallbackAttempted = true;
         (streamFailed as any).originalRateLimit = true;
-      } finally { clearTimeout(fallbackTimer); }
+      } finally { if (fallbackTimer) clearTimeout(fallbackTimer); }
     }
 
     if (streamFailed) {

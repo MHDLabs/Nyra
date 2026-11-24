@@ -30,7 +30,7 @@ export const TELEGRAM_RETRY_MAX = 1;
 // Honor Telegram's retry_after up to 10s (was 3s): under-honoring a 429 backoff
 // risks secondary flood limits. Long sleeps are safe now that Telegram API calls
 // run inside queue consumers, not before the webhook ack.
-export const TELEGRAM_RETRY_WAIT_CAP_MS = 10000;
+export const TELEGRAM_RETRY_WAIT_CAP_MS = 30000;
 export const CALLBACK_ID_MAX = 40;
 export const BOT_IDENTITY_TTL = 3600000;
 export const BOT_IDENTITY_NEGATIVE_TTL = 60000;

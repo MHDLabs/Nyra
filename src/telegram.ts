@@ -34,7 +34,12 @@ export async function tg(env: NyraEnv, method: string, payload?: TgPayload, atte
         await sleep(waitMs);
         return await tg(env, method, payload, currentAttempt + 1);
       }
-      console.error("Telegram API error [" + method + "]:", data.description || data);
+      const category = data.error_code === 429 ? "rate_limit"
+        : method.indexOf("edit") === 0 ? "edit"
+        : method.indexOf("send") === 0 ? "send"
+        : "api";
+      console.error("Telegram " + category + " error [" + method + "]:", data.description || data);
+      (data as any).error_category = category;
     }
     return data;
   } catch (err) {
@@ -412,6 +417,9 @@ export async function editMessage(env: NyraEnv, chatId: string | number, message
   if (replyMarkup) payload.reply_markup = replyMarkup;
   if (parseMode) payload.parse_mode = parseMode;
   let result = await tg(env, "editMessageText", payload);
+  if (result && !result.ok && /message is not modified/i.test(String(result.description || ""))) {
+    return { ...result, ok: true, error_category: "no_change" };
+  }
   if (isParseError(result) && payload.parse_mode) {
     payload.text = isMarkdownV2(payload.parse_mode) ? mdv2ToPlain(payload.text) : payload.text;
     if (payload.text.length > MAX_TELEGRAM_LENGTH) payload.text = payload.text.slice(0, MAX_TELEGRAM_LENGTH);
