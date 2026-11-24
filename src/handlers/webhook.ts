@@ -163,7 +163,7 @@ export async function handleWebhook(request: Request, env: NyraEnv, ctx: WorkerC
       // Recover the narrow crash window where processed_updates was written but
       // the Worker stopped before it accepted the update into its durable path.
       if (msgUpdate && msgUpdate.from && !msgUpdate.from.is_bot && msgUpdate.chat
-        && /^\\/modelkey(?:@[A-Za-z0-9_]+)?(?:\\s|$)/i.test(String(msgUpdate.text || msgUpdate.caption || "").trim())) {
+        && /^\/modelkey(?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(String(msgUpdate.text || msgUpdate.caption || "").trim())) {
         if (await wasInlineUpdateHandled(env, updateId)) return okResponse();
         const handled = await safeProcessMessage(env, ctx, msgUpdate);
         if (!handled) return new Response("Service Unavailable", { status: 503 });
