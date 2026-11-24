@@ -149,8 +149,10 @@ export async function getAIConfigForUser(env: NyraEnv, userId: number|string|nul
     && (Number(row.fallback_only)!==1||allowFallback)
     && (admin||Number(row.user_selectable)===1||allowFallback);
   let selected:any=null;
-  if(forcedModelId) selected=rows.find(row=>row.id===forcedModelId&&usable(row,forcedModelId===FALLBACK_ID))||null;
-  else if(userId!=null){
+  if(forcedModelId) {
+    selected=rows.find(row=>row.id===forcedModelId&&usable(row,forcedModelId===FALLBACK_ID))||null;
+    if(!selected) throw configError("The requested retry model is not configured and enabled.", "no_connection");
+  } else if(userId!=null){
     try { const user=await env.DB.prepare("SELECT selected_model_id FROM users WHERE telegram_id=?").bind(userId).first(); if(user?.selected_model_id)selected=rows.find(row=>row.id===user.selected_model_id&&usable(row,false))||null; } catch {}
   }
   if(!selected)selected=rows.find(row=>Number(row.is_default)===1&&usable(row,false))||null;
