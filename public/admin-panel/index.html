@@ -68,6 +68,31 @@
         </div>
       </section>
 
+
+      <section id="tab-models" class="tab">
+        <div class="panel full">
+          <div class="panel-head"><h2>مدل‌های هوش مصنوعی</h2><button type="button" class="btn ghost" id="models-refresh">بازخوانی</button></div>
+          <p class="muted">کلیدهای API فقط به‌صورت رمزنگاری‌شده ذخیره می‌شوند و هرگز از API به مرورگر بازگردانده نمی‌شوند. برای حفظ کلید قبلی، فیلد کلید را خالی بگذارید.</p>
+          <div id="model-list" class="model-list"></div>
+          <h3>افزودن ارائه‌دهندهٔ OpenAI-compatible</h3>
+          <form id="model-create-form" class="stack model-form">
+            <input id="new-model-label" required maxlength="80" placeholder="نام نمایشی" />
+            <input id="new-model-id" required maxlength="160" placeholder="شناسه مدل" />
+            <input id="new-model-url" required type="url" placeholder="https://gateway.example/v1" />
+            <input id="new-model-key" required type="password" autocomplete="new-password" placeholder="API Key" />
+            <label><input id="new-model-vision" type="checkbox" /> پشتیبانی از تصویر</label>
+            <label><input id="new-model-selectable" type="checkbox" checked /> قابل انتخاب برای همه</label>
+            <button type="submit" class="btn primary">افزودن مدل</button>
+            <p id="model-create-result" class="muted"></p>
+          </form>
+          <div class="maintenance-box">
+            <h3>حالت تعمیرات</h3>
+            <p id="maintenance-status" class="muted">در حال دریافت وضعیت...</p>
+            <button type="button" class="btn danger" id="maintenance-toggle">تغییر وضعیت</button>
+          </div>
+        </div>
+      </section>
+
       <section id="tab-broadcast" class="tab">
         <div class="panel full narrow">
           <div class="panel-head"><h2>ارسال پیام</h2></div>
@@ -91,6 +116,7 @@
       <button type="button" data-tab="users" class="active"><span class="ico">👤</span>کاربران</button>
       <button type="button" data-tab="groups"><span class="ico">👥</span>گروه‌ها</button>
       <button type="button" data-tab="broadcast"><span class="ico">✈</span>ارسال</button>
+      <button type="button" data-tab="models"><span class="ico">🤖</span>مدل‌ها</button>
     </nav>
   </div>
 

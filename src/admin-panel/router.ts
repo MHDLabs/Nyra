@@ -13,6 +13,9 @@ import {
 } from "../db/chat-logs.js";
 import { blockUser, unblockUser } from "../db/users.js";
 import { checkMemoryRate, isAdmin } from "../utils.js";
+import { ensureSchema } from "../db/schema.js";
+import { getAdminModelList, createCustomModel, updateModelAdmin, setModelApiKey, setDefaultModel, deleteCustomModel } from "../providers/registry.js";
+import { isMaintenanceMode, setMaintenanceMode } from "../db/maintenance.js";
 
 function panelHtmlResponse(html) {
   return new Response(html, {
@@ -94,6 +97,86 @@ export async function routeAdminPanel(env, ctx, request, pathname) {
   // GET /admin-api/me
   if (path === "/admin-api/me" && request.method === "GET") {
     return json(200, { ok: true, role: "admin" });
+  }
+
+
+  // Central AI model catalog. API keys are write-only; responses contain metadata only.
+  if (path === "/admin-api/models" && request.method === "GET") {
+    try {
+      await ensureSchema(env);
+      return json(200, { models: await getAdminModelList(env) });
+    } catch (error) {
+      console.error("admin model list failed:", error instanceof Error ? error.message : String(error));
+      return json(500, { error: "models_unavailable" });
+    }
+  }
+
+  if (path === "/admin-api/models" && request.method === "POST") {
+    let body: any;
+    try { body = await request.json(); } catch { return json(400, { error: "invalid_json" }); }
+    try {
+      await ensureSchema(env);
+      const id = await createCustomModel(env, {
+        label: body.label, model: body.model, base_url: body.base_url,
+        user_selectable: body.user_selectable !== false,
+        supports_vision: body.supports_vision === true,
+        api_key: body.api_key
+      });
+      const models = await getAdminModelList(env);
+      return json(201, { ok: true, id, model: models.find((item) => item.id === id) || null });
+    } catch (error) {
+      return json(400, { error: error instanceof Error ? error.message : "model_create_failed" });
+    }
+  }
+
+  const modelMatch = path.match(/^\/admin-api\/models\/([A-Za-z0-9_-]{1,64})$/);
+  if (modelMatch && request.method === "PATCH") {
+    let body: any;
+    try { body = await request.json(); } catch { return json(400, { error: "invalid_json" }); }
+    try {
+      await ensureSchema(env);
+      const patch: any = {};
+      for (const field of ["label", "model", "base_url", "enabled", "user_selectable", "supports_vision"]) {
+        if (body[field] !== undefined) patch[field] = body[field];
+      }
+      if (Object.keys(patch).length) await updateModelAdmin(env, modelMatch[1], patch);
+      if (typeof body.api_key === "string" && body.api_key.trim()) await setModelApiKey(env, modelMatch[1], body.api_key);
+      if (body.is_default === true) await setDefaultModel(env, modelMatch[1]);
+      const models = await getAdminModelList(env);
+      return json(200, { ok: true, model: models.find((item) => item.id === modelMatch[1]) || null });
+    } catch (error) {
+      return json(400, { error: error instanceof Error ? error.message : "model_update_failed" });
+    }
+  }
+
+  if (modelMatch && request.method === "DELETE") {
+    try {
+      await ensureSchema(env);
+      await deleteCustomModel(env, modelMatch[1]);
+      return json(200, { ok: true });
+    } catch (error) {
+      return json(400, { error: error instanceof Error ? error.message : "model_delete_failed" });
+    }
+  }
+
+  if (path === "/admin-api/maintenance" && request.method === "GET") {
+    try {
+      await ensureSchema(env);
+      return json(200, { enabled: await isMaintenanceMode(env) });
+    } catch { return json(500, { error: "maintenance_status_unavailable" }); }
+  }
+
+  if (path === "/admin-api/maintenance" && request.method === "PATCH") {
+    let body: any;
+    try { body = await request.json(); } catch { return json(400, { error: "invalid_json" }); }
+    if (typeof body.enabled !== "boolean") return json(400, { error: "enabled_must_be_boolean" });
+    try {
+      await ensureSchema(env);
+      await setMaintenanceMode(env, body.enabled, 0);
+      return json(200, { ok: true, enabled: await isMaintenanceMode(env) });
+    } catch (error) {
+      return json(500, { error: error instanceof Error ? error.message : "maintenance_update_failed" });
+    }
   }
 
   // GET /admin-api/users

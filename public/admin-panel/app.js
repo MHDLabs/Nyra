@@ -59,13 +59,14 @@
 
   function escapeHtml(s) {
     return String(s == null ? "" : s)
-      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
   async function showApp() {
     loginView.hidden = true;
     appView.hidden = false;
-    await Promise.all([loadStats(), loadUsers(), loadGroups()]);
+    await Promise.all([loadStats(), loadUsers(), loadGroups(), loadModels(), loadMaintenance()]);
   }
 
   async function loadStats() {
@@ -193,6 +194,99 @@
     });
   }
 
+
+
+  async function loadModels() {
+    const host = $("model-list");
+    if (!host) return;
+    host.innerHTML = "<p class='muted'>در حال بارگذاری...</p>";
+    try {
+      const data = await api("/admin-api/models");
+      host.innerHTML = "";
+      (data.models || []).forEach((m) => {
+        const card = document.createElement("div");
+        card.className = "model-card";
+        card.innerHTML =
+          "<div class='model-head'><strong>" + escapeHtml(m.label) + "</strong><span class='muted'>" +
+          escapeHtml(m.provider) + " · " + escapeHtml(m.model) + "</span></div>" +
+          "<div class='model-fields'>" +
+          "<label>Base URL<input data-field='base_url' type='url' value='" + escapeHtml(m.base_url || "") + "' /></label>" +
+          "<label>API Key<input data-field='api_key' type='password' autocomplete='new-password' placeholder='" +
+          (m.has_api_key ? "ذخیره شده؛ خالی بگذارید تا حفظ شود" : "کلید API") + "' /></label>" +
+          "<label><input data-field='enabled' type='checkbox' " + (m.enabled ? "checked" : "") + " /> فعال</label>" +
+          (m.fallback_only ? "<span class='muted'>فقط جایگزین خودکار در 429</span>" :
+            "<label><input data-field='user_selectable' type='checkbox' " + (m.user_selectable ? "checked" : "") + " /> قابل انتخاب برای همه</label>") +
+          "<label><input data-field='supports_vision' type='checkbox' " + (m.supports_vision ? "checked" : "") + " /> تصویر</label>" +
+          "<label><input data-field='is_default' type='checkbox' " + (m.is_default ? "checked" : "") + " /> مدل پیش‌فرض</label>" +
+          "</div><div class='model-actions'><button type='button' class='btn primary' data-save>ذخیره</button>" +
+          (!m.builtin ? "<button type='button' class='btn danger' data-delete>حذف</button>" : "") +
+          "<span class='muted' data-result>" + (m.has_api_key ? "کلید تنظیم شده" : "کلید تنظیم نشده") + "</span></div>";
+        const field = (name) => card.querySelector("[data-field='" + name + "']");
+        card.querySelector("[data-save]").addEventListener("click", async () => {
+          const result = card.querySelector("[data-result]");
+          const body = {
+            base_url: field("base_url").value,
+            enabled: field("enabled").checked,
+            supports_vision: field("supports_vision").checked,
+            is_default: field("is_default").checked
+          };
+          const visibility = field("user_selectable");
+          if (visibility) body.user_selectable = visibility.checked;
+          const key = field("api_key").value.trim();
+          if (key) body.api_key = key;
+          result.textContent = "در حال ذخیره...";
+          try {
+            await api("/admin-api/models/" + encodeURIComponent(m.id), { method: "PATCH", body });
+            await loadModels();
+          } catch (err) { result.textContent = "خطا: " + err.message; }
+        });
+        const remove = card.querySelector("[data-delete]");
+        if (remove) remove.addEventListener("click", async () => {
+          if (!confirm("این مدل سفارشی حذف شود؟")) return;
+          try { await api("/admin-api/models/" + encodeURIComponent(m.id), { method: "DELETE" }); await loadModels(); }
+          catch (err) { card.querySelector("[data-result]").textContent = "خطا: " + err.message; }
+        });
+        host.appendChild(card);
+      });
+    } catch (err) {
+      host.innerHTML = "<p class='error'>خطا در دریافت مدل‌ها: " + escapeHtml(err.message) + "</p>";
+    }
+  }
+
+  async function loadMaintenance() {
+    const status = $("maintenance-status"), button = $("maintenance-toggle");
+    if (!status || !button) return;
+    try {
+      const data = await api("/admin-api/maintenance");
+      status.textContent = data.enabled ? "🔴 تعمیرات روشن است؛ پیام‌های عادی متوقف شده‌اند." : "🟢 تعمیرات خاموش است.";
+      button.textContent = data.enabled ? "خاموش کردن تعمیرات" : "روشن کردن تعمیرات";
+      button.dataset.enabled = data.enabled ? "true" : "false";
+    } catch (err) { status.textContent = "وضعیت تعمیرات دریافت نشد: " + err.message; }
+  }
+
+  $("models-refresh").addEventListener("click", () => Promise.all([loadModels(), loadMaintenance()]));
+  $("model-create-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const result = $("model-create-result");
+    result.textContent = "در حال افزودن...";
+    try {
+      await api("/admin-api/models", { method: "POST", body: {
+        label: $("new-model-label").value.trim(), model: $("new-model-id").value.trim(),
+        base_url: $("new-model-url").value.trim(), api_key: $("new-model-key").value,
+        supports_vision: $("new-model-vision").checked, user_selectable: $("new-model-selectable").checked
+      }});
+      $("model-create-form").reset();
+      result.textContent = "مدل اضافه شد؛ برای فعال‌سازی آن را از فهرست روشن کنید.";
+      await loadModels();
+    } catch (err) { result.textContent = "خطا: " + err.message; }
+  });
+  $("maintenance-toggle").addEventListener("click", async () => {
+    const button = $("maintenance-toggle"), enabled = button.dataset.enabled !== "true";
+    button.disabled = true;
+    try { await api("/admin-api/maintenance", { method: "PATCH", body: { enabled } }); await loadMaintenance(); }
+    catch (err) { $("maintenance-status").textContent = "خطا: " + err.message; }
+    finally { button.disabled = false; }
+  });
 
   // Tabs (bottom nav — White Panel style)
   function activateTab(name) {
