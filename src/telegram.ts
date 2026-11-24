@@ -492,7 +492,8 @@ export async function ensureBotCommands(env) {
     { command: "settings", description: "⚙️ Settings" },
     { command: "personality", description: "🎭 Personality" },
     { command: "memory", description: "🧠 Memory" },
-    { command: "usage", description: "📊 Usage" }
+    { command: "usage", description: "📊 Usage" },
+    { command: "models", description: "🤖 Choose AI model" }
   ];
   // Groups — only public commands
   const groupCmds = [

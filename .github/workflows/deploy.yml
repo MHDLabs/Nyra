@@ -61,10 +61,15 @@ jobs:
         run: |
           set -euo pipefail
           EXPECTED_SHA="${GITHUB_SHA:0:7}"
-          STATUS="$(curl -fsS --retry 3 --retry-all-errors --retry-delay 5 --max-time 60 "https://nyra.mhdlabs.workers.dev/status")"
-          printf '%s\n' "$STATUS"
-          if ! printf '%s\n' "$STATUS" | grep -Fq "$EXPECTED_SHA"; then
-            echo "::error::The live Worker did not report the expected commit ${EXPECTED_SHA}."
-            exit 1
-          fi
-          echo "Confirmed: production Worker is running commit ${GITHUB_SHA}."
+          for attempt in $(seq 1 12); do
+            STATUS="$(curl -fsS --max-time 30 "https://nyra.mhdlabs.workers.dev/status" || true)"
+            printf '%s\n' "$STATUS"
+            if printf '%s\n' "$STATUS" | grep -Fq "$EXPECTED_SHA"; then
+              echo "Confirmed: production Worker is running commit ${GITHUB_SHA}."
+              exit 0
+            fi
+            echo "Live status is not on ${EXPECTED_SHA} yet (attempt ${attempt}/12)."
+            sleep 5
+          done
+          echo "::error::The live Worker did not report the expected commit ${EXPECTED_SHA} after 12 checks."
+          exit 1

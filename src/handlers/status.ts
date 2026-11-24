@@ -123,11 +123,34 @@ export async function handleStatus(
   if (!(await getWebhookSecret(env))) missing.push("TELEGRAM_SECRET");
   if (missing.length) secretsLine = "MISSING/INVALID: " + missing.join(", ");
 
+  let centralAILine = env.AI_MODEL && env.AI_API_KEY ? String(env.AI_MODEL) + " (legacy env)" : "NOT CONFIGURED";
+  let modelsLine = "not available";
+  try {
+    const modelResult = await env.DB.prepare(
+      "SELECT id,label,is_default,fallback_only,base_url FROM ai_models WHERE enabled=1 AND encrypted_api_key IS NOT NULL AND key_iv IS NOT NULL"
+    ).all();
+    const models = (modelResult.results || []) as any[];
+    const usable = models.filter((model) => !!model.base_url && !/[{}]|ACCOUNT_ID/i.test(String(model.base_url)));
+    const selectable = usable.filter((model) => Number(model.fallback_only) !== 1);
+    const fallback = usable.filter((model) => Number(model.fallback_only) === 1);
+    const defaultModel = selectable.find((model) => Number(model.is_default) === 1);
+    if (defaultModel) centralAILine = String(defaultModel.label);
+    else if (usable.length === 0 && !(env.AI_MODEL && env.AI_API_KEY)) centralAILine = "NOT CONFIGURED";
+    modelsLine = selectable.length + " selectable · " + fallback.length + " fallback configured";
+  } catch {
+    // The status route remains available if the first-time schema migration has not completed.
+  }
+  const modelEncryptionLine = String(env.NYRA_MODEL_ENCRYPTION_KEY || "").length >= 32
+    ? "configured"
+    : "MISSING — set NYRA_MODEL_ENCRYPTION_KEY before saving provider keys";
+
   const body = [
     "Nyra is running.",
     "",
     "Secrets:     " + secretsLine,
-    "Central AI:  " + (env.AI_MODEL && env.AI_API_KEY ? String(env.AI_MODEL) : "NOT CONFIGURED"),
+    "Model keys:  " + modelEncryptionLine,
+    "Central AI:  " + centralAILine,
+    "Models:      " + modelsLine,
     "Webhook:     " + hookLine,
     "TG webhook:  " + tgHookLine,
     "Bot:         " + botLine,
