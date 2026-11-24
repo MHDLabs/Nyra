@@ -4,9 +4,9 @@ import { streamCloudflareAI } from "../src/providers/cloudflare.js";
 
 test("native Workers AI binding streams text and tool-call results", async () => {
   const chunks = [
-    'data: {"response":"سلام "}\\n\\n',
-    'data: {"response":"دنیا"}\\n\\n',
-    'data: {"tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}\\n\\n'
+    'data: {"response":"سلام "}\n\n',
+    'data: {"response":"دنیا"}\n\n',
+    'data: {"tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}\n\n'
   ];
   const env = { AI: { async run(model, input) {
     assert.equal(model, "@cf/zai-org/glm-4.7-flash");

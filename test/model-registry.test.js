@@ -171,6 +171,7 @@ test("Cloudflare Qwen is the automatic fallback only while enabled and bound", a
   });
   const env = registryEnv([configuredModel(), cloudflare]);
   env.AI = { run: async () => null };
+  await setModelApiKey(env, "groq_qwen38", "groq-secret-api-key-value");
   const resolved = await getAIConfigForUser(env, 456);
   assert.equal(resolved.config.id, "groq_qwen38");
   assert.equal(resolved.fallbackConfig.id, "cloudflare_qwen38");
