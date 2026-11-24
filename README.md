@@ -20,11 +20,12 @@ Nyra brings AI chat to Telegram with a simple serverless setup. Built and mainta
 
 Deploy your Worker, configure the required secrets and open your Telegram bot. Send /start to get going.
 
-Configure the single shared model with `AI_MODEL` and the server-side `AI_API_KEY` secret. See the [configuration guide](docs/CONFIGURATION.md) for all required settings.
+Configure the model catalog in the admin panel: users can select an enabled model, while provider keys stay encrypted server-side. Groq Qwen is the default; Cloudflare Qwen is the specific HTTP 429 fallback. See the [configuration guide](docs/CONFIGURATION.md) for the encryption secret and provider setup.
 
 ## ✨ Features
 
-- 💬 AI conversations with streaming replies
+- 💬 AI conversations with streaming replies and per-user model selection
+- 🔐 Admin-managed OpenAI-compatible providers with encrypted API keys and a defined Groq 429 fallback
 - 🧠 Personal memory and customizable personalities
 - 🌐 Built-in web search
 - 🖼️ Image understanding and multi-image Telegram albums when supported by the configured model (up to 10 images)
