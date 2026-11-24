@@ -497,9 +497,10 @@ export async function retryWithCloudflare(env: NyraEnv, ctx: WorkerCtx, snapshot
     const resolved = await getAIConfigForUser(env, requesterId, "cloudflare_qwen38");
     user._aiConfig = resolved.config; user._fallbackAIConfig = null;
   } catch {
-    await editMessage(env, snapshot.chat_id, snapshot.placeholder_message_id, "⚠ Cloudflare Qwen پیکربندی نشده است. مدیر باید کلید و Base URL را بررسی کند.");
+    await editMessage(env, snapshot.chat_id, snapshot.placeholder_message_id, "⚠ Cloudflare Qwen پیکربندی نشده است. مدیر باید کلید و Base URL را بررسی کند.", undefined, undefined, threadOptions);
     return { ok: false };
   }
+  const threadOptions: any = snapshot.thread_id != null ? { message_thread_id: snapshot.thread_id } : {};
   let accumulated = "", usage: any = null, completed = false, category = "unknown";
   for await (const rawEvent of streamCentralAI(env, user, snapshot.messages, {
     max_tokens: 2048, temperature: 0.7, totalBudgetMs: AI_STREAM_TOTAL_BUDGET_MS, stallTimeoutMs: AI_STREAM_STALL_TIMEOUT_MS
@@ -512,7 +513,7 @@ export async function retryWithCloudflare(env: NyraEnv, ctx: WorkerCtx, snapshot
   }
   if (!completed) {
     updateUsageStatsAsync(env, ctx, requesterId, false, category, null);
-    await editMessage(env, snapshot.chat_id, snapshot.placeholder_message_id, "⚠ " + humanizeError(category));
+    await editMessage(env, snapshot.chat_id, snapshot.placeholder_message_id, "⚠ " + humanizeError(category), undefined, undefined, threadOptions);
     return { ok: false };
   }
   const reply = accumulated || "(empty response)";
@@ -523,10 +524,12 @@ export async function retryWithCloudflare(env: NyraEnv, ctx: WorkerCtx, snapshot
   let finalId = snapshot.placeholder_message_id;
   if (!edited || !edited.ok) {
     await deleteMessage(env, snapshot.chat_id, snapshot.placeholder_message_id);
-    const sent = await sendMessageReturn(env, snapshot.chat_id, first.text, first.parseMode ? { parse_mode: first.parseMode } : {});
+    const sent = await sendMessageReturn(env, snapshot.chat_id, first.text, { ...(first.parseMode ? { parse_mode: first.parseMode } : {}), ...threadOptions });
     if (sent?.ok && typeof sent.result?.message_id === "number") finalId = sent.result.message_id;
   }
-  for (let i = 1; i < chunks.length; i++) await sendMessageReturn(env, snapshot.chat_id, chunks[i].text, chunks[i].parseMode ? { parse_mode: chunks[i].parseMode } : {});
+  for (let i = 1; i < chunks.length; i++) {
+    await sendMessageReturn(env, snapshot.chat_id, chunks[i].text, { ...(chunks[i].parseMode ? { parse_mode: chunks[i].parseMode } : {}), ...threadOptions });
+  }
   await saveThreadMessage(env, snapshot.chat_id, snapshot.thread_id, finalId, null, "assistant", reply);
   ctx.waitUntil?.(logChatMessage(env, { chat_id: snapshot.chat_id, chat_type: snapshot.is_group ? "group" : "private",
     message_id: finalId, user_id: null, role: "assistant", content: reply, created_at: now() }));
