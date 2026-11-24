@@ -91,6 +91,11 @@ export async function handleCallbackQuery(
     if (action === "ci") { await showCustomInstructionsMenu(env, chatId, messageId, userId); return; }
     if (action === "usage") { await showUsage(env, chatId, messageId, userId); return; }
     if (action === "privacy") { await showPrivacy(env, chatId, messageId); return; }
+    if (action === "model") {
+      const { showUserModelMenu } = await import("../commands.js");
+      await showUserModelMenu(env, chatId, messageId, userId);
+      return;
+    }
     if (action === "close") { await editMessage(env, chatId, messageId, "Settings closed."); return; }
     return;
   }

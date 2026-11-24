@@ -36,6 +36,14 @@ export async function processMessage(env: NyraEnv, ctx: WorkerCtx, message: Tele
   if (isGroup && !(await recordGroupChatAndCheckAccess(env, chat, from.id))) return;
   if (await isUserBlocked(env, from.id)) return;
 
+  // Maintenance blocks onboarding and preference flows too, not only AI turns.
+  if (await isMaintenanceMode(env) && !isAdmin(env, from.id)) {
+    const existingUser = await getUser(env, from.id);
+    const locale = existingUser?.locale || (String(from.language_code || "").toLowerCase().startsWith("fa") ? "fa-IR" : "en-US");
+    await sendMessage(env, chat.id, t(locale, "maintenance.notice"));
+    return;
+  }
+
   if (!isGroup) {
     const onboardingState = await getOnboardingState(env, from.id);
     if (onboardingState && onboardingState.step && onboardingState.step !== "complete") {
@@ -132,14 +140,6 @@ export async function processMessage(env: NyraEnv, ctx: WorkerCtx, message: Tele
     const parsed = parseCommand(message, { username: identity.username || undefined });
     if (!parsed) return;
     await handleUserCommand(env, ctx, parsed.command, parsed.args, message, from, chat);
-    return;
-  }
-
-  const maintenance = await isMaintenanceMode(env);
-  if (maintenance) {
-    const user = await getUser(env, from.id);
-    const locale = user?.locale || "en-US";
-    await sendMessage(env, chat.id, t(locale, "maintenance.notice"));
     return;
   }
 
