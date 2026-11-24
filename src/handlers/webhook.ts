@@ -24,9 +24,10 @@ function errorStack(err: unknown): string {
   return errorMessage(err);
 }
 
-async function safeProcessMessage(env: NyraEnv, ctx: WorkerCtx, message: TelegramMessage): Promise<void> {
+async function safeProcessMessage(env: NyraEnv, ctx: WorkerCtx, message: TelegramMessage): Promise<boolean> {
   try {
     await processMessage(env, ctx, message);
+    return true;
   } catch (err) {
     console.error("Sensitive admin command failed:", errorStack(err));
     try {
@@ -37,7 +38,18 @@ async function safeProcessMessage(env: NyraEnv, ctx: WorkerCtx, message: Telegra
     } catch (notifyError) {
       console.error("Sensitive admin command failure notice failed:", errorMessage(notifyError));
     }
+    return false;
   }
+}
+
+
+const INLINE_DONE_TTL_SECONDS = 30 * 24 * 60 * 60;
+async function wasInlineUpdateHandled(env: NyraEnv, updateId: number): Promise<boolean> {
+  try { return !!(await env.KV.get("qdone:" + updateId)); } catch { return false; }
+}
+async function markInlineUpdateHandled(env: NyraEnv, updateId: number): Promise<void> {
+  try { await env.KV.put("qdone:" + updateId, "1", { expirationTtl: INLINE_DONE_TTL_SECONDS }); }
+  catch (error) { console.warn("Inline update completion marker failed:", errorMessage(error)); }
 }
 
 async function safeCallback(env: NyraEnv, ctx: WorkerCtx, cb: CallbackQuery): Promise<void> {
@@ -132,6 +144,8 @@ export async function handleWebhook(request: Request, env: NyraEnv, ctx: WorkerC
   // Durable acceptance: deduplicate by update_id, then enqueue before acking.
   // Telegram retries on non-2xx, so an enqueue failure must free the dedup slot.
   const updateId = typeof update.update_id === "number" ? update.update_id : null;
+  const msgUpdate = update.message || update.edited_message;
+  const cbUpdate = update.callback_query;
   if (updateId !== null) {
     let firstDelivery = true;
     try {
@@ -145,13 +159,60 @@ export async function handleWebhook(request: Request, env: NyraEnv, ctx: WorkerC
       console.error("update dedup insert failed:", errorMessage(err));
       return new Response("Service Unavailable", { status: 503 });
     }
-    if (!firstDelivery) return okResponse();
+    if (!firstDelivery) {
+      // Recover the narrow crash window where processed_updates was written but
+      // the Worker stopped before it accepted the update into its durable path.
+      if (msgUpdate && msgUpdate.from && !msgUpdate.from.is_bot && msgUpdate.chat
+        && /^\\/modelkey(?:@[A-Za-z0-9_]+)?(?:\\s|$)/i.test(String(msgUpdate.text || msgUpdate.caption || "").trim())) {
+        if (await wasInlineUpdateHandled(env, updateId)) return okResponse();
+        const handled = await safeProcessMessage(env, ctx, msgUpdate);
+        if (!handled) return new Response("Service Unavailable", { status: 503 });
+        await markInlineUpdateHandled(env, updateId);
+        return okResponse();
+      }
+
+      if (msgUpdate && msgUpdate.from && !msgUpdate.from.is_bot && isTelegramPhotoAlbumMessage(msgUpdate)) {
+        try {
+          await enqueueTelegramPhotoAlbum(env, msgUpdate);
+          return okResponse();
+        } catch (error) {
+          console.error("Duplicate photo-album recovery failed:", errorMessage(error));
+          return new Response("Service Unavailable", { status: 503 });
+        }
+      }
+
+      if (msgUpdate && msgUpdate.from && !msgUpdate.from.is_bot && msgUpdate.chat) {
+        try {
+          let pending = await env.DB.prepare("SELECT status FROM queue_pending_updates WHERE update_id=?")
+            .bind(updateId).first();
+          if (pending && Number(pending.status) !== 0) return okResponse();
+          if (!pending) {
+            if (await wasInlineUpdateHandled(env, updateId)) return okResponse();
+            await env.DB.prepare(
+              "INSERT OR IGNORE INTO queue_pending_updates (update_id, conversation_key, status, received_at) VALUES (?, ?, 0, ?)"
+            ).bind(updateId, queueConversationKey(update), Math.floor(Date.now() / 1000)).run();
+            pending = await env.DB.prepare("SELECT status FROM queue_pending_updates WHERE update_id=?")
+              .bind(updateId).first();
+            if (pending && Number(pending.status) !== 0) return okResponse();
+          }
+          await env.NYRA_QUEUE.send({ update });
+          if (msgUpdate.chat.type === "private" && typeof ctx.waitUntil === "function"
+            && !(typeof msgUpdate.text === "string" && msgUpdate.text.trim().startsWith("/"))) {
+            ctx.waitUntil(tg(env, "sendChatAction", { chat_id: msgUpdate.chat.id, action: "typing" })
+              .catch((error) => console.warn("Recovered update typing indicator failed:", errorMessage(error))));
+            ctx.waitUntil(setProcessingReaction(env, msgUpdate.chat.id, msgUpdate.message_id));
+          }
+        } catch (error) {
+          console.error("Duplicate queue recovery failed:", errorMessage(error));
+          return new Response("Service Unavailable", { status: 503 });
+        }
+      }
+      return okResponse();
+    }
   }
   // Callback taps remain inline for fast Telegram acknowledgement. All user
   // messages, including slash commands, go through the durable queue so a
   // command cannot overtake an earlier AI turn in the same chat.
-  const msgUpdate = update.message;
-  const cbUpdate = update.callback_query;
   if (cbUpdate && cbUpdate.from && !cbUpdate.from.is_bot) {
     await safeCallback(env, ctx, cbUpdate);
     return okResponse();
@@ -159,7 +220,9 @@ export async function handleWebhook(request: Request, env: NyraEnv, ctx: WorkerC
   // API-key commands contain plaintext credentials and must never be stored in the queue payload.
   if (msgUpdate && msgUpdate.from && !msgUpdate.from.is_bot && msgUpdate.chat
     && /^\/modelkey(?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(String(msgUpdate.text || msgUpdate.caption || "").trim())) {
-    await safeProcessMessage(env, ctx, msgUpdate);
+    const handled = await safeProcessMessage(env, ctx, msgUpdate);
+    if (!handled) return new Response("Service Unavailable", { status: 503 });
+    if (updateId !== null) await markInlineUpdateHandled(env, updateId);
     return okResponse();
   }
   if (msgUpdate && msgUpdate.from && !msgUpdate.from.is_bot && isTelegramPhotoAlbumMessage(msgUpdate)) {

@@ -36,7 +36,7 @@ function conversationKey(body) {
 // outbound messages; the marker makes that redelivery a cheap no-op. KV is
 // eventually consistent, so this is best-effort — the real dedup for new
 // updates is the processed_updates row in the webhook.
-const QUEUE_DONE_TTL = 3600;
+const QUEUE_DONE_TTL = 30 * 24 * 60 * 60;
 
 async function alreadyHandled(env: NyraEnv, updateId) {
   if (updateId === undefined || updateId === null) return false;
@@ -228,7 +228,7 @@ export default {
     // Clean up old failed updates (30 day retention) and completed queue cursors (1 day).
     ctx.waitUntil(cleanupOldFailedUpdates(env, 30));
     ctx.waitUntil(env.DB.prepare("DELETE FROM queue_pending_updates WHERE status<>0 AND completed_at<?")
-      .bind(Math.floor(Date.now() / 1000) - 86400).run());
+      .bind(Math.floor(Date.now() / 1000) - 30 * 86400).run());
   },
   // Queue consumer: runs the full AI pipeline outside the webhook request lifecycle.
   // Consumer invocations allow long wall time (vs. the 30s post-response waitUntil cap),

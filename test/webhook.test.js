@@ -7,6 +7,7 @@ function baseEnv(overrides = {}) {
   const sent = overrides.sent || [];
   const inserts = overrides.inserts || [];
   const deletes = overrides.deletes || [];
+  const pendingInserts = overrides.pendingInserts || [];
   return {
     TELEGRAM_BOT_TOKEN: "1:TEST",
     TELEGRAM_SECRET: "webhook-secret-token-value",
@@ -30,6 +31,7 @@ function baseEnv(overrides = {}) {
               if (overrides.duplicate) return null;
               return { update_id: this._args[0] };
             }
+            if (String(this._sql).includes("SELECT status FROM queue_pending_updates")) return overrides.queueState || null;
             return null;
           },
           async all() {
@@ -39,6 +41,7 @@ function baseEnv(overrides = {}) {
             if (String(this._sql).includes("DELETE FROM processed_updates")) {
               deletes.push(this._args);
             }
+            if (String(this._sql).includes("INSERT OR IGNORE INTO queue_pending_updates")) pendingInserts.push(this._args);
             return { meta: { changes: 1 } };
           }
         };
@@ -48,8 +51,8 @@ function baseEnv(overrides = {}) {
       }
     },
     KV: {
-      async get() {
-        return null;
+      async get(key) {
+        return overrides.queueDone && String(key).startsWith("qdone:") ? "1" : null;
       },
       async put() {},
       async delete() {}
@@ -57,6 +60,7 @@ function baseEnv(overrides = {}) {
     sent,
     inserts,
     deletes,
+    pendingInserts,
     ...overrides
   };
 }
@@ -154,8 +158,8 @@ test("handleWebhook queues slash commands to preserve chat order", async () => {
   assert.equal(env.inserts.length, 1);
 });
 
-test("handleWebhook acks duplicate update without re-enqueue", async () => {
-  const env = baseEnv({ duplicate: true });
+test("handleWebhook re-enqueues a duplicate when its durable queue row is still pending", async () => {
+  const env = baseEnv({ duplicate: true, queueState: { status: 0 } });
   const body = {
     update_id: 42,
     message: {
@@ -167,6 +171,46 @@ test("handleWebhook acks duplicate update without re-enqueue", async () => {
   };
   const res = await handleWebhook(await authedRequest(env, body), env, {});
   assert.equal(res.status, 200);
+  assert.equal(env.sent.length, 1);
+  assert.equal(env.sent[0].update.update_id, 42);
+  assert.equal(env.pendingInserts.length, 0);
+});
+
+test("handleWebhook does not re-enqueue a duplicate already completed or sent to the DLQ", async () => {
+  for (const status of [1, 2]) {
+    const env = baseEnv({ duplicate: true, queueState: { status } });
+    const body = { update_id: 43 + status, message: {
+      message_id: 7, chat: { id: 100, type: "private" },
+      from: { id: 200, is_bot: false }, text: "hello"
+    }};
+    const res = await handleWebhook(await authedRequest(env, body), env, {});
+    assert.equal(res.status, 200);
+    assert.equal(env.sent.length, 0);
+  }
+});
+
+test("handleWebhook recreates a missing queue row after a crash before enqueue", async () => {
+  const env = baseEnv({ duplicate: true });
+  const body = { update_id: 46, message: {
+    message_id: 8, chat: { id: 101, type: "private" },
+    from: { id: 201, is_bot: false }, text: "hello"
+  }};
+  const res = await handleWebhook(await authedRequest(env, body), env, {});
+  assert.equal(res.status, 200);
+  assert.equal(env.pendingInserts.length, 1);
+  assert.equal(env.sent.length, 1);
+  assert.equal(env.sent[0].update.update_id, 46);
+});
+
+test("handleWebhook keeps a duplicate acknowledgement cheap when KV completion exists and queue row was pruned", async () => {
+  const env = baseEnv({ duplicate: true, queueDone: true });
+  const body = { update_id: 47, message: {
+    message_id: 9, chat: { id: 102, type: "private" },
+    from: { id: 202, is_bot: false }, text: "hello"
+  }};
+  const res = await handleWebhook(await authedRequest(env, body), env, {});
+  assert.equal(res.status, 200);
+  assert.equal(env.pendingInserts.length, 0);
   assert.equal(env.sent.length, 0);
 });
 
